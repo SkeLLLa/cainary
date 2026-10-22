@@ -117,7 +117,8 @@ fn run_bounded(mut cmd: Command, cap: usize, deadline: Duration) -> Result<Strin
             Err(e) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                join_reader(&mut reader, &mut captured);
+                // A grandchild may still hold the pipe; the output is discarded, so do not wait for it.
+                drop(reader.take());
                 return Err(CmdError::Spawn(e.to_string()));
             }
         }
@@ -132,7 +133,8 @@ fn run_bounded(mut cmd: Command, cap: usize, deadline: Duration) -> Result<Strin
         if start.elapsed() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            join_reader(&mut reader, &mut captured);
+            // A grandchild may still hold the pipe; the output is discarded, so do not wait for it.
+            drop(reader.take());
             return Err(CmdError::TimedOut);
         }
         std::thread::sleep(Duration::from_millis(10));

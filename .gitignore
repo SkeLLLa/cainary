@@ -10,8 +10,8 @@ mise.local.toml
 .env.*
 
 # Editors and OS
-.vscode/
-.idea/
+/.vscode/
+/.idea/
 *.swp
 *~
 .DS_Store
