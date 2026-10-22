@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+<key>requirements_toml_base64</key><string>Zm9v</string>
+<key>ProxyMode</key><string>pac_script</string>
+<key>ProxyPacUrl</key><string>https://pac.example-corp.com/browser.pac?u=alice</string>
+<key>ProxyServer</key><string>http=proxy1.example-corp.com:3128;https=proxy2.example-corp.com:3128</string>
+<key>ExtensionInstallForcelist</key><array><string>abcdefghijklmnop;https://ext.example-corp.com/update.xml</string></array>
+<key>BrowserSignin</key><integer>2</integer>
+<key>CloudReportingEnabled</key><true/>
+<key>HomepageLocation</key><string>https://intranet.example-corp.com</string>
+</dict>
+</plist>

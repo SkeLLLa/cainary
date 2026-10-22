@@ -1,0 +1,159 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "macos",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "not-installed",
+    "label": "NOT INSTALLED",
+    "summary": "Not installed"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "others": [],
+  "sources": [
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Application Support/ClaudeCode/managed-mcp.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Application Support/ClaudeCode/managed-settings.d",
+        "origin": "system",
+        "kind": "dir"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Application Support/ClaudeCode/managed-settings.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.anthropic.claudecode.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Managed Preferences/com.anthropic.claudecode.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "~/.claude/policy-limits.json",
+        "origin": "server",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "~/.claude/remote-settings.json",
+        "origin": "server",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "~/.claude/settings.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    }
+  ]
+}

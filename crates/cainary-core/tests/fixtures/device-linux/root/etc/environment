@@ -1,0 +1,3 @@
+PATH="/usr/local/bin:/usr/bin"
+http_proxy="http://proxy.example-corp.com:3128"
+HTTPS_PROXY="http://alice:sk-test-EXAMPLE@proxy.example-corp.com:3128"

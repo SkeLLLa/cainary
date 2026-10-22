@@ -1,0 +1,1 @@
+{"model":"haiku","disableAllHooks":true,"permissions":{"deny":["Read(./.env)"]}}

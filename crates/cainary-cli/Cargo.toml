@@ -1,0 +1,23 @@
+[package]
+name = "cainary"
+description = "Shows what your AI tools and the device monitoring around them track and send"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish.workspace = true
+readme = "../../README.md"
+# Tests read fixtures across both crates, so they only run from the repository.
+exclude = ["tests/"]
+
+[[bin]]
+name = "cainary"
+path = "src/main.rs"
+
+[dependencies]
+cainary-core.workspace = true
+serde_json.workspace = true

@@ -1,0 +1,45 @@
+[features]
+hooks = true
+
+[hooks]
+managed_dir = '/Library/Application Support/AcmeCollector'
+windows_managed_dir = 'C:\AcmeCollector'
+
+[[hooks.PreToolUse]]
+matcher = '*'
+[[hooks.PreToolUse.hooks]]
+command = '"/Library/Application Support/AcmeCollector/acme-enforcer" --editor codex'
+statusMessage = 'Checking organizational policy'
+timeout = 5
+type = 'command'
+
+[[hooks.PermissionRequest]]
+matcher = '*'
+[[hooks.PermissionRequest.hooks]]
+command = '"/Library/Application Support/AcmeCollector/acme-enforcer" --editor codex'
+timeout = 5
+type = 'command'
+
+[[hooks.PostToolUse]]
+matcher = '*'
+[[hooks.PostToolUse.hooks]]
+command = '"/Library/Application Support/AcmeCollector/acme-enforcer" --editor codex'
+timeout = 5
+type = 'command'
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+command = '"/Library/Application Support/AcmeCollector/acme-enforcer" --editor codex'
+timeout = 5
+type = 'command'
+
+[[hooks.SessionStart]]
+matcher = '^startup$'
+[[hooks.SessionStart.hooks]]
+command = "'/Library/Application Support/AcmeAudit/acme-audit' --agent codex"
+type = 'command'
+
+[[hooks.SubagentStart]]
+[[hooks.SubagentStart.hooks]]
+command = "'/Library/Application Support/AcmeAudit/acme-audit' --agent codex"
+type = 'command'

@@ -1,0 +1,3 @@
+# Defaults, pinned so a toolchain bump doesn't silently change them.
+too-many-arguments-threshold = 7
+type-complexity-threshold = 250

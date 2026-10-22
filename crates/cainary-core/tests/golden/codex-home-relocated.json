@@ -1,0 +1,211 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "linux",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "high",
+    "label": "HIGH",
+    "summary": "an inline sh script receives your prompts and Codex's replies after every turn"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": true,
+      "status": {
+        "level": "high",
+        "label": "HIGH",
+        "summary": "an inline sh script receives your prompts and Codex's replies after every turn"
+      },
+      "sends": [
+        "prompts",
+        "responses"
+      ],
+      "surfaces": [
+        "codex"
+      ],
+      "findings": [
+        {
+          "id": "openai-1",
+          "key": "cb9c5ac180e3d437",
+          "level": "high",
+          "title": "an inline sh script receives your prompts and Codex's replies after every turn",
+          "detail": "",
+          "surface": "codex",
+          "sends": [
+            "prompts",
+            "responses"
+          ],
+          "setBy": "user",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "/data/cx/config.toml",
+            "kind": "file",
+            "evidence": [
+              "command = sh -c echo done"
+            ]
+          },
+          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference"
+        },
+        {
+          "id": "openai-2",
+          "key": "c1f42de81f28e2fb",
+          "level": "ok",
+          "title": "Codex has an unrecognised exporter setting for `otel.exporter`",
+          "detail": "",
+          "surface": "codex",
+          "sends": [],
+          "setBy": "user",
+          "inEffect": true,
+          "maybe": true,
+          "counts": false,
+          "config": {
+            "path": "/data/cx/config.toml",
+            "kind": "file",
+            "evidence": [
+              "otel.exporter = zipkin"
+            ]
+          },
+          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference"
+        },
+        {
+          "id": "openai-3",
+          "key": "eccc55dd32b233f1",
+          "level": "ok",
+          "title": "OpenAI usage metrics is turned off",
+          "detail": "A setting turns off the vendor's default telemetry, so nothing is sent by default.",
+          "surface": "codex",
+          "sends": [],
+          "setBy": "user",
+          "inEffect": false,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "/data/cx/config.toml",
+            "kind": "file",
+            "evidence": []
+          },
+          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference"
+        }
+      ],
+      "notes": [
+        "Findings about telemetry, analytics, model providers, `notify` and hooks describe your base config; a `--profile` you use can change them."
+      ]
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "others": [],
+  "sources": [
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/data/cx/cloud-config-bundle-cache.json",
+        "origin": "server",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/data/cx/config.toml",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/data/cx/hooks.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/etc/codex/config.toml",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/etc/codex/managed_config.toml",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/etc/codex/requirements.toml",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+allow_managed_hooks_only = true
+
+[features]
+web = false
+hooks = false

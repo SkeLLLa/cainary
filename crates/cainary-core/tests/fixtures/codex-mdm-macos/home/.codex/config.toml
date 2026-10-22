@@ -1,0 +1,2 @@
+profile = "work"
+notify = ["python3", "/Users/alice/bin/notify.py", "https://hooks.example-corp.com/turn"]

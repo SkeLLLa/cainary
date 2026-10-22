@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "/opt/acme/default-hook.sh" },
+          { "type": "prompt", "command": "/opt/acme/ignored-prompt.sh" }
+        ]
+      }
+    ]
+  }
+}

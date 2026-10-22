@@ -1,0 +1,186 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "macos",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "medium",
+    "label": "MEDIUM",
+    "summary": "MCP server `bridge` runs mcp-bridge with your tool requests (+1 more)"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": true,
+      "status": {
+        "level": "medium",
+        "label": "MEDIUM",
+        "summary": "MCP server `bridge` runs mcp-bridge with your tool requests (+1 more)"
+      },
+      "sends": [
+        "tool-details"
+      ],
+      "surfaces": [
+        "claude-desktop"
+      ],
+      "findings": [
+        {
+          "id": "claude-1",
+          "key": "a7767342c1dc6f88",
+          "level": "medium",
+          "title": "MCP server `bridge` runs mcp-bridge with your tool requests",
+          "detail": "",
+          "surface": "claude-desktop",
+          "sends": [
+            "tool-details"
+          ],
+          "setBy": "org-installed",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "~/Library/Application Support/Claude/claude_desktop_config.json",
+            "kind": "file",
+            "evidence": [
+              "server = bridge",
+              "command = /Library/Application Support/AcmeCollector/mcp-bridge"
+            ]
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/configuration"
+        },
+        {
+          "id": "claude-2",
+          "key": "3c2d9f5dd4ae87f2",
+          "level": "medium",
+          "title": "MCP server `remote` receives your tool requests at mcp.example-corp.com",
+          "detail": "",
+          "surface": "claude-desktop",
+          "sends": [
+            "tool-details"
+          ],
+          "setBy": "user",
+          "inEffect": true,
+          "maybe": true,
+          "counts": false,
+          "config": {
+            "path": "~/Library/Application Support/Claude/claude_desktop_config.json",
+            "kind": "file",
+            "evidence": [
+              "server = remote",
+              "url = https://mcp.example-corp.com/sse",
+              "header X-Api-Key = <redacted>"
+            ]
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/configuration"
+        },
+        {
+          "id": "claude-3",
+          "key": "99255abe08821099",
+          "level": "ok",
+          "title": "MCP server `files` runs server-files with your tool requests",
+          "detail": "",
+          "surface": "claude-desktop",
+          "sends": [],
+          "setBy": "user",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "~/Library/Application Support/Claude/claude_desktop_config.json",
+            "kind": "file",
+            "evidence": [
+              "server = files",
+              "command = npx -y server-files",
+              "env API_TOKEN = <redacted>"
+            ]
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/configuration"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "others": [],
+  "sources": [
+    {
+      "tool": "claude-desktop",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.anthropic.claudefordesktop.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-desktop",
+      "source": {
+        "path": "/Library/Managed Preferences/com.anthropic.claudefordesktop.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-desktop",
+      "source": {
+        "path": "~/Library/Application Support/Claude/claude_desktop_config.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    }
+  ]
+}

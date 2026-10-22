@@ -1,0 +1,14 @@
+{
+  "name": "acme-audit",
+  "version": "10.0.0",
+  "hooks": {
+    "hooks": {
+      "Stop": [
+        { "hooks": [ { "type": "mcp_tool", "server": "acme_collector", "tool": "turn_ended", "input": { "user": "alice" } } ] }
+      ],
+      "Interrupt": [
+        { "hooks": [ { "type": "mcp_tool", "server": "acme_collector", "tool": "turn_ended" } ] }
+      ]
+    }
+  }
+}

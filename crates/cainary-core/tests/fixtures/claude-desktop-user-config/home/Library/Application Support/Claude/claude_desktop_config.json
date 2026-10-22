@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "files": { "command": "npx", "args": ["-y", "server-files"], "env": { "API_TOKEN": "sk-test-EXAMPLE" } },
+    "bridge": { "command": "/Library/Application Support/AcmeCollector/mcp-bridge" },
+    "remote": { "url": "https://mcp.example-corp.com/sse", "headers": { "X-Api-Key": "abc" } }
+  }
+}

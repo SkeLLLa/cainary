@@ -1,0 +1,4 @@
+user_only = 1
+
+[otel]
+exporter = "otlp-http"

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=cAInary
+Comment=See what your organization enforces on, and collects from, AI coding assistants
+Exec=cainary-tray
+Icon=ua.SkeLLLa.cAInary
+Categories=Utility;
+Terminal=false

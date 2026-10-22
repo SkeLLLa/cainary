@@ -1,0 +1,427 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "macos",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "high",
+    "label": "HIGH",
+    "summary": "Codex sends tool results, session data and your prompts to otel.example-corp.com (+1 more)"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": true,
+      "status": {
+        "level": "high",
+        "label": "HIGH",
+        "summary": "Codex sends tool results, session data and your prompts to otel.example-corp.com (+1 more)"
+      },
+      "sends": [
+        "prompts",
+        "responses",
+        "tool-details",
+        "traffic",
+        "usage",
+        "identity",
+        "vendor",
+        "policy"
+      ],
+      "surfaces": [
+        "codex"
+      ],
+      "findings": [
+        {
+          "id": "openai-1",
+          "key": "6032f78a791696a1",
+          "level": "high",
+          "title": "Codex sends tool results, session data and your prompts to otel.example-corp.com",
+          "detail": "",
+          "surface": "codex",
+          "sends": [
+            "prompts",
+            "tool-details",
+            "usage",
+            "identity"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/alice/com.openai.codex.plist",
+            "kind": "file",
+            "evidence": [
+              "endpoint = https://otel.example-corp.com/v1/logs",
+              "header Authorization = <redacted>"
+            ]
+          },
+          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference"
+        },
+        {
+          "id": "openai-2",
+          "key": "163f510313753450",
+          "level": "high",
+          "title": "notify.py receives your prompts and Codex's replies after every turn and sends them to hooks.example-corp.com",
+          "detail": "",
+          "surface": "codex",
+          "sends": [
+            "prompts",
+            "responses"
+          ],
+          "setBy": "user",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "~/.codex/config.toml",
+            "kind": "file",
+            "evidence": [
+              "command = python3 /Users/alice/bin/notify.py https://hooks.example-corp.com/turn"
+            ]
+          },
+          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference"
+        },
+        {
+          "id": "openai-3",
+          "key": "57798cd525738b41",
+          "level": "medium",
+          "title": "Codex model traffic goes through llm.example-corp.com",
+          "detail": "",
+          "surface": "codex",
+          "sends": [
+            "traffic",
+            "identity"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/alice/com.openai.codex.plist",
+            "kind": "file",
+            "evidence": [
+              "base_url = https://llm.example-corp.com/v1",
+              "header X-Org = <redacted>"
+            ]
+          },
+          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference"
+        },
+        {
+          "id": "openai-4",
+          "key": "9c144f62d8133e00",
+          "level": "medium",
+          "title": "MCP server `acme` receives your tool requests at mcp.example-corp.com",
+          "detail": "",
+          "surface": "codex",
+          "sends": [
+            "tool-details"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/alice/com.openai.codex.plist",
+            "kind": "file",
+            "evidence": [
+              "server = acme",
+              "url = https://mcp.example-corp.com/v1"
+            ]
+          },
+          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference"
+        },
+        {
+          "id": "openai-5",
+          "key": "b37f637239a8670c",
+          "level": "low",
+          "title": "OpenAI receives anonymous usage metrics by default",
+          "detail": "Codex sends anonymous usage metrics to OpenAI unless the metrics exporter is turned off.",
+          "surface": "codex",
+          "sends": [
+            "vendor"
+          ],
+          "setBy": "vendor-default",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "vendor default",
+            "kind": "marker",
+            "evidence": []
+          },
+          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference"
+        },
+        {
+          "id": "openai-6",
+          "key": "2b927fc62b92b523",
+          "level": "ok",
+          "title": "Codex has provider `spare` set to spare.example-corp.com but doesn't use it",
+          "detail": "",
+          "surface": "codex",
+          "sends": [],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "/Library/Managed Preferences/alice/com.openai.codex.plist",
+            "kind": "file",
+            "evidence": [
+              "base_url = https://spare.example-corp.com/v1"
+            ]
+          },
+          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference"
+        },
+        {
+          "id": "openai-7",
+          "key": "12dc49a8b6b95693",
+          "level": "ok",
+          "title": "Your organization sets Codex defaults",
+          "detail": "",
+          "surface": "codex",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/alice/com.openai.codex.plist",
+            "kind": "file",
+            "evidence": [
+              "key = model"
+            ]
+          },
+          "docs": "https://learn.chatgpt.com/docs/enterprise/managed-configuration"
+        },
+        {
+          "id": "openai-8",
+          "key": "106e83b9e2b4085e",
+          "level": "ok",
+          "title": "Your organization sets Codex requirements",
+          "detail": "Requirements constrain what Codex may do; the values aren't shown.",
+          "surface": "codex",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/alice/com.openai.codex.plist",
+            "kind": "file",
+            "evidence": [
+              "approvals/sandbox: approval_policy, sandbox_mode",
+              "login: allowed_login_methods",
+              "features: features",
+              "hooks: allow_managed_hooks_only"
+            ]
+          },
+          "docs": "https://learn.chatgpt.com/docs/enterprise/managed-configuration"
+        },
+        {
+          "id": "openai-9",
+          "key": "0867a84cea12477a",
+          "level": "ok",
+          "title": "Codex no longer reads `profile`",
+          "detail": "",
+          "surface": "codex",
+          "sends": [],
+          "setBy": "user",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "~/.codex/config.toml",
+            "kind": "file",
+            "evidence": [
+              "key = profile"
+            ]
+          },
+          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference"
+        },
+        {
+          "id": "openai-10",
+          "key": "53a933f255ddd9bd",
+          "level": "ok",
+          "title": "Codex hook `log.sh` runs on UserPromptSubmit",
+          "detail": "",
+          "surface": "codex",
+          "sends": [],
+          "setBy": "user",
+          "inEffect": false,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "~/.codex/hooks.json",
+            "kind": "file",
+            "evidence": [
+              "events = UserPromptSubmit",
+              "command = /Users/alice/bin/log.sh"
+            ]
+          },
+          "docs": "https://learn.chatgpt.com/docs/hooks"
+        }
+      ],
+      "notes": [
+        "Findings about telemetry, analytics, model providers, `notify` and hooks describe your base config; a `--profile` you use can change them."
+      ]
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "others": [],
+  "sources": [
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.openai.codex.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.openai.codex.plist#config_toml_base64",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.openai.codex.plist#requirements_toml_base64",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/Library/Managed Preferences/com.openai.codex.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/etc/codex/config.toml",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/etc/codex/managed_config.toml",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/etc/codex/requirements.toml",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "~/.codex/cloud-config-bundle-cache.json",
+        "origin": "server",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "~/.codex/config.toml",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "~/.codex/hooks.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    }
+  ]
+}

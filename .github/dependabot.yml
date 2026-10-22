@@ -1,0 +1,25 @@
+version: 2
+updates:
+  # Rust crates for the core and CLI (the SwiftUI app has no package dependencies).
+  - package-ecosystem: 'cargo'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    groups:
+      all-crates:
+        patterns:
+          - '*'
+    commit-message:
+      prefix: 'chore'
+      include: 'scope'
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    groups:
+      all-actions:
+        patterns:
+          - '*'
+    commit-message:
+      prefix: 'chore'
+      include: 'scope'

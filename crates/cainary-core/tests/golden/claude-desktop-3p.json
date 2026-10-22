@@ -1,0 +1,203 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "macos",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "medium",
+    "label": "MEDIUM",
+    "summary": "Claude Desktop traffic goes through a proxy at proxy.example-corp.com (+1 more)"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": true,
+      "status": {
+        "level": "medium",
+        "label": "MEDIUM",
+        "summary": "Claude Desktop traffic goes through a proxy at proxy.example-corp.com (+1 more)"
+      },
+      "sends": [
+        "traffic",
+        "vendor"
+      ],
+      "surfaces": [
+        "claude-desktop"
+      ],
+      "findings": [
+        {
+          "id": "claude-1",
+          "key": "cd62ae31d8694535",
+          "level": "medium",
+          "title": "Claude Desktop traffic goes through a proxy at proxy.example-corp.com",
+          "detail": "",
+          "surface": "claude-desktop",
+          "sends": [
+            "traffic"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.anthropic.claudefordesktop.plist",
+            "kind": "file",
+            "evidence": [
+              "egressProxyUrl = http://proxy.example-corp.com:3128"
+            ]
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/mdm"
+        },
+        {
+          "id": "claude-2",
+          "key": "67b1c2ac46ecfdaf",
+          "level": "medium",
+          "title": "Model requests go to bedrock instead of Anthropic",
+          "detail": "",
+          "surface": "claude-desktop",
+          "sends": [
+            "traffic"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.anthropic.claudefordesktop.plist",
+            "kind": "file",
+            "evidence": [
+              "inferenceProvider = bedrock"
+            ]
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/mdm"
+        },
+        {
+          "id": "claude-3",
+          "key": "d095e8a7a18b9b4d",
+          "level": "low",
+          "title": "Claude Desktop sends crash reports and product analytics to Anthropic",
+          "detail": "Anthropic documents this only for third-party inference deployments, so on a standard sign-in it may apply.",
+          "surface": "claude-desktop",
+          "sends": [
+            "vendor"
+          ],
+          "setBy": "vendor-default",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "vendor default",
+            "kind": "marker",
+            "evidence": []
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/telemetry"
+        },
+        {
+          "id": "claude-4",
+          "key": "7e3d71894c49380d",
+          "level": "ok",
+          "title": "Claude Desktop telemetry content capture is empty",
+          "detail": "",
+          "surface": "claude-desktop",
+          "sends": [],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "/Library/Managed Preferences/com.anthropic.claudefordesktop.plist",
+            "kind": "file",
+            "evidence": [
+              "otlpContentCapture = "
+            ]
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/telemetry"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "others": [],
+  "sources": [
+    {
+      "tool": "claude-desktop",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.anthropic.claudefordesktop.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-desktop",
+      "source": {
+        "path": "/Library/Managed Preferences/com.anthropic.claudefordesktop.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "claude-desktop",
+      "source": {
+        "path": "~/Library/Application Support/Claude/claude_desktop_config.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    }
+  ]
+}

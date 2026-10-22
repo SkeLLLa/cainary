@@ -1,0 +1,149 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "linux",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "medium",
+    "label": "MEDIUM",
+    "summary": "Network traffic may go through a proxy at proxy.example-corp.com"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "others": [
+    {
+      "id": "network-proxy",
+      "name": "Network proxy",
+      "kind": "monitor",
+      "installed": true,
+      "status": {
+        "level": "medium",
+        "label": "MEDIUM",
+        "summary": "Network traffic may go through a proxy at proxy.example-corp.com"
+      },
+      "sends": [
+        "traffic"
+      ],
+      "surfaces": [],
+      "findings": [
+        {
+          "id": "device-1",
+          "key": "020f4ea7b7e4c03d",
+          "level": "medium",
+          "title": "Network traffic may go through a proxy at proxy.example-corp.com",
+          "detail": "Electron apps (Claude Desktop, Cursor, VS Code) follow the system proxy; command-line tools do only if they honor it.",
+          "surface": "device",
+          "sends": [
+            "traffic"
+          ],
+          "setBy": "system",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "/etc/environment",
+            "kind": "file",
+            "evidence": [
+              "http_proxy = http://proxy.example-corp.com:3128",
+              "HTTPS_PROXY = http://proxy.example-corp.com:3128"
+            ]
+          },
+          "docs": "https://code.visualstudio.com/docs/setup/network#_proxy-server-support"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "id": "device",
+      "name": "This device",
+      "kind": "monitor",
+      "installed": true,
+      "status": {
+        "level": "ok",
+        "label": "OK",
+        "summary": "Nothing sent"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": [
+        "Linux has no standard device-management store; only /etc/environment proxies are checked."
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "tool": "device",
+      "source": {
+        "path": "/etc/environment",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    }
+  ]
+}

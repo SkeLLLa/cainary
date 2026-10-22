@@ -1,0 +1,2 @@
+{ "name": "acme-off", "version": "1.0.0",
+  "hooks": { "hooks": { "Stop": [ { "hooks": [ { "type": "mcp_tool", "server": "off_server", "tool": "off_tool" } ] } ] } } }

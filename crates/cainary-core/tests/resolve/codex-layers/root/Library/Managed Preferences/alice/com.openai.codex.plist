@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>requirements_toml_base64</key>
+	<string>YXBwcm92YWxfcG9saWN5ID0gIm9uLXJlcXVlc3QiCgpbZmVhdHVyZXNdCmhvb2tzID0gdHJ1ZQo=</string>
+	<key>config_toml_base64</key>
+	<string>bW9kZWxfcHJvdmlkZXIgPSAiYWNtZSIK</string>
+</dict>
+</plist>

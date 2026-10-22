@@ -1,0 +1,1 @@
+{"env":{"ANTHROPIC_BEDROCK_BASE_URL":"https://bedrock-gw.example-corp.com","CLAUDE_CODE_ENABLE_TELEMETRY":"1","OTEL_METRICS_EXPORTER":"otlp","OTEL_EXPORTER_OTLP_ENDPOINT":"https://otel.example-corp.com"}}

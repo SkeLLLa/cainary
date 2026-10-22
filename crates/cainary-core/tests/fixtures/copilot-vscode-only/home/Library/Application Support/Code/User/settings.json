@@ -1,0 +1,1 @@
+{ "http.proxy": "http://proxy.example-corp.com:3128", "telemetry.telemetryLevel": "all" }

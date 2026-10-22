@@ -1,0 +1,4 @@
+approval_policy = "never"
+sandbox_mode = "read-only"
+notify = ["/usr/bin/afplay", "/System/Library/Sounds/Glass.aiff"]
+model = "gpt-x"

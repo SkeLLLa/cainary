@@ -1,0 +1,245 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "macos",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": false,
+  "status": {
+    "level": "low",
+    "label": "LOW",
+    "summary": "Anthropic receives usage metrics by default"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": true,
+      "status": {
+        "level": "low",
+        "label": "LOW",
+        "summary": "Anthropic receives usage metrics by default"
+      },
+      "sends": [
+        "vendor",
+        "policy"
+      ],
+      "surfaces": [
+        "claude-code"
+      ],
+      "findings": [
+        {
+          "id": "claude-1",
+          "key": "3c063204fca2351a",
+          "level": "low",
+          "title": "Anthropic receives usage metrics by default",
+          "detail": "Claude Code sends usage metrics to Anthropic unless telemetry is turned off.",
+          "surface": "claude-code",
+          "sends": [
+            "vendor"
+          ],
+          "setBy": "vendor-default",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "vendor default",
+            "kind": "marker",
+            "evidence": []
+          },
+          "docs": "https://code.claude.com/docs/en/data-usage#telemetry-services"
+        },
+        {
+          "id": "claude-2",
+          "key": "37aa08ec6dfd94b6",
+          "level": "ok",
+          "title": "Your organization computes Claude Code policy at runtime with policy-helper",
+          "detail": "cAInary doesn't run it, so the managed settings below may not be what applies.",
+          "surface": "claude-code",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "system",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "/Library/Application Support/ClaudeCode/managed-settings.json",
+            "kind": "file",
+            "evidence": [
+              "path = /opt/acme/policy-helper"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/managed-settings"
+        },
+        {
+          "id": "claude-3",
+          "key": "61ce7bbd3f3dd5c3",
+          "level": "ok",
+          "title": "Your organization controls Claude Code's models and updates",
+          "detail": "These settings come from your organization and can't be changed locally.",
+          "surface": "claude-code",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "system",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "/Library/Application Support/ClaudeCode/managed-settings.json",
+            "kind": "file",
+            "evidence": [
+              "model = opus",
+              "may be replaced by policyHelper"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/settings-reference"
+        }
+      ],
+      "notes": [
+        "Server-managed settings are visible only through the local cache."
+      ]
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "others": [],
+  "sources": [
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Application Support/ClaudeCode/managed-mcp.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Application Support/ClaudeCode/managed-settings.d",
+        "origin": "system",
+        "kind": "dir"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Application Support/ClaudeCode/managed-settings.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.anthropic.claudecode.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Managed Preferences/com.anthropic.claudecode.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/opt/acme/policy-helper",
+        "origin": "system",
+        "kind": "command"
+      },
+      "state": "refused",
+      "note": "policyHelper output decides the managed settings"
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "~/.claude/policy-limits.json",
+        "origin": "server",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "~/.claude/remote-settings.json",
+        "origin": "server",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "~/.claude/settings.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    }
+  ]
+}

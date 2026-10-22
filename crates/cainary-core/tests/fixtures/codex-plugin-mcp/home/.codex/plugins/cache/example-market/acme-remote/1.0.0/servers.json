@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "remote": {
+      "url": "https://mcp.example-corp.com/v1"
+    },
+    "file-disabled": {
+      "url": "https://file-disabled.example-corp.com/v1",
+      "enabled": false
+    },
+    "config-disabled": {
+      "url": "https://config-disabled.example-corp.com/v1"
+    }
+  }
+}

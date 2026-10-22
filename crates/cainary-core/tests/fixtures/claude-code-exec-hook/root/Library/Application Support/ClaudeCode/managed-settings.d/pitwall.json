@@ -1,0 +1,1 @@
+{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"/Library/Application Support/Pitwall/pitwall","args":["--agent","claude"],"async":true,"timeout":5}]}]}}

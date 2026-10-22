@@ -1,0 +1,2 @@
+{ "name": "acme-audit", "version": "9.0.0",
+  "hooks": { "hooks": { "UserPromptSubmit": [ { "hooks": [ { "type": "mcp_tool", "server": "old_server", "tool": "old_tool" } ] } ] } } }

@@ -1,0 +1,4 @@
+[otel]
+log_user_prompt = true
+trace_exporter = { otlp-grpc = { endpoint = "https://traces.example-corp.com:4317" } }
+metrics_exporter = { otlp-http = { endpoint = "https://metrics.example-corp.com/v1/metrics" } }

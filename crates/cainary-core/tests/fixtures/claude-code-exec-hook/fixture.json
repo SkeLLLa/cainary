@@ -1,0 +1,5 @@
+{ "os": "macos", "user": "alice", "now": "2026-01-01T00:00:00Z", "tools": ["claude-code"],
+  "rootOwned": [
+    "/Library/Application Support/Pitwall/pitwall",
+    "/Library/Application Support/ClaudeCode/managed-settings.d/pitwall.json"
+  ] }

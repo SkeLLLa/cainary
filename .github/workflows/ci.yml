@@ -1,0 +1,162 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# Nothing is granted by default; each job asks for what it needs.
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# CI runs plain make: rustup's cargo (version read from mise.toml) and Xcode's swiftc and
+# `swift format`. mise is for local development only; it would route cargo through mbx.
+jobs:
+  conventional-commits:
+    name: Conventional commit messages
+    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Verify Conventional Commit messages
+        uses: opensource-nepal/commitlint@v2
+
+  # Warn mode: unpinned actions are annotated here and fail the release pin-gate. CI stays in
+  # `--warn` until the maintainer pins the current refs; that commit removes `--warn`. If
+  # `.github/actions/**/action.y?ml` appears, the gate and this check must cover it too.
+  pin-check:
+    name: Action pins (warn)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Test the pin checker
+        run: scripts/test-action-pins.sh
+      - name: Check action pins
+        run: scripts/check-action-pins.sh --warn .github/workflows/*.yml
+
+  macos:
+    name: Lint, test, ui-test (macOS)
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust (version from mise.toml)
+        run: |
+          set -eu
+          v="$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' mise.toml)"
+          test -n "${v}"
+          rustup toolchain install "${v}" --profile minimal --component rustfmt,clippy
+          rustup default "${v}"
+      - name: Install shellcheck
+        run: command -v shellcheck || brew install shellcheck
+      - name: Show toolchain
+        run: |
+          cargo --version
+          swiftc --version
+          swift format --version
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('mise.toml', 'Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      - name: make check (fmt, clippy, swift format, shellcheck, cargo test, ui-test)
+        run: make check
+      - name: Upload UI snapshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-snapshots
+          retention-days: 7
+          if-no-files-found: ignore
+          path: target/ui-snapshots/
+
+  linux:
+    name: Rust core and CLI (Linux)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust (version from mise.toml)
+        run: |
+          set -eu
+          v="$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' mise.toml)"
+          test -n "${v}"
+          rustup toolchain install "${v}" --profile minimal --component rustfmt,clippy
+          rustup default "${v}"
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('mise.toml', 'Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      - name: make check-rust (fmt, clippy, cargo test)
+        run: make check-rust
+      - name: make publish-check (cargo publish --dry-run for both crates)
+        run: make publish-check
+
+  bundle:
+    name: Bundle smoke test (universal)
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust (version from mise.toml)
+        run: |
+          set -eu
+          v="$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' mise.toml)"
+          test -n "${v}"
+          rustup toolchain install "${v}" --profile minimal \
+            --target aarch64-apple-darwin,x86_64-apple-darwin
+          rustup default "${v}"
+      - name: Build universal app bundle (ad-hoc signed)
+        run: make bundle RELEASE=1
+      - name: Verify bundle
+        run: |
+          set -euo pipefail
+          APP="dist/cAInary.app"
+          for BIN in "${APP}/Contents/MacOS/cAInary" "${APP}/Contents/Helpers/cainary"; do
+            ARCHS_FOUND="$(lipo -archs "${BIN}")"
+            echo "${BIN}: ${ARCHS_FOUND}"
+            for arch in arm64 x86_64; do
+              case " ${ARCHS_FOUND} " in
+                *" ${arch} "*) ;;
+                *) echo "${BIN}: missing architecture ${arch}" >&2; exit 1 ;;
+              esac
+            done
+          done
+          codesign --verify --deep --strict --verbose=2 "${APP}"
+          "${APP}/Contents/Helpers/cainary" --version
+      - name: Upload bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: cainary-macos-universal
+          retention-days: 7
+          if-no-files-found: error
+          path: dist/cAInary-*-macos.zip

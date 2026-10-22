@@ -1,0 +1,5 @@
+{
+  "name": "acme-path",
+  "version": "1.0.0",
+  "hooks": "./custom/h.json"
+}

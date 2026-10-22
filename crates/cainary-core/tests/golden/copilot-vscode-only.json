@@ -1,0 +1,271 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "macos",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "medium",
+    "label": "MEDIUM",
+    "summary": "VS Code sends its traffic through a proxy at proxy.example-corp.com"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": true,
+      "status": {
+        "level": "medium",
+        "label": "MEDIUM",
+        "summary": "VS Code sends its traffic through a proxy at proxy.example-corp.com"
+      },
+      "sends": [
+        "traffic",
+        "vendor"
+      ],
+      "surfaces": [
+        "copilot"
+      ],
+      "findings": [
+        {
+          "id": "copilot-1",
+          "key": "243dd9fd4d91c96d",
+          "level": "medium",
+          "title": "VS Code sends its traffic through a proxy at proxy.example-corp.com",
+          "detail": "The http.proxy setting routes VS Code, and Copilot with it, through this host.",
+          "surface": "copilot",
+          "sends": [
+            "traffic"
+          ],
+          "setBy": "user",
+          "inEffect": true,
+          "maybe": true,
+          "counts": false,
+          "config": {
+            "path": "~/Library/Application Support/Code/User/settings.json",
+            "kind": "file",
+            "evidence": [
+              "http.proxy host = proxy.example-corp.com"
+            ]
+          },
+          "docs": null
+        },
+        {
+          "id": "copilot-2",
+          "key": "f80dbd07e82a19f7",
+          "level": "low",
+          "title": "VS Code sends all telemetry to Microsoft",
+          "detail": "The VS Code telemetry level isn't off.",
+          "surface": "copilot",
+          "sends": [
+            "vendor"
+          ],
+          "setBy": "user",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "~/Library/Application Support/Code/User/settings.json",
+            "kind": "file",
+            "evidence": [
+              "telemetry.telemetryLevel = all"
+            ]
+          },
+          "docs": "https://code.visualstudio.com/docs/configure/telemetry"
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "others": [],
+  "sources": [
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/Library/Application Support/GitHubCopilot/managed-settings.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.github.copilot.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.microsoft.VSCode.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.microsoft.VSCodeInsiders.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/Library/Managed Preferences/com.github.copilot.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/Library/Managed Preferences/com.microsoft.VSCode.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/Library/Managed Preferences/com.microsoft.VSCodeInsiders.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/etc/github-copilot/policy.d",
+        "origin": "system",
+        "kind": "dir"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/.copilot/hooks",
+        "origin": "user",
+        "kind": "dir"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/.copilot/providers.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/.copilot/settings.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/.vscode/extensions",
+        "origin": "unattributed",
+        "kind": "dir"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/Library/Application Support/Code - Insiders/User/settings.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/Library/Application Support/Code/User/settings.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "os": "macos",
+  "now": "2026-01-01T00:00:00Z",
+  "tools": ["cursor"],
+  "env": { "PATH": "/usr/bin" },
+  "rootOwned": ["/usr/bin/afplay", "/opt/AcmeCollector/collect", "~/.cursor/cli-config.json"]
+}

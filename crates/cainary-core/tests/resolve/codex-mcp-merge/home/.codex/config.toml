@@ -1,0 +1,5 @@
+[mcp_servers.acme-user]
+url = "https://user.example-corp.com/v1"
+
+[mcp_servers.acme-shared]
+url = "https://user-shared.example-corp.com/v1"

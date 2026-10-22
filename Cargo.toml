@@ -1,0 +1,34 @@
+[workspace]
+resolver = "3"
+members = ["crates/cainary-core", "crates/cainary-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/SkeLLLa/cainary"
+homepage = "https://github.com/SkeLLLa/cainary"
+keywords = ["telemetry", "privacy", "ai", "audit", "macos"]
+categories = ["command-line-utilities", "development-tools"]
+# Only crates.io; cargo publish refuses any other registry.
+publish = ["crates-io"]
+
+# The only dependencies the product may have (architecture.md §2). Adding one is a reviewed
+# change; tests/guards.rs checks Cargo.lock against an allowlist.
+[workspace.dependencies]
+# Exact: the two crates are released together at one version (scripts/set-version.sh).
+cainary-core = { path = "crates/cainary-core", version = "=0.1.0" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+toml = "0.8"
+# Tilde: cainary-core uses plist::stream, which may break between minor versions.
+plist = { version = "~1.10.3", features = ["enable_unstable_features_that_may_break_with_minor_version_bumps"] }
+libc = { version = "0.2", default-features = false }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "unwind" # main catches panics and exits 3
+strip = true

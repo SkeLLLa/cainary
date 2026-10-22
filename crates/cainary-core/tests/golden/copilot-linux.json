@@ -1,0 +1,234 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "linux",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "low",
+    "label": "LOW",
+    "summary": "Copilot sends usage data to otel.example-corp.com"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": true,
+      "status": {
+        "level": "low",
+        "label": "LOW",
+        "summary": "Copilot sends usage data to otel.example-corp.com"
+      },
+      "sends": [
+        "usage",
+        "policy"
+      ],
+      "surfaces": [
+        "copilot"
+      ],
+      "findings": [
+        {
+          "id": "copilot-1",
+          "key": "b9142e91d42c430c",
+          "level": "low",
+          "title": "Copilot sends usage data to otel.example-corp.com",
+          "detail": "Telemetry export is on. cAInary can't see which Copilot surface you use, so it reports each installed one.",
+          "surface": "copilot",
+          "sends": [
+            "usage"
+          ],
+          "setBy": "system",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "/etc/github-copilot/managed-settings.json",
+            "kind": "file",
+            "evidence": [
+              "endpoint = https://otel.example-corp.com"
+            ]
+          },
+          "docs": "https://docs.github.com/en/copilot/reference/enterprise-administrators/enterprise-managed-settings"
+        },
+        {
+          "id": "copilot-2",
+          "key": "29514f34d8ad3459",
+          "level": "ok",
+          "title": "Your organization restricts GitHub Copilot",
+          "detail": "Managed Copilot settings set rules for this machine.",
+          "surface": "copilot",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "system",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/etc/github-copilot/managed-settings.json",
+            "kind": "file",
+            "evidence": [
+              "allowedModels = [\"gpt-example\"]"
+            ]
+          },
+          "docs": "https://docs.github.com/en/copilot/reference/enterprise-administrators/enterprise-managed-settings"
+        },
+        {
+          "id": "copilot-3",
+          "key": "4aedbb654a22a62d",
+          "level": "ok",
+          "title": "Your organization turned VS Code telemetry off",
+          "detail": "",
+          "surface": "copilot",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "system",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/etc/vscode/policy.json",
+            "kind": "file",
+            "evidence": [
+              "TelemetryLevel = off"
+            ]
+          },
+          "docs": "https://code.visualstudio.com/docs/enterprise/policies"
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "others": [],
+  "sources": [
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/etc/github-copilot/managed-settings.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/etc/vscode/policy.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/.config/Code - Insiders/User/settings.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/.config/Code/User/settings.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/.copilot/hooks",
+        "origin": "user",
+        "kind": "dir"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/.copilot/providers.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/.copilot/settings.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/.vscode/extensions",
+        "origin": "unattributed",
+        "kind": "dir"
+      },
+      "state": "absent",
+      "note": null
+    }
+  ]
+}

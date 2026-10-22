@@ -1,0 +1,450 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "macos",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "high",
+    "label": "HIGH",
+    "summary": "Claude Desktop sends your prompts and the replies, tool input, tool output to collector.example-corp.com"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": true,
+      "status": {
+        "level": "high",
+        "label": "HIGH",
+        "summary": "Claude Desktop sends your prompts and the replies, tool input, tool output to collector.example-corp.com"
+      },
+      "sends": [
+        "prompts",
+        "responses",
+        "tool-details",
+        "file-contents",
+        "traffic",
+        "usage",
+        "identity",
+        "policy"
+      ],
+      "surfaces": [
+        "claude-desktop"
+      ],
+      "findings": [
+        {
+          "id": "claude-1",
+          "key": "31ccaac74a7398da",
+          "level": "high",
+          "title": "Claude Desktop sends your prompts and the replies, tool input, tool output to collector.example-corp.com",
+          "detail": "",
+          "surface": "claude-desktop",
+          "sends": [
+            "prompts",
+            "responses",
+            "tool-details",
+            "file-contents"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/alice/com.anthropic.claudefordesktop.plist",
+            "kind": "file",
+            "evidence": [
+              "otlpContentCapture = userPrompts, toolDetails, toolContent"
+            ]
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/telemetry"
+        },
+        {
+          "id": "claude-2",
+          "key": "e24d459c63a35270",
+          "level": "medium",
+          "title": "Claude Desktop traffic goes through a proxy at pac.example-corp.com",
+          "detail": "",
+          "surface": "claude-desktop",
+          "sends": [
+            "traffic"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/alice/com.anthropic.claudefordesktop.plist",
+            "kind": "file",
+            "evidence": [
+              "egressProxyPacUrl = https://pac.example-corp.com/proxy.pac"
+            ]
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/mdm"
+        },
+        {
+          "id": "claude-3",
+          "key": "3714c456bf9e5202",
+          "level": "medium",
+          "title": "MCP server `docs` receives your tool requests at mcp.example-corp.com",
+          "detail": "",
+          "surface": "claude-desktop",
+          "sends": [
+            "tool-details"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/alice/com.anthropic.claudefordesktop.plist",
+            "kind": "file",
+            "evidence": [
+              "server = docs",
+              "url = https://mcp.example-corp.com/sse",
+              "header Authorization = <redacted>"
+            ]
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/mdm"
+        },
+        {
+          "id": "claude-4",
+          "key": "2ff156dbf6a604bb",
+          "level": "medium",
+          "title": "Model requests go through gateway.example-corp.com",
+          "detail": "",
+          "surface": "claude-desktop",
+          "sends": [
+            "traffic"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/alice/com.anthropic.claudefordesktop.plist",
+            "kind": "file",
+            "evidence": [
+              "inferenceGatewayBaseUrl = https://gateway.example-corp.com/v1"
+            ]
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/mdm"
+        },
+        {
+          "id": "claude-5",
+          "key": "c32b330d84c5fee0",
+          "level": "medium",
+          "title": "Your organization added 2 MCP servers",
+          "detail": "",
+          "surface": "claude-desktop",
+          "sends": [
+            "tool-details"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/alice/com.anthropic.claudefordesktop.plist",
+            "kind": "file",
+            "evidence": [
+              "server = docs",
+              "server = local"
+            ]
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/mdm"
+        },
+        {
+          "id": "claude-6",
+          "key": "c955f8e5bef25a8a",
+          "level": "low",
+          "title": "Claude Desktop sends usage telemetry to collector.example-corp.com",
+          "detail": "The exported resource carries process.owner (your OS login). endUserAttribution = false removes only enduser.id, and otlpResourceAttributes can add more, so neither clears identity.",
+          "surface": "claude-desktop",
+          "sends": [
+            "usage",
+            "identity"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/alice/com.anthropic.claudefordesktop.plist",
+            "kind": "file",
+            "evidence": [
+              "otlpEndpoint = https://collector.example-corp.com:4318/v1",
+              "endUserAttribution = false",
+              "otlpAuthMode = inference-credential",
+              "otlpResourceAttributes has team",
+              "otlpResourceAttributes has region"
+            ]
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/telemetry"
+        },
+        {
+          "id": "claude-7",
+          "key": "a7dc41660d137916",
+          "level": "low",
+          "title": "The telemetry collector receives your sign-in token",
+          "detail": "",
+          "surface": "claude-desktop",
+          "sends": [
+            "identity"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/alice/com.anthropic.claudefordesktop.plist",
+            "kind": "file",
+            "evidence": [
+              "otlpAuthMode = inference-credential"
+            ]
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/telemetry"
+        },
+        {
+          "id": "claude-8",
+          "key": "bc6b7106eb405497",
+          "level": "ok",
+          "title": "Your organization restricts Claude Desktop features",
+          "detail": "",
+          "surface": "claude-desktop",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/alice/com.anthropic.claudefordesktop.plist",
+            "kind": "file",
+            "evidence": [
+              "chatTabEnabled = false",
+              "disableAutoUpdates = true"
+            ]
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/mdm"
+        },
+        {
+          "id": "claude-9",
+          "key": "0c5cab31d0805feb",
+          "level": "ok",
+          "title": "Your organization restricts extensions and tools",
+          "detail": "",
+          "surface": "claude-desktop",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/alice/com.anthropic.claudefordesktop.plist",
+            "kind": "file",
+            "evidence": [
+              "isLocalDevMcpEnabled = false"
+            ]
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/mdm"
+        },
+        {
+          "id": "claude-10",
+          "key": "7be74acb92c9a001",
+          "level": "ok",
+          "title": "Your organization restricts sign-in",
+          "detail": "",
+          "surface": "claude-desktop",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/alice/com.anthropic.claudefordesktop.plist",
+            "kind": "file",
+            "evidence": [
+              "forceLoginOrgUUID = 00000000-0000-0000-0000-000000000000"
+            ]
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/mdm"
+        },
+        {
+          "id": "claude-11",
+          "key": "758738fc49c303af",
+          "level": "ok",
+          "title": "Your organization sets 1 other Claude Desktop setting",
+          "detail": "",
+          "surface": "claude-desktop",
+          "sends": [],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "/Library/Managed Preferences/alice/com.anthropic.claudefordesktop.plist",
+            "kind": "file",
+            "evidence": [
+              "key = customFlag"
+            ]
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/mdm"
+        },
+        {
+          "id": "claude-12",
+          "key": "f87a6468cef87aca",
+          "level": "ok",
+          "title": "Your organization sets instructions for Claude (44 characters)",
+          "detail": "",
+          "surface": "claude-desktop",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/alice/com.anthropic.claudefordesktop.plist",
+            "kind": "file",
+            "evidence": [
+              "organizationInstructions length = 44"
+            ]
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/mdm"
+        },
+        {
+          "id": "claude-13",
+          "key": "9eb848bcc0d62d4b",
+          "level": "ok",
+          "title": "Your organization turns off Anthropic telemetry",
+          "detail": "",
+          "surface": "claude-desktop",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/alice/com.anthropic.claudefordesktop.plist",
+            "kind": "file",
+            "evidence": [
+              "disableEssentialTelemetry = true",
+              "disableNonessentialTelemetry = true"
+            ]
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/mdm"
+        },
+        {
+          "id": "claude-14",
+          "key": "4e74bbb7e20af7d8",
+          "level": "ok",
+          "title": "`otlpEndpoint` in the device profile is overridden by the per-user profile",
+          "detail": "",
+          "surface": "claude-desktop",
+          "sends": [],
+          "setBy": "mdm",
+          "inEffect": false,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "/Library/Managed Preferences/com.anthropic.claudefordesktop.plist",
+            "kind": "file",
+            "evidence": []
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/mdm"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "others": [],
+  "sources": [
+    {
+      "tool": "claude-desktop",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.anthropic.claudefordesktop.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "claude-desktop",
+      "source": {
+        "path": "/Library/Managed Preferences/com.anthropic.claudefordesktop.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "claude-desktop",
+      "source": {
+        "path": "~/Library/Application Support/Claude/claude_desktop_config.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    }
+  ]
+}

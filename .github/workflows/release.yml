@@ -1,0 +1,481 @@
+# Release fails closed until every action is pinned to a commit SHA (pin-gate).
+name: Release
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  pin-gate:
+    name: Action pin gate
+    if: ${{ github.repository_owner == 'SkeLLLa' && !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Require every action in every workflow to be pinned
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Fetch every workflow, and the checker, as committed at the triggering SHA; no
+          # checkout, no third-party action. Fails closed: no files, no listing or any failed
+          # fetch fails the gate, and so does an unpinned action in ci.yml.
+          dir="${RUNNER_TEMP}/workflows"
+          mkdir -p "${dir}"
+          fetch() {
+            gh api -H "Accept: application/vnd.github.raw" \
+              "repos/${GITHUB_REPOSITORY}/contents/$1?ref=${GITHUB_SHA}"
+          }
+          names="$(
+            gh api "repos/${GITHUB_REPOSITORY}/contents/.github/workflows?ref=${GITHUB_SHA}" \
+              --jq '.[] | select(.type == "file") | select(.name | test("\\.ya?ml$")) | .name'
+          )"
+          if [ -z "${names}" ]; then
+            echo "::error::no workflow files found at ${GITHUB_SHA}"
+            exit 1
+          fi
+          files=()
+          while IFS= read -r name; do
+            case "${name}" in */* | "") echo "::error::unexpected workflow name"; exit 1 ;; esac
+            fetch ".github/workflows/${name}" > "${dir}/${name}"
+            files+=("${dir}/${name}")
+          done <<< "${names}"
+          fetch scripts/check-action-pins.sh > "${RUNNER_TEMP}/check-action-pins.sh"
+          sh "${RUNNER_TEMP}/check-action-pins.sh" "${files[@]}"
+
+  quality:
+    name: Quality gate
+    needs: pin-gate
+    if: ${{ github.repository_owner == 'SkeLLLa' && !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust (version from mise.toml)
+        run: |
+          set -eu
+          v="$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' mise.toml)"
+          test -n "${v}"
+          rustup toolchain install "${v}" --profile minimal --component rustfmt,clippy
+          rustup default "${v}"
+
+      - name: Install shellcheck
+        run: command -v shellcheck || brew install shellcheck
+
+      - name: Run checks
+        run: make check
+
+  # Same flow as the sibling Rust repos' release-plz setup, with git-cliff: bump the version,
+  # commit it to master as github-actions[bot], tag, and create the release. No release PR, so
+  # the default GITHUB_TOKEN is enough.
+  release:
+    name: Release
+    needs: quality
+    if: ${{ github.repository_owner == 'SkeLLLa' && !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-latest
+    outputs:
+      released: ${{ steps.release.outputs.released }}
+      version: ${{ steps.release.outputs.version }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      # This job pushes the version bump and the tag, so it keeps the token in the checkout
+      # (the only checkout that does).
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install git-cliff
+        uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff@2.14.2
+
+      - name: Bump version, commit, tag, and create the release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # cliff.toml: the first release is v0.1.0; afterwards feat bumps minor, others patch.
+          # A Cargo.toml [workspace.package] version that names an untagged version wins, so a
+          # release can be set by hand (for example 1.0.0) by committing that version.
+          TAG_NAME="$(git cliff --bumped-version)"
+          PINNED="v$(sed -n '/^\[workspace\.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p;}' Cargo.toml)"
+          if ! git rev-parse -q --verify "refs/tags/${PINNED}" > /dev/null; then
+            TAG_NAME="${PINNED}"
+          fi
+          VERSION="${TAG_NAME#v}"
+          if git rev-parse -q --verify "refs/tags/${TAG_NAME}" > /dev/null; then
+            echo "Nothing to release: ${TAG_NAME} already exists"
+            echo "released=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          NOTES="${RUNNER_TEMP}/notes.md"
+          git cliff --unreleased --tag "${TAG_NAME}" --strip all > "${NOTES}"
+          git cliff --tag "${TAG_NAME}" --output CHANGELOG.md
+          # Cargo.toml is the single source; bundle.sh stamps it into Info.plist and checks
+          # that the helper reports it.
+          scripts/set-version.sh "${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md Cargo.toml Cargo.lock
+          git commit -m "chore(release): ${TAG_NAME} [skip ci]"
+          git tag "${TAG_NAME}"
+          git push --atomic origin HEAD:master "refs/tags/${TAG_NAME}"
+          gh release create "${TAG_NAME}" --title "${TAG_NAME}" --notes-file "${NOTES}" --verify-tag
+          {
+            echo "released=true"
+            echo "version=${VERSION}"
+            echo "tag_name=${TAG_NAME}"
+          } >> "${GITHUB_OUTPUT}"
+
+  build:
+    name: Build and publish macOS assets
+    needs: release
+    if: ${{ needs.release.outputs.released == 'true' }}
+    runs-on: macos-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+      TAG_NAME: ${{ needs.release.outputs.tag_name }}
+      # Optional Developer ID signing + notarization; skipped when secrets are absent. Only
+      # these presence flags are job-wide (booleans, never secret values); each secret itself
+      # is set in the env of the one step that needs it.
+      SIGNING_CONFIGURED: ${{ secrets.MACOS_CERTIFICATE_P12 != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' && secrets.MACOS_SIGNING_IDENTITY != '' }}
+      NOTARIZE_CONFIGURED: ${{ secrets.MACOS_CERTIFICATE_P12 != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' && secrets.MACOS_SIGNING_IDENTITY != '' && secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_PASSWORD != '' }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release.outputs.tag_name }}
+          persist-credentials: false
+
+      - name: Install Rust (version from mise.toml)
+        run: |
+          set -eu
+          v="$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' mise.toml)"
+          test -n "${v}"
+          rustup toolchain install "${v}" --profile minimal \
+            --target aarch64-apple-darwin,x86_64-apple-darwin
+          rustup default "${v}"
+
+      - name: Show toolchain
+        run: |
+          cargo --version
+          swiftc --version
+
+      - name: Import Developer ID certificate
+        if: ${{ env.SIGNING_CONFIGURED == 'true' }}
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          KEYCHAIN="${RUNNER_TEMP}/build.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "::add-mask::${KEYCHAIN_PASSWORD}"
+          echo "${MACOS_CERTIFICATE_P12}" | base64 --decode > "${RUNNER_TEMP}/certificate.p12"
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
+          security set-keychain-settings -lut 21600 "${KEYCHAIN}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
+          security import "${RUNNER_TEMP}/certificate.p12" -P "${MACOS_CERTIFICATE_PASSWORD}" \
+            -t agg -f pkcs12 -k "${KEYCHAIN}" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+            -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
+          security list-keychains -d user -s "${KEYCHAIN}" login.keychain-db
+          rm -f "${RUNNER_TEMP}/certificate.p12"
+
+      - name: Build universal app bundle
+        env:
+          # Empty when signing is not configured; bundle.sh then signs ad hoc.
+          CODESIGN_IDENTITY: ${{ env.SIGNING_CONFIGURED == 'true' && secrets.MACOS_SIGNING_IDENTITY || '' }}
+        # RELEASE=1 builds both Apple targets and lipos them into universal binaries.
+        run: make bundle RELEASE=1
+
+      - name: Remove signing keychain and certificate
+        if: ${{ env.SIGNING_CONFIGURED == 'true' }}
+        run: |
+          rm -f "${RUNNER_TEMP}/certificate.p12"
+          security delete-keychain "${RUNNER_TEMP}/build.keychain-db" || true
+
+      - name: Signing status
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          NOTES="release-assets/NOTES.md"
+          if [ "${SIGNING_CONFIGURED}" != "true" ]; then
+            echo "::warning::Release is ad-hoc signed (signing secrets not configured)"
+            {
+              echo "> **Note:** this build is unsigned (ad-hoc signed) and not notarized."
+              echo "> After installing, run \`xattr -dr com.apple.quarantine /Applications/cAInary.app\`."
+            } > "${NOTES}"
+          elif [ "${NOTARIZE_CONFIGURED}" != "true" ]; then
+            echo "::warning::Release is signed but not notarized"
+            {
+              echo "> **Note:** this build is signed with a Developer ID but not notarized."
+              echo "> macOS Gatekeeper may warn on first launch; you may need to approve it in System Settings."
+            } > "${NOTES}"
+          else
+            : > "${NOTES}"
+          fi
+
+      - name: Notarize and staple
+        if: ${{ env.NOTARIZE_CONFIGURED == 'true' }}
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          NOTARY_ZIP="${RUNNER_TEMP}/notarize.zip"
+          ditto -c -k --norsrc --noextattr --keepParent dist/cAInary.app "${NOTARY_ZIP}"
+          xcrun notarytool submit "${NOTARY_ZIP}" \
+            --apple-id "${APPLE_ID}" \
+            --team-id "${APPLE_TEAM_ID}" \
+            --password "${APPLE_APP_PASSWORD}" \
+            --wait
+          xcrun stapler staple dist/cAInary.app
+          xcrun stapler validate dist/cAInary.app
+          spctl -a -vv -t exec dist/cAInary.app
+          # Re-zip so the published archive contains the stapled ticket.
+          rm -f "dist/cAInary-${VERSION}-macos.zip"
+          ditto -c -k --norsrc --noextattr --keepParent dist/cAInary.app "dist/cAInary-${VERSION}-macos.zip"
+
+      - name: Assemble release assets
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          ZIP="cainary-${VERSION}-macos-universal.zip"
+          TGZ="cainary-${VERSION}-macos-universal.tar.gz"
+          cp "dist/cAInary-${VERSION}-macos.zip" "release-assets/${ZIP}"
+          COPYFILE_DISABLE=1 tar --no-mac-metadata -C dist -czf "release-assets/${TGZ}" cAInary.app
+          cd release-assets
+          for f in "${ZIP}" "${TGZ}"; do
+            shasum -a 256 "${f}" > "${f}.sha256"
+          done
+          shasum -a 256 "${ZIP}" "${TGZ}" > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            release-assets/cainary-${{ env.VERSION }}-macos-universal.zip
+            release-assets/cainary-${{ env.VERSION }}-macos-universal.tar.gz
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+          append_body: true
+          body_path: release-assets/NOTES.md
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/cainary-${{ env.VERSION }}-macos-universal.zip
+            release-assets/cainary-${{ env.VERSION }}-macos-universal.tar.gz
+            release-assets/cainary-${{ env.VERSION }}-macos-universal.zip.sha256
+            release-assets/cainary-${{ env.VERSION }}-macos-universal.tar.gz.sha256
+            release-assets/SHA256SUMS
+
+      - name: Remove temporary keychain and certificate
+        if: ${{ always() && env.SIGNING_CONFIGURED == 'true' }}
+        run: |
+          rm -f "${RUNNER_TEMP}/certificate.p12"
+          security delete-keychain "${RUNNER_TEMP}/build.keychain-db" || true
+
+  # crates.io Trusted Publishing: a short-lived token from GitHub OIDC, no stored secret. Off
+  # until the maintainer has published 0.1.0 by hand, added this workflow as the trusted
+  # publisher of both crates (environment crates-io) and set CRATES_IO_PUBLISH=true. After a
+  # partial upload, use "Re-run failed jobs": a full rerun repeats the version logic.
+  crates:
+    name: Publish crates to crates.io
+    needs: [release, build]
+    if: ${{ needs.release.outputs.released == 'true' && vars.CRATES_IO_PUBLISH == 'true' }}
+    runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release.outputs.tag_name }}
+          persist-credentials: false
+
+      - name: Install Rust (version from mise.toml)
+        run: |
+          set -eu
+          v="$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' mise.toml)"
+          test -n "${v}"
+          rustup toolchain install "${v}" --profile minimal
+          rustup default "${v}"
+
+      # 200: this version is already published, so skip that crate; 404: publish it; anything
+      # else fails. A rerun after a partial upload then publishes only what is missing.
+      - name: Find crates not yet on crates.io
+        id: missing
+        run: |
+          set -euo pipefail
+          count=0
+          exclude=""
+          for crate in cainary-core cainary; do
+            code="$(curl -sS -o /dev/null -w '%{http_code}' --retry 3 \
+              -A "cainary-release (https://github.com/${GITHUB_REPOSITORY})" \
+              "https://crates.io/api/v1/crates/${crate}/${VERSION}")"
+            case "${code}" in
+              200) echo "${crate} ${VERSION} is already on crates.io"; exclude="${exclude} --exclude ${crate}" ;;
+              404) count=$((count + 1)) ;;
+              *) echo "::error::crates.io returned HTTP ${code} for ${crate} ${VERSION}"; exit 1 ;;
+            esac
+          done
+          {
+            echo "count=${count}"
+            echo "exclude=${exclude}"
+          } >> "${GITHUB_OUTPUT}"
+
+      # Right before publishing: the token expires after 30 minutes.
+      - name: Get a crates.io token (Trusted Publishing)
+        if: ${{ steps.missing.outputs.count != '0' }}
+        id: auth
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+
+      - name: cargo publish
+        if: ${{ steps.missing.outputs.count != '0' }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          EXCLUDE: ${{ steps.missing.outputs.exclude }}
+        run: |
+          set -euo pipefail
+          # EXCLUDE is "--exclude <crate>" pairs (or empty) and must split into words.
+          # shellcheck disable=SC2086
+          cargo publish --workspace --locked --registry crates-io ${EXCLUDE}
+
+  packslip:
+    name: Sign packslip manifest
+    needs: [release, build]
+    if: ${{ needs.release.outputs.released == 'true' }}
+    runs-on: ubuntu-latest
+    # Signing never holds release-write access; publish-packslip uploads the bundle.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # The tag sits on the version-bump commit, not on github.sha (the push that triggered
+      # this run), so record the commit the tag actually names.
+      - name: Resolve tagged commit
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          echo "commit=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG_NAME}" --jq .sha)" >> "${GITHUB_OUTPUT}"
+
+      # A macOS archive named for no architecture is recorded as universal (os = darwin, no
+      # arch). The command is the bundle's executable; the bundle itself is an app resource.
+      - name: Sign packslip manifest
+        id: packslip
+        uses: jdx/packslip@v1
+        with:
+          download: cainary-*-macos-universal.tar.gz
+          bin: cainary=cAInary.app/Contents/Helpers/cainary
+          resources: app=archive:cAInary.app
+          tag: ${{ needs.release.outputs.tag_name }}
+          version: ${{ needs.release.outputs.version }}
+          commit: ${{ steps.source.outputs.commit }}
+          attest: link
+          upload: false
+
+      - name: Keep signed bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: packslip-bundle
+          retention-days: 1
+          path: ${{ steps.packslip.outputs.bundle }}
+          if-no-files-found: error
+
+  publish-packslip:
+    name: Publish packslip manifest
+    needs: [release, packslip]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Fetch signed bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: packslip-bundle
+          path: packslip
+
+      - name: Upload signed bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          test -f packslip/packslip.sigstore.json
+          gh release upload "${TAG_NAME}" packslip/packslip.sigstore.json --repo "${GITHUB_REPOSITORY}" --clobber
+
+  verify-packslip:
+    name: Verify published packslip manifest
+    needs: [release, publish-packslip]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # Signer fingerprint published in README.md; constant across releases. Set the
+      # PACKSLIP_PIN repository variable from the first release's job summary.
+      PACKSLIP_PIN: ${{ vars.PACKSLIP_PIN }}
+    steps:
+      - name: Install packslip
+        uses: taiki-e/install-action@v2
+        with:
+          tool: packslip@1.6.0
+
+      # Check what users download: the public release URLs, not this run's local files.
+      - name: Verify manifest against the published tarball
+        env:
+          TAG_NAME: ${{ needs.release.outputs.tag_name }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG_NAME}"
+          asset="cainary-${VERSION}-macos-universal.tar.gz"
+          curl -fsSLO --retry 3 "${base}/${asset}"
+          curl -fsSLO --retry 3 "${base}/packslip.sigstore.json"
+          pin_args=()
+          if [ -n "${PACKSLIP_PIN}" ]; then
+            pin_args=(--pin "${PACKSLIP_PIN}")
+          else
+            echo "::warning::PACKSLIP_PIN is not set; verifying by identity only"
+          fi
+          packslip verify packslip.sigstore.json \
+            --identity-prefix "https://github.com/${GITHUB_REPOSITORY}/" \
+            --issuer https://token.actions.githubusercontent.com \
+            "${pin_args[@]}" \
+            --artifact "${asset}"
+          {
+            echo "### packslip signer fingerprint"
+            echo
+            echo "\`$(packslip pin packslip.sigstore.json)\`"
+          } >> "${GITHUB_STEP_SUMMARY}"

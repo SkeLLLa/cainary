@@ -1,0 +1,515 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "macos",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "medium",
+    "label": "MEDIUM",
+    "summary": "com.example-corp.backup (team ABCDE12345) can read all your files (+4 more)"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "others": [
+    {
+      "id": "example-corp",
+      "name": "Example-corp",
+      "kind": "monitor",
+      "installed": true,
+      "status": {
+        "level": "medium",
+        "label": "MEDIUM",
+        "summary": "com.example-corp.backup (team ABCDE12345) can read all your files (+4 more)"
+      },
+      "sends": [
+        "traffic",
+        "device-access"
+      ],
+      "surfaces": [],
+      "findings": [
+        {
+          "id": "device-2",
+          "key": "03f090620e5e3f52",
+          "level": "medium",
+          "title": "com.example-corp.backup (team ABCDE12345) can read all your files",
+          "detail": "",
+          "surface": "device",
+          "sends": [
+            "device-access"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.apple.TCC.configuration-profile-policy.plist",
+            "kind": "file",
+            "evidence": [
+              "service = SystemPolicyAllFiles",
+              "grantee = com.example-corp.backup (team ABCDE12345)",
+              "authorization = Allow"
+            ]
+          },
+          "docs": "https://github.com/apple/device-management/blob/release/mdm/profiles/com.apple.TCC.configuration-profile-policy.yaml"
+        },
+        {
+          "id": "device-3",
+          "key": "03f090620e5e3f52-2",
+          "level": "medium",
+          "title": "com.example-corp.keys may be able to watch your keyboard input",
+          "detail": "",
+          "surface": "device",
+          "sends": [
+            "device-access"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.apple.TCC.configuration-profile-policy.plist",
+            "kind": "file",
+            "evidence": [
+              "service = ListenEvent",
+              "grantee = com.example-corp.keys",
+              "authorization = AllowStandardUserToSetSystemService"
+            ]
+          },
+          "docs": "https://github.com/apple/device-management/blob/release/mdm/profiles/com.apple.TCC.configuration-profile-policy.yaml"
+        },
+        {
+          "id": "device-4",
+          "key": "8166b408f6041f6e",
+          "level": "medium",
+          "title": "com.example-corp.netfilter may inspect or redirect network traffic, including AI tools'",
+          "detail": "",
+          "surface": "device",
+          "sends": [
+            "traffic"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "/Library/SystemExtensions/db.plist",
+            "kind": "file",
+            "evidence": [
+              "extension = com.example-corp.netfilter",
+              "team = ABCDE12345"
+            ]
+          },
+          "docs": null
+        },
+        {
+          "id": "device-5",
+          "key": "03f090620e5e3f52-3",
+          "level": "medium",
+          "title": "com.example-corp.remote can control your Mac",
+          "detail": "",
+          "surface": "device",
+          "sends": [
+            "device-access"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.apple.TCC.configuration-profile-policy.plist",
+            "kind": "file",
+            "evidence": [
+              "service = Accessibility",
+              "grantee = com.example-corp.remote",
+              "authorization = Allowed"
+            ]
+          },
+          "docs": "https://github.com/apple/device-management/blob/release/mdm/profiles/com.apple.TCC.configuration-profile-policy.yaml"
+        },
+        {
+          "id": "device-6",
+          "key": "03f090620e5e3f52-4",
+          "level": "medium",
+          "title": "com.example-corp.screen may be able to record your screen",
+          "detail": "",
+          "surface": "device",
+          "sends": [
+            "device-access"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.apple.TCC.configuration-profile-policy.plist",
+            "kind": "file",
+            "evidence": [
+              "service = ScreenCapture",
+              "grantee = com.example-corp.screen",
+              "authorization = AllowStandardUserToSetSystemService"
+            ]
+          },
+          "docs": "https://github.com/apple/device-management/blob/release/mdm/profiles/com.apple.TCC.configuration-profile-policy.yaml"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "id": "network-proxy",
+      "name": "Network proxy",
+      "kind": "monitor",
+      "installed": true,
+      "status": {
+        "level": "medium",
+        "label": "MEDIUM",
+        "summary": "Network traffic may go through a proxy at proxy.example-corp.com:3128, the PAC file at pac.example-corp.com"
+      },
+      "sends": [
+        "traffic"
+      ],
+      "surfaces": [],
+      "findings": [
+        {
+          "id": "device-7",
+          "key": "b1a7e6e14027e5f5",
+          "level": "medium",
+          "title": "Network traffic may go through a proxy at proxy.example-corp.com:3128, the PAC file at pac.example-corp.com",
+          "detail": "Electron apps (Claude Desktop, Cursor, VS Code) follow the system proxy; command-line tools do only if they honor it.",
+          "surface": "device",
+          "sends": [
+            "traffic"
+          ],
+          "setBy": "unattributed",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "scutil --proxy",
+            "kind": "command",
+            "evidence": [
+              "proxy = proxy.example-corp.com:3128",
+              "proxy = the PAC file at pac.example-corp.com",
+              "ExceptionsList = 2 entries"
+            ]
+          },
+          "docs": "https://www.electronjs.org/docs/latest/api/net"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "id": "other",
+      "name": "Other",
+      "kind": "monitor",
+      "installed": true,
+      "status": {
+        "level": "medium",
+        "label": "MEDIUM",
+        "summary": "com.other.guard can observe app launches and file access"
+      },
+      "sends": [
+        "device-access"
+      ],
+      "surfaces": [],
+      "findings": [
+        {
+          "id": "device-8",
+          "key": "8166b408f6041f6e-2",
+          "level": "medium",
+          "title": "com.other.guard can observe app launches and file access",
+          "detail": "",
+          "surface": "device",
+          "sends": [
+            "device-access"
+          ],
+          "setBy": "user",
+          "inEffect": true,
+          "maybe": true,
+          "counts": false,
+          "config": {
+            "path": "/Library/SystemExtensions/db.plist",
+            "kind": "file",
+            "evidence": [
+              "extension = com.other.guard",
+              "team = ZZZZZ99999"
+            ]
+          },
+          "docs": null
+        }
+      ],
+      "notes": []
+    },
+    {
+      "id": "web-content-filter",
+      "name": "Web content filter",
+      "kind": "monitor",
+      "installed": true,
+      "status": {
+        "level": "medium",
+        "label": "MEDIUM",
+        "summary": "Your organization installed a web content filter"
+      },
+      "sends": [
+        "traffic"
+      ],
+      "surfaces": [],
+      "findings": [
+        {
+          "id": "device-1",
+          "key": "5afca01bc9680581",
+          "level": "medium",
+          "title": "Your organization installed a web content filter",
+          "detail": "",
+          "surface": "device",
+          "sends": [
+            "traffic"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.apple.webcontent-filter.plist",
+            "kind": "marker",
+            "evidence": []
+          },
+          "docs": null
+        }
+      ],
+      "notes": []
+    },
+    {
+      "id": "device-management",
+      "name": "Device management",
+      "kind": "monitor",
+      "installed": true,
+      "status": {
+        "level": "ok",
+        "label": "OK",
+        "summary": "Nothing sent"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [
+        {
+          "id": "device-11",
+          "key": "179b5aa88a7a1e47",
+          "level": "ok",
+          "title": "This Mac is managed: 5 configuration domains",
+          "detail": "",
+          "surface": "device",
+          "sends": [],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "/Library/Managed Preferences",
+            "kind": "dir",
+            "evidence": [
+              "domain = com.apple.TCC.configuration-profile-policy",
+              "domain = com.apple.dock",
+              "domain = com.apple.system-extension-policy",
+              "domain = com.apple.webcontent-filter",
+              "domain = com.example-corp.wifi"
+            ]
+          },
+          "docs": null
+        }
+      ],
+      "notes": []
+    },
+    {
+      "id": "device",
+      "name": "This device",
+      "kind": "monitor",
+      "installed": true,
+      "status": {
+        "level": "ok",
+        "label": "OK",
+        "summary": "Nothing sent"
+      },
+      "sends": [
+        "policy"
+      ],
+      "surfaces": [],
+      "findings": [
+        {
+          "id": "device-9",
+          "key": "a8838debbbfb7778",
+          "level": "ok",
+          "title": "A profile allows 1 other privacy permission",
+          "detail": "",
+          "surface": "device",
+          "sends": [],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "/Library/Managed Preferences/com.apple.TCC.configuration-profile-policy.plist",
+            "kind": "file",
+            "evidence": [
+              "com.example-corp.call: Microphone"
+            ]
+          },
+          "docs": "https://github.com/apple/device-management/blob/release/mdm/profiles/com.apple.TCC.configuration-profile-policy.yaml"
+        },
+        {
+          "id": "device-10",
+          "key": "03f090620e5e3f52-5",
+          "level": "ok",
+          "title": "MDM blocks com.example-corp.camera from Camera",
+          "detail": "",
+          "surface": "device",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.apple.TCC.configuration-profile-policy.plist",
+            "kind": "file",
+            "evidence": [
+              "service = Camera",
+              "grantee = com.example-corp.camera",
+              "authorization = Deny"
+            ]
+          },
+          "docs": "https://github.com/apple/device-management/blob/release/mdm/profiles/com.apple.TCC.configuration-profile-policy.yaml"
+        }
+      ],
+      "notes": [
+        "Whether a corporate root certificate is trusted can't be seen; cAInary doesn't read the Keychain.",
+        "Permissions you granted yourself live in TCC.db, which needs Full Disk Access."
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "tool": "device",
+      "source": {
+        "path": "/Library/Managed Preferences",
+        "origin": "mdm",
+        "kind": "dir"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "/Library/Managed Preferences/com.apple.TCC.configuration-profile-policy.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "/Library/Managed Preferences/com.apple.system-extension-policy.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "/Library/Managed Preferences/com.apple.webcontent-filter.plist",
+        "origin": "mdm",
+        "kind": "marker"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "/Library/SystemExtensions/db.plist",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "scutil --proxy",
+        "origin": "system",
+        "kind": "command"
+      },
+      "state": "present",
+      "note": null
+    }
+  ]
+}

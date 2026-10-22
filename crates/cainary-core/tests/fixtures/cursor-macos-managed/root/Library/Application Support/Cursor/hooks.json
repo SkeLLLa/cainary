@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeSubmitPrompt": [{ "command": "curl -s -X POST https://audit.example-corp.com/prompt" }],
+    "afterFileEdit": [{ "command": "curl -s -X POST https://audit.example-corp.com/edit" }],
+    "workspaceOpen": [{ "command": "curl -s https://audit.example-corp.com/open" }]
+  }
+}

@@ -1,0 +1,318 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "linux",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "medium",
+    "label": "MEDIUM",
+    "summary": "Claude Code runs through Amazon Bedrock"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": true,
+      "status": {
+        "level": "medium",
+        "label": "MEDIUM",
+        "summary": "Claude Code runs through Amazon Bedrock"
+      },
+      "sends": [
+        "traffic",
+        "usage",
+        "identity",
+        "policy"
+      ],
+      "surfaces": [
+        "claude-code"
+      ],
+      "findings": [
+        {
+          "id": "claude-1",
+          "key": "53258bef197bee7f",
+          "level": "medium",
+          "title": "Claude Code runs through Amazon Bedrock",
+          "detail": "Model requests go to your cloud provider instead of Anthropic.",
+          "surface": "claude-code",
+          "sends": [
+            "traffic"
+          ],
+          "setBy": "environment",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "env:CLAUDE_CODE_USE_BEDROCK",
+            "kind": "env",
+            "evidence": [
+              "CLAUDE_CODE_USE_BEDROCK = 1",
+              "ANTHROPIC_BEDROCK_BASE_URL = https://bedrock-gw.example-corp.com"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/env-vars"
+        },
+        {
+          "id": "claude-2",
+          "key": "1c7fbb2495962e21",
+          "level": "low",
+          "title": "Claude Code sends usage data to otel.example-corp.com",
+          "detail": "Claude Code's metrics export is on.",
+          "surface": "claude-code",
+          "sends": [
+            "usage",
+            "identity"
+          ],
+          "setBy": "system",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/etc/claude-code/managed-settings.json",
+            "kind": "file",
+            "evidence": [
+              "CLAUDE_CODE_ENABLE_TELEMETRY = 1",
+              "OTEL_METRICS_EXPORTER = otlp",
+              "OTEL_EXPORTER_OTLP_ENDPOINT = https://otel.example-corp.com"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/monitoring-usage"
+        },
+        {
+          "id": "claude-7",
+          "key": "d1de791daf247fd5",
+          "level": "opted-out",
+          "title": "Anthropic usage telemetry is turned off",
+          "detail": "A setting turns off the vendor's default telemetry, so nothing is sent by default.",
+          "surface": "claude-code",
+          "sends": [],
+          "setBy": "vendor-default",
+          "inEffect": false,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "vendor default",
+            "kind": "marker",
+            "evidence": []
+          },
+          "docs": "https://code.claude.com/docs/en/data-usage#telemetry-services"
+        },
+        {
+          "id": "claude-3",
+          "key": "dd9063c7b3e976ea",
+          "level": "ok",
+          "title": "Your organization controls Claude Code's models and updates",
+          "detail": "These settings come from your organization and can't be changed locally.",
+          "surface": "claude-code",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "system",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/etc/claude-code/managed-settings.json",
+            "kind": "file",
+            "evidence": [
+              "availableModels = [\"sonnet\"]"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/settings-reference"
+        },
+        {
+          "id": "claude-4",
+          "key": "e8c6a4c7e95ea3f3",
+          "level": "ok",
+          "title": "Your organization controls whether hooks may run",
+          "detail": "These settings come from your organization and can't be changed locally.",
+          "surface": "claude-code",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "system",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/etc/claude-code/managed-settings.json",
+            "kind": "file",
+            "evidence": [
+              "allowManagedHooksOnly = true"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/settings-reference"
+        },
+        {
+          "id": "claude-5",
+          "key": "fc1796ce62dcaaac",
+          "level": "ok",
+          "title": "Your organization sets other Claude Code policies",
+          "detail": "These settings come from your organization and can't be changed locally.",
+          "surface": "claude-code",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "system",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/etc/claude-code/managed-settings.json",
+            "kind": "file",
+            "evidence": [
+              "env"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/settings-reference"
+        },
+        {
+          "id": "claude-6",
+          "key": "8b0b6accad124566",
+          "level": "ok",
+          "title": "Claude Code uses a proxy",
+          "detail": "The proxy sees which hosts Claude Code connects to, not what it sends.",
+          "surface": "claude-code",
+          "sends": [],
+          "setBy": "environment",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "env:HTTPS_PROXY",
+            "kind": "env",
+            "evidence": [
+              "HTTPS_PROXY = http://proxy.example-corp.com:3128"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/network-config"
+        }
+      ],
+      "notes": [
+        "Server-managed settings are visible only through the local cache."
+      ]
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "others": [],
+  "sources": [
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/etc/claude-code/managed-mcp.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/etc/claude-code/managed-settings.d",
+        "origin": "system",
+        "kind": "dir"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/etc/claude-code/managed-settings.d/10-env.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/etc/claude-code/managed-settings.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "~/.claude/policy-limits.json",
+        "origin": "server",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "~/.claude/remote-settings.json",
+        "origin": "server",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "~/.claude/settings.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    }
+  ]
+}

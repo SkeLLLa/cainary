@@ -1,0 +1,294 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "macos",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "medium",
+    "label": "MEDIUM",
+    "summary": "MCP server `remote` receives your tool requests at mcp.example-corp.com"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": true,
+      "status": {
+        "level": "medium",
+        "label": "MEDIUM",
+        "summary": "MCP server `remote` receives your tool requests at mcp.example-corp.com"
+      },
+      "sends": [
+        "tool-details",
+        "vendor"
+      ],
+      "surfaces": [
+        "codex"
+      ],
+      "findings": [
+        {
+          "id": "openai-1",
+          "key": "0c570efc0c206f33",
+          "level": "medium",
+          "title": "MCP server `remote` receives your tool requests at mcp.example-corp.com",
+          "detail": "",
+          "surface": "codex",
+          "sends": [
+            "tool-details"
+          ],
+          "setBy": "user",
+          "inEffect": true,
+          "maybe": true,
+          "counts": false,
+          "config": {
+            "path": "~/.codex/plugins/cache/example-market/acme-remote/1.0.0/servers.json",
+            "kind": "file",
+            "evidence": [
+              "server = remote",
+              "url = https://mcp.example-corp.com/v1"
+            ]
+          },
+          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference"
+        },
+        {
+          "id": "openai-2",
+          "key": "b37f637239a8670c",
+          "level": "low",
+          "title": "OpenAI receives anonymous usage metrics by default",
+          "detail": "Codex sends anonymous usage metrics to OpenAI unless the metrics exporter is turned off.",
+          "surface": "codex",
+          "sends": [
+            "vendor"
+          ],
+          "setBy": "vendor-default",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "vendor default",
+            "kind": "marker",
+            "evidence": []
+          },
+          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference"
+        },
+        {
+          "id": "openai-3",
+          "key": "24d24f2a65d2b0ae",
+          "level": "ok",
+          "title": "MCP server `local` runs local-collector with your tool requests",
+          "detail": "",
+          "surface": "codex",
+          "sends": [],
+          "setBy": "user",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "~/.codex/plugins/cache/example-market/acme-local/1.0.0/.mcp.json",
+            "kind": "file",
+            "evidence": [
+              "server = local",
+              "command = /opt/acme/local-collector --stdio"
+            ]
+          },
+          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference"
+        }
+      ],
+      "notes": [
+        "Findings about telemetry, analytics, model providers, `notify` and hooks describe your base config; a `--profile` you use can change them."
+      ]
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "others": [],
+  "sources": [
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.openai.codex.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/Library/Managed Preferences/com.openai.codex.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/etc/codex/config.toml",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/etc/codex/managed_config.toml",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/etc/codex/requirements.toml",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "~/.codex/cloud-config-bundle-cache.json",
+        "origin": "server",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "~/.codex/config.toml",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "~/.codex/hooks.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "~/.codex/plugins/cache/example-market/acme-local",
+        "origin": "user",
+        "kind": "dir"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "~/.codex/plugins/cache/example-market/acme-local/1.0.0/.codex-plugin/plugin.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "~/.codex/plugins/cache/example-market/acme-local/1.0.0/.mcp.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "~/.codex/plugins/cache/example-market/acme-remote",
+        "origin": "user",
+        "kind": "dir"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "~/.codex/plugins/cache/example-market/acme-remote/1.0.0/.codex-plugin/plugin.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "~/.codex/plugins/cache/example-market/acme-remote/1.0.0/servers.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    }
+  ]
+}

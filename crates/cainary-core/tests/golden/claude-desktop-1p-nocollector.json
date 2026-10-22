@@ -1,0 +1,193 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "macos",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "high",
+    "label": "HIGH",
+    "summary": "Claude Desktop may send raw API requests and responses to a collector"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": true,
+      "status": {
+        "level": "high",
+        "label": "HIGH",
+        "summary": "Claude Desktop may send raw API requests and responses to a collector"
+      },
+      "sends": [
+        "prompts",
+        "responses",
+        "tool-details",
+        "file-contents",
+        "identity",
+        "policy"
+      ],
+      "surfaces": [
+        "claude-desktop"
+      ],
+      "findings": [
+        {
+          "id": "claude-1",
+          "key": "7e3d71894c49380d",
+          "level": "high",
+          "title": "Claude Desktop may send raw API requests and responses to a collector",
+          "detail": "",
+          "surface": "claude-desktop",
+          "sends": [
+            "prompts",
+            "responses",
+            "tool-details",
+            "file-contents"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.anthropic.claudefordesktop.plist",
+            "kind": "file",
+            "evidence": [
+              "otlpContentCapture = rawApiBodies"
+            ]
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/telemetry"
+        },
+        {
+          "id": "claude-2",
+          "key": "ed19db0e3b2961dc",
+          "level": "low",
+          "title": "Claude Desktop may send telemetry to a collector",
+          "detail": "OTLP keys are set but no endpoint; the collector may be set in the admin console.",
+          "surface": "claude-desktop",
+          "sends": [
+            "identity"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.anthropic.claudefordesktop.plist",
+            "kind": "file",
+            "evidence": [
+              "otlpContentCapture is set",
+              "endUserAttribution is set"
+            ]
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/telemetry"
+        },
+        {
+          "id": "claude-3",
+          "key": "0d4afe67ffd47934",
+          "level": "ok",
+          "title": "Your organization turns off Anthropic telemetry",
+          "detail": "",
+          "surface": "claude-desktop",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.anthropic.claudefordesktop.plist",
+            "kind": "file",
+            "evidence": [
+              "disableEssentialTelemetry = true",
+              "disableNonessentialTelemetry = true"
+            ]
+          },
+          "docs": "https://claude.com/docs/third-party/claude-desktop/mdm"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "others": [],
+  "sources": [
+    {
+      "tool": "claude-desktop",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.anthropic.claudefordesktop.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-desktop",
+      "source": {
+        "path": "/Library/Managed Preferences/com.anthropic.claudefordesktop.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "claude-desktop",
+      "source": {
+        "path": "~/Library/Application Support/Claude/claude_desktop_config.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    }
+  ]
+}

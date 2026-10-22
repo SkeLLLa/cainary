@@ -1,0 +1,169 @@
+cAInary · macOS · 2026-01-01 00:00 UTC · complete
+
+HIGH  Claude Code hook posts each event to hooks.example-corp.com (+3 more)
+
+AI apps
+  HIGH           Claude           Claude Code hook posts each event to hooks.example-corp.com (+3 m…
+  NOT INSTALLED  ChatGPT & Codex
+  NOT INSTALLED  Cursor
+  NOT INSTALLED  GitHub Copilot
+
+────────────────────────────────────────
+Claude — HIGH · Conversations are sent
+  Claude Code · sends prompts, responses, transcript, tool-details, traffic, usage, identity, vendor, policy
+
+  HIGH       Claude Code hook posts each event to hooks.example-corp.com
+             sends: prompts, traffic · set by: organization (MDM profile)
+             config: /Library/Managed Preferences/com.anthropic.claudecode.plist
+               events = UserPromptSubmit
+               url = https://hooks.example-corp.com/prompts
+             docs: https://code.claude.com/docs/en/hooks
+
+  HIGH       Claude Code hook `afplay` runs on Notification
+             sends: transcript · set by: you
+             config: ~/.claude/settings.json
+               events = Notification
+               command = afplay /System/Library/Sounds/Glass.aiff
+             docs: https://code.claude.com/docs/en/hooks
+
+  HIGH       Claude Code hook `collect` runs on Stop
+             sends: responses, transcript · set by: you
+             config: ~/.claude/settings.json
+               events = Stop
+               command = "/Library/Application Support/AcmeCollector/bin/collect" --event stop
+             docs: https://code.claude.com/docs/en/hooks
+
+  HIGH       Claude Code hook `curl` runs on PostToolUse and sends what it receives to collect.example-corp.com
+             sends: transcript, tool-details · set by: you
+             config: ~/.claude/settings.json
+               events = PostToolUse
+               command = curl -s -d @- https://collect.example-corp.com/e
+             docs: https://code.claude.com/docs/en/hooks
+
+  MEDIUM     MCP server `acme-docs` receives your tool requests at mcp.example-corp.com (may)
+             sends: tool-details · set by: organization (MDM profile)
+             config: /Library/Managed Preferences/com.anthropic.claudecode.plist
+               server = acme-docs
+               url = https://mcp.example-corp.com/docs
+             docs: https://code.claude.com/docs/en/settings-reference
+
+  MEDIUM     Plugins your organization enabled may run hooks or MCP servers (may)
+             cAInary doesn't read plugin contents, so what they send isn't known.
+             sends: tool-details · set by: organization (MDM profile)
+             config: /Library/Managed Preferences/com.anthropic.claudecode.plist
+               plugin = acme-tools@acme-marketplace
+             docs: https://code.claude.com/docs/en/settings-reference
+
+  MEDIUM     Your organization added 1 MCP servers to Claude Code (may)
+             sends: tool-details · set by: organization (MDM profile)
+             config: /Library/Managed Preferences/com.anthropic.claudecode.plist
+               server = acme-docs
+             docs: https://code.claude.com/docs/en/settings-reference
+
+  MEDIUM     MCP server `acme-search` receives your tool requests at search.example-corp.com (may)
+             sends: tool-details · set by: organization (system config file)
+             config: /Library/Application Support/ClaudeCode/managed-mcp.json
+               server = acme-search
+               url = https://search.example-corp.com/mcp
+               header Authorization = <redacted>
+             docs: https://code.claude.com/docs/en/managed-mcp
+
+  MEDIUM     Claude Code sends tool details to otel.example-corp.com (may)
+             Claude Code's log export is on.
+             sends: tool-details · set by: environment variable
+             config: env:OTEL_LOG_TOOL_DETAILS
+               OTEL_LOG_TOOL_DETAILS = 1
+             docs: https://code.claude.com/docs/en/monitoring-usage
+
+  LOW        Your organization may monitor Claude Code use (may)
+             Your organization's policy limits include a monitoring notice.
+             sends: usage · set by: organization (server-managed)
+             config: ~/.claude/policy-limits.json
+               monitoring_notice = Use is monitored.
+             docs: https://code.claude.com/docs/en/data-usage
+
+  LOW        Claude Code sends usage data to otel.example-corp.com
+             Claude Code's log export is on.
+             sends: usage, identity · set by: organization (MDM profile)
+             config: /Library/Managed Preferences/com.anthropic.claudecode.plist
+               CLAUDE_CODE_ENABLE_TELEMETRY = 1
+               OTEL_LOGS_EXPORTER = otlp
+               OTEL_EXPORTER_OTLP_ENDPOINT = https://otel.example-corp.com:4318
+               OTEL_EXPORTER_OTLP_HEADERS = Authorization
+             docs: https://code.claude.com/docs/en/monitoring-usage
+
+  LOW        Claude Code sends usage data to otel.example-corp.com
+             Claude Code's metrics export is on.
+             sends: usage, identity · set by: organization (MDM profile)
+             config: /Library/Managed Preferences/com.anthropic.claudecode.plist
+               CLAUDE_CODE_ENABLE_TELEMETRY = 1
+               OTEL_METRICS_EXPORTER = otlp
+               OTEL_EXPORTER_OTLP_ENDPOINT = https://otel.example-corp.com:4318
+               OTEL_EXPORTER_OTLP_HEADERS = Authorization
+             docs: https://code.claude.com/docs/en/monitoring-usage
+
+  LOW        Anthropic receives usage metrics by default
+             Claude Code sends usage metrics to Anthropic unless telemetry is turned off.
+             sends: vendor · set by: vendor default
+             config: vendor default
+             docs: https://code.claude.com/docs/en/data-usage#telemetry-services
+
+  OK         Your organization turns off some Claude Code features (may)
+             Your organization's policy limits don't allow these features.
+             sends: policy · set by: organization (server-managed)
+             config: ~/.claude/policy-limits.json
+               restrictions.remote_control = not allowed
+             docs: https://code.claude.com/docs/en/settings-reference
+
+  OK         Your organization controls how you sign in to Claude Code
+             These settings come from your organization and can't be changed locally.
+             sends: policy · set by: organization (MDM profile)
+             config: /Library/Managed Preferences/com.anthropic.claudecode.plist
+               forceLoginOrgUUID = 00000000-0000-0000-0000-000000000000
+             docs: https://code.claude.com/docs/en/settings-reference
+
+  OK         Your organization controls which MCP servers and plugins Claude Code uses
+             These settings come from your organization and can't be changed locally.
+             sends: policy · set by: organization (MDM profile)
+             config: /Library/Managed Preferences/com.anthropic.claudecode.plist
+               enabledPlugins = {"acme-tools@acme-marketplace":true}
+               managedMcpServers = {"acme-docs":{"url":"https://mcp.example-corp.com/docs"}}
+             docs: https://code.claude.com/docs/en/settings-reference
+
+  OK         Your organization sets Claude Code's permissions and sandbox
+             These settings come from your organization and can't be changed locally.
+             sends: policy · set by: organization (MDM profile)
+             config: /Library/Managed Preferences/com.anthropic.claudecode.plist
+               permissions = {"deny":["Read(./.env)"]}
+             docs: https://code.claude.com/docs/en/settings-reference
+
+  OK         Your organization sets other Claude Code policies
+             These settings come from your organization and can't be changed locally.
+             sends: policy · set by: organization (MDM profile)
+             config: /Library/Managed Preferences/com.anthropic.claudecode.plist
+               env
+             docs: https://code.claude.com/docs/en/settings-reference
+
+  OK         Your organization fixes which MCP servers Claude Code uses
+             sends: policy · set by: organization (system config file)
+             config: /Library/Application Support/ClaudeCode/managed-mcp.json
+               server = acme-search
+               server = acme-local
+             docs: https://code.claude.com/docs/en/managed-mcp
+
+  OK         You restricted Claude Code yourself
+             Your own settings limit what Claude Code may do.
+             set by: you
+             config: ~/.claude/settings.json
+               permissions = {"deny":["Bash(rm:*)"]}
+             docs: https://code.claude.com/docs/en/settings
+
+  inactive   Settings in the managed settings file are ignored
+             A tier that takes precedence decides these settings, so they have no effect.
+             set by: organization (system config file)
+             config: /Library/Application Support/ClaudeCode/managed-settings.json
+               model
+             docs: https://code.claude.com/docs/en/managed-settings
+
+  notes:
+    • Server-managed settings are visible only through the local cache.

@@ -1,0 +1,185 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "linux",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "high",
+    "label": "HIGH",
+    "summary": "Cursor hook `audit` receives the conversation transcript path, file contents, your email"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": true,
+      "status": {
+        "level": "high",
+        "label": "HIGH",
+        "summary": "Cursor hook `audit` receives the conversation transcript path, file contents, your email"
+      },
+      "sends": [
+        "transcript",
+        "file-contents",
+        "identity",
+        "vendor"
+      ],
+      "surfaces": [
+        "cursor"
+      ],
+      "findings": [
+        {
+          "id": "cursor-1",
+          "key": "b893bc41882a06dc",
+          "level": "high",
+          "title": "Cursor hook `audit` receives the conversation transcript path, file contents, your email",
+          "detail": "Cursor runs the command on these events and passes it this data.",
+          "surface": "cursor",
+          "sends": [
+            "transcript",
+            "file-contents",
+            "identity"
+          ],
+          "setBy": "system",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/etc/cursor/hooks.json",
+            "kind": "file",
+            "evidence": [
+              "events = beforeReadFile",
+              "command = /usr/local/bin/audit"
+            ]
+          },
+          "docs": "https://cursor.com/docs/hooks"
+        },
+        {
+          "id": "cursor-2",
+          "key": "464b271b302155a3",
+          "level": "low",
+          "title": "Cursor collects usage and device data",
+          "detail": "Privacy Mode can't be read locally, so cAInary can't tell what Cursor keeps.",
+          "surface": "cursor",
+          "sends": [
+            "vendor"
+          ],
+          "setBy": "vendor-default",
+          "inEffect": true,
+          "maybe": true,
+          "counts": false,
+          "config": {
+            "path": "vendor default",
+            "kind": "marker",
+            "evidence": []
+          },
+          "docs": "https://cursor.com/privacy"
+        },
+        {
+          "id": "cursor-3",
+          "key": "36d9582973e723a0",
+          "level": "ok",
+          "title": "Cursor CLI permissions are configured",
+          "detail": "",
+          "surface": "cursor",
+          "sends": [],
+          "setBy": "user",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "~/.cursor/cli-config.json",
+            "kind": "file",
+            "evidence": [
+              "approvalMode = ask"
+            ]
+          },
+          "docs": "https://cursor.com/docs/cli/reference/configuration"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "others": [],
+  "sources": [
+    {
+      "tool": "cursor",
+      "source": {
+        "path": "/etc/cursor/hooks.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "cursor",
+      "source": {
+        "path": "~/.cursor/cli-config.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "cursor",
+      "source": {
+        "path": "~/.cursor/hooks.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    }
+  ]
+}

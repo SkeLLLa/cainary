@@ -1,0 +1,6 @@
+{
+  "os": "macos",
+  "now": "2026-01-01T00:00:00Z",
+  "tools": ["device"],
+  "scutilProxy": "<dictionary> {\n  ExceptionsList : <array> {\n    0 : *.local\n    1 : 169.254/16\n  }\n  HTTPEnable : 1\n  HTTPPort : 3128\n  HTTPProxy : proxy.example-corp.com\n  ProxyAutoConfigEnable : 1\n  ProxyAutoConfigURLString : https://pac.example-corp.com/proxy.pac?u=alice\n}\n"
+}

@@ -1,0 +1,1 @@
+{ "os": "linux", "user": "alice", "now": "2026-01-01T00:00:00Z", "tools": ["claude-code"], "env": { "HTTPS_PROXY": "http://proxy.example-corp.com:3128", "CLAUDE_CODE_USE_BEDROCK": "1" } }

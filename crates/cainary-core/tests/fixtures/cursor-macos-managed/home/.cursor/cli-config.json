@@ -1,0 +1,6 @@
+{
+  // org-managed
+  "permissions": { "allow": ["Shell(ls)"], "deny": ["Read(.env*)", "Shell(rm)"] },
+  "approvalMode": "allowlist",
+  "sandbox": { "mode": "enabled" }
+}

@@ -1,0 +1,62 @@
+# Development tools for cAInary. `mise trust && mise install`, then `make check`.
+# In a sandbox where ~/.cargo is read-only, the Makefile points CARGO_HOME at $TMPDIR itself.
+
+[tools]
+rust = { version = "1.99.0", targets = "aarch64-apple-darwin,x86_64-apple-darwin", components = "rustfmt,clippy" }
+swift = "6.4.0"
+jactionlint = "1.8.2"
+shellcheck = "0.11.0"
+mr-boxington = "1.16.0"
+
+# Only under mise; CI runs the Makefile with plain cargo and swiftc.
+[env]
+# cargo through mbx (mr-boxington): compiled crates are cached and shared across checkouts.
+CARGO_BIN = "mbx"
+# The real binary, not bin/swiftc: through that symlink the driver looks for its libraries under
+# bin/../lib and warns "Unable to locate libSwiftScan".
+SWIFTC = { value = "{{ tools.swift.path }}/usr/bin/swiftc", tools = true }
+
+# Tasks wrap the Makefile so `make <target>` keeps working without mise.
+[tasks.build]
+description = "Debug build of the Rust workspace"
+run = "make build"
+
+[tasks.test]
+description = "cargo test"
+run = "make test"
+
+[tasks.lint]
+description = "fmt, clippy, swift format, shellcheck"
+run = "make lint"
+
+[tasks.check-rust]
+description = "fmt --check, clippy -D warnings, cargo test"
+run = "make check-rust"
+
+[tasks.check]
+description = "Everything CI checks"
+run = "make check"
+
+[tasks.ui-test]
+description = "macOS app unit checks and snapshots (target/ui-snapshots/)"
+run = "make ui-test"
+
+[tasks.bundle]
+description = "Build the macOS app for this Mac: dist/cAInary.app (+ zip)"
+alias = "app"
+run = "make bundle"
+
+[tasks.bundle-universal]
+description = "Build the universal (arm64 + x86_64) release app and zip it"
+# Plain cargo: under mbx 1.16.0, rust-objcopy (strip = true) crashes on @rpath/libLLVM.dylib
+# and leaves the release binary unstripped.
+run = "make bundle RELEASE=1 CARGO_BIN=cargo"
+
+[tasks."app:open"]
+description = "Build the macOS app and launch it"
+depends = ["bundle"]
+run = "open dist/cAInary.app"
+
+[tasks.scan]
+description = "Scan this machine and print the report"
+run = "make scan"

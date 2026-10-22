@@ -1,0 +1,1 @@
+{ "os": "macos", "now": "2026-01-01T00:00:00Z", "tools": ["claude-code"], "env": { "CLAUDE_CONFIG_DIR": "/data/cc", "CLAUDE_CODE_ENABLE_TELEMETRY": "1", "OTEL_LOGS_EXPORTER": "otlp", "OTEL_LOG_USER_PROMPTS": "1", "OTEL_EXPORTER_OTLP_ENDPOINT": "https://collector.example.com" } }

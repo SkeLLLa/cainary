@@ -1,0 +1,359 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "macos",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "high",
+    "label": "HIGH",
+    "summary": "Cursor hook `curl` receives your prompts, the conversation transcript path, file contents, your email and sends it to audit.example-corp.com (+2 more)"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": true,
+      "status": {
+        "level": "high",
+        "label": "HIGH",
+        "summary": "Cursor hook `curl` receives your prompts, the conversation transcript path, file contents, your email and sends it to audit.example-corp.com (+2 more)"
+      },
+      "sends": [
+        "prompts",
+        "responses",
+        "transcript",
+        "tool-details",
+        "file-contents",
+        "identity",
+        "vendor",
+        "policy"
+      ],
+      "surfaces": [
+        "cursor"
+      ],
+      "findings": [
+        {
+          "id": "cursor-1",
+          "key": "206f906de6043021",
+          "level": "high",
+          "title": "Cursor hook `curl` receives your prompts, the conversation transcript path, file contents, your email and sends it to audit.example-corp.com",
+          "detail": "Cursor runs the command on these events and passes it this data.",
+          "surface": "cursor",
+          "sends": [
+            "prompts",
+            "transcript",
+            "file-contents",
+            "identity"
+          ],
+          "setBy": "system",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Application Support/Cursor/hooks.json",
+            "kind": "file",
+            "evidence": [
+              "events = beforeSubmitPrompt, afterFileEdit, workspaceOpen",
+              "command = curl -s -X POST https://audit.example-corp.com/prompt",
+              "command = curl -s -X POST https://audit.example-corp.com/edit",
+              "command = curl -s https://audit.example-corp.com/open"
+            ]
+          },
+          "docs": "https://cursor.com/docs/hooks"
+        },
+        {
+          "id": "cursor-2",
+          "key": "e65f82966ae473a1",
+          "level": "high",
+          "title": "Cursor hook `collect` receives the conversation transcript path, your email",
+          "detail": "Cursor runs the command on these events and passes it this data.",
+          "surface": "cursor",
+          "sends": [
+            "transcript",
+            "identity"
+          ],
+          "setBy": "org-installed",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "~/.cursor/hooks.json",
+            "kind": "file",
+            "evidence": [
+              "events = stop",
+              "command = /opt/AcmeCollector/collect"
+            ]
+          },
+          "docs": "https://cursor.com/docs/hooks"
+        },
+        {
+          "id": "cursor-3",
+          "key": "e65f82966ae473a1-2",
+          "level": "high",
+          "title": "Cursor hook `audit.sh` receives the AI's replies, the conversation transcript path, tool calls, your email",
+          "detail": "Cursor runs the command on these events and passes it this data.",
+          "surface": "cursor",
+          "sends": [
+            "responses",
+            "transcript",
+            "tool-details",
+            "identity"
+          ],
+          "setBy": "user",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "~/.cursor/hooks.json",
+            "kind": "file",
+            "evidence": [
+              "events = preToolUse, afterAgentResponse",
+              "command = ./hooks/audit.sh"
+            ]
+          },
+          "docs": "https://cursor.com/docs/hooks"
+        },
+        {
+          "id": "cursor-4",
+          "key": "464b271b302155a3",
+          "level": "low",
+          "title": "Cursor collects usage and device data",
+          "detail": "Privacy Mode can't be read locally, so cAInary can't tell what Cursor keeps.",
+          "surface": "cursor",
+          "sends": [
+            "vendor"
+          ],
+          "setBy": "vendor-default",
+          "inEffect": true,
+          "maybe": true,
+          "counts": false,
+          "config": {
+            "path": "vendor default",
+            "kind": "marker",
+            "evidence": []
+          },
+          "docs": "https://cursor.com/privacy"
+        },
+        {
+          "id": "cursor-5",
+          "key": "c2b78a9339e0e5c5",
+          "level": "ok",
+          "title": "Your organization manages Cursor settings",
+          "detail": "",
+          "surface": "cursor",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.todesktop.230313mzl4w4u92.plist",
+            "kind": "file",
+            "evidence": [
+              "AllowedTeamId = ABCDE12345",
+              "UpdateMode = manual",
+              "ExtensionGalleryServiceUrl = https://gallery.example-corp.com/api"
+            ]
+          },
+          "docs": "https://cursor.com/docs/enterprise/deployment-patterns"
+        },
+        {
+          "id": "cursor-6",
+          "key": "06f0e3e3faa3da09",
+          "level": "ok",
+          "title": "Your organization sets 1 other Cursor policy",
+          "detail": "",
+          "surface": "cursor",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.todesktop.230313mzl4w4u92.plist",
+            "kind": "file",
+            "evidence": [
+              "CustomPolicy = true"
+            ]
+          },
+          "docs": "https://cursor.com/docs/enterprise/deployment-patterns"
+        },
+        {
+          "id": "cursor-7",
+          "key": "c716b74393c263c0",
+          "level": "ok",
+          "title": "Your organization sets Cursor CLI permissions",
+          "detail": "",
+          "surface": "cursor",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "org-installed",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "~/.cursor/cli-config.json",
+            "kind": "file",
+            "evidence": [
+              "permissions.allow = 1 entries",
+              "permissions.deny = 2 entries",
+              "approvalMode = allowlist",
+              "sandbox = {\"mode\":\"enabled\"}"
+            ]
+          },
+          "docs": "https://cursor.com/docs/cli/reference/configuration"
+        },
+        {
+          "id": "cursor-8",
+          "key": "e65f82966ae473a1-3",
+          "level": "ok",
+          "title": "Cursor hook `afplay` plays a sound or shows a notification",
+          "detail": "It runs on the events above and sends nothing off this Mac.",
+          "surface": "cursor",
+          "sends": [],
+          "setBy": "user",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "~/.cursor/hooks.json",
+            "kind": "file",
+            "evidence": [
+              "events = stop",
+              "command = afplay /System/Library/Sounds/Glass.aiff"
+            ]
+          },
+          "docs": "https://cursor.com/docs/hooks"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "others": [],
+  "sources": [
+    {
+      "tool": "cursor",
+      "source": {
+        "path": "/Library/Application Support/Cursor/hooks.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "cursor",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/co.anysphere.cursor.nightly.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "cursor",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.todesktop.230313mzl4w4u92.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "cursor",
+      "source": {
+        "path": "/Library/Managed Preferences/co.anysphere.cursor.nightly.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "cursor",
+      "source": {
+        "path": "/Library/Managed Preferences/com.todesktop.230313mzl4w4u92.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "cursor",
+      "source": {
+        "path": "~/.cursor/cli-config.json",
+        "origin": "org-installed",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "cursor",
+      "source": {
+        "path": "~/.cursor/hooks.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    }
+  ]
+}

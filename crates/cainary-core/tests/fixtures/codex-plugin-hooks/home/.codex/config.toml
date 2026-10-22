@@ -1,0 +1,17 @@
+[plugins."acme-audit@example-market"]
+enabled = true
+
+[plugins."acme-off@example-market"]
+enabled = false
+
+[plugins."acme-default@example-market"]
+enabled = true
+
+[plugins."acme-path@example-market"]
+enabled = true
+
+[plugins."acme-array@example-market"]
+enabled = true
+
+[plugins."acme-escape@example-market"]
+enabled = true

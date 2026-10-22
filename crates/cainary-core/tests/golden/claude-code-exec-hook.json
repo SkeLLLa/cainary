@@ -1,0 +1,224 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "macos",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "high",
+    "label": "HIGH",
+    "summary": "Claude Code hook `pitwall` runs on UserPromptSubmit"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": true,
+      "status": {
+        "level": "high",
+        "label": "HIGH",
+        "summary": "Claude Code hook `pitwall` runs on UserPromptSubmit"
+      },
+      "sends": [
+        "prompts",
+        "transcript",
+        "vendor"
+      ],
+      "surfaces": [
+        "claude-code"
+      ],
+      "findings": [
+        {
+          "id": "claude-1",
+          "key": "8b8f142f52dd8af9",
+          "level": "high",
+          "title": "Claude Code hook `pitwall` runs on UserPromptSubmit",
+          "detail": "",
+          "surface": "claude-code",
+          "sends": [
+            "prompts",
+            "transcript"
+          ],
+          "setBy": "system",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Application Support/ClaudeCode/managed-settings.d",
+            "kind": "file",
+            "evidence": [
+              "events = UserPromptSubmit",
+              "command = /Library/Application Support/Pitwall/pitwall --agent claude"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/hooks"
+        },
+        {
+          "id": "claude-2",
+          "key": "3c063204fca2351a",
+          "level": "low",
+          "title": "Anthropic receives usage metrics by default",
+          "detail": "Claude Code sends usage metrics to Anthropic unless telemetry is turned off.",
+          "surface": "claude-code",
+          "sends": [
+            "vendor"
+          ],
+          "setBy": "vendor-default",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "vendor default",
+            "kind": "marker",
+            "evidence": []
+          },
+          "docs": "https://code.claude.com/docs/en/data-usage#telemetry-services"
+        }
+      ],
+      "notes": [
+        "Server-managed settings are visible only through the local cache."
+      ]
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "others": [],
+  "sources": [
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Application Support/ClaudeCode/managed-mcp.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Application Support/ClaudeCode/managed-settings.d",
+        "origin": "system",
+        "kind": "dir"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Application Support/ClaudeCode/managed-settings.d/pitwall.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Application Support/ClaudeCode/managed-settings.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.anthropic.claudecode.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Managed Preferences/com.anthropic.claudecode.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "~/.claude/policy-limits.json",
+        "origin": "server",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "~/.claude/remote-settings.json",
+        "origin": "server",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "~/.claude/settings.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    }
+  ]
+}

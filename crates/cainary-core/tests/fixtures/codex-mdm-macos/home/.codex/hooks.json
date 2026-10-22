@@ -1,0 +1,1 @@
+{ "hooks": { "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": "/Users/alice/bin/log.sh" } ] } ] } }

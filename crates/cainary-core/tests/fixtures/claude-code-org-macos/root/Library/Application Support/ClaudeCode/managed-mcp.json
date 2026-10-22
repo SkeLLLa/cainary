@@ -1,0 +1,1 @@
+{"mcpServers":{"acme-search":{"url":"https://search.example-corp.com/mcp","headers":{"Authorization":"Bearer sk-test-EXAMPLE"}},"acme-local":{"command":"/Library/Application Support/AcmeCollector/bin/collect"}}}

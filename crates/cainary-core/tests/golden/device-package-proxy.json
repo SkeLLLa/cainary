@@ -1,0 +1,379 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "macos",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "medium",
+    "label": "MEDIUM",
+    "summary": "Cargo downloads go through a local proxy at 127.0.0.1:4874 (+4 more)"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "others": [
+    {
+      "id": "acmecollector",
+      "name": "AcmeCollector",
+      "kind": "monitor",
+      "installed": true,
+      "status": {
+        "level": "medium",
+        "label": "MEDIUM",
+        "summary": "Cargo downloads go through a local proxy at 127.0.0.1:4874 (+4 more)"
+      },
+      "sends": [
+        "traffic"
+      ],
+      "surfaces": [],
+      "findings": [
+        {
+          "id": "device-1",
+          "key": "5728cb98a3873c7e",
+          "level": "medium",
+          "title": "Cargo downloads go through a local proxy at 127.0.0.1:4874",
+          "detail": "The names and versions of every package you download go to a program on this machine, which can log them or block them.",
+          "surface": "device",
+          "sends": [
+            "traffic"
+          ],
+          "setBy": "org-installed",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "~/.cargo/config.toml",
+            "kind": "file",
+            "evidence": [
+              "source.crates-io.replace-with = acme",
+              "source.acme.registry = sparse+http://127.0.0.1:4874/cargo/",
+              "served by = /Library/Application Support/AcmeCollector/runtime/acme-package-proxy"
+            ]
+          },
+          "docs": "https://doc.rust-lang.org/cargo/reference/source-replacement.html"
+        },
+        {
+          "id": "device-2",
+          "key": "26daf8437e7facc6",
+          "level": "medium",
+          "title": "NuGet downloads go through a local proxy at 127.0.0.1:4874",
+          "detail": "The names and versions of every package you download go to a program on this machine, which can log them or block them. Credentials configured for this registry go to it too.",
+          "surface": "device",
+          "sends": [
+            "traffic"
+          ],
+          "setBy": "org-installed",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "~/.nuget/NuGet/NuGet.Config",
+            "kind": "file",
+            "evidence": [
+              "packageSources.Acme Package Control = http://127.0.0.1:4874/nuget/v3/index.json",
+              "served by = /Library/Application Support/AcmeCollector/runtime/acme-package-proxy",
+              "credentials = present (not shown)"
+            ]
+          },
+          "docs": "https://learn.microsoft.com/en-us/nuget/reference/nuget-config-file"
+        },
+        {
+          "id": "device-3",
+          "key": "74c0e05fe2ec1b32",
+          "level": "medium",
+          "title": "pip downloads go through a local proxy at 127.0.0.1:4874",
+          "detail": "The names and versions of every package you download go to a program on this machine, which can log them or block them. Credentials configured for this registry go to it too.",
+          "surface": "device",
+          "sends": [
+            "traffic"
+          ],
+          "setBy": "org-installed",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "~/.config/pip/pip.conf",
+            "kind": "file",
+            "evidence": [
+              "index-url = http://127.0.0.1:4874/pypi/simple/",
+              "served by = /Library/Application Support/AcmeCollector/runtime/acme-package-proxy",
+              "credentials = present (not shown)"
+            ]
+          },
+          "docs": "https://pip.pypa.io/en/stable/topics/configuration/"
+        },
+        {
+          "id": "device-4",
+          "key": "97e8ed2e299d6078",
+          "level": "medium",
+          "title": "uv downloads go through a local proxy at 127.0.0.1:4874",
+          "detail": "The names and versions of every package you download go to a program on this machine, which can log them or block them.",
+          "surface": "device",
+          "sends": [
+            "traffic"
+          ],
+          "setBy": "org-installed",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "~/.config/uv/uv.toml",
+            "kind": "file",
+            "evidence": [
+              "index-url = http://127.0.0.1:4874/pypi/simple/",
+              "served by = /Library/Application Support/AcmeCollector/runtime/acme-package-proxy"
+            ]
+          },
+          "docs": "https://docs.astral.sh/uv/concepts/configuration-files/"
+        },
+        {
+          "id": "device-5",
+          "key": "5b347409881685ac",
+          "level": "medium",
+          "title": "Go downloads go through a local proxy at localhost:4874",
+          "detail": "The names and versions of every package you download go to a program on this machine, which can log them or block them.",
+          "surface": "device",
+          "sends": [
+            "traffic"
+          ],
+          "setBy": "unattributed",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "~/Library/Application Support/go/env",
+            "kind": "file",
+            "evidence": [
+              "GOPROXY = http://localhost:4874/go",
+              "served by = /Library/Application Support/AcmeCollector/runtime/acme-package-proxy"
+            ]
+          },
+          "docs": "https://go.dev/ref/mod#environment-variables"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "id": "device",
+      "name": "This device",
+      "kind": "monitor",
+      "installed": true,
+      "status": {
+        "level": "ok",
+        "label": "OK",
+        "summary": "Nothing sent"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": [
+        "Whether a corporate root certificate is trusted can't be seen; cAInary doesn't read the Keychain.",
+        "Permissions you granted yourself live in TCC.db, which needs Full Disk Access."
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "tool": "device",
+      "source": {
+        "path": "/Library/LaunchDaemons",
+        "origin": "system",
+        "kind": "dir"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "/Library/LaunchDaemons/com.example-corp.package-proxy.plist",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "/Library/Managed Preferences",
+        "origin": "mdm",
+        "kind": "dir"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "/Library/Managed Preferences/com.apple.TCC.configuration-profile-policy.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "/Library/Managed Preferences/com.apple.system-extension-policy.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "/Library/Managed Preferences/com.apple.webcontent-filter.plist",
+        "origin": "mdm",
+        "kind": "marker"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "/Library/SystemExtensions/db.plist",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "scutil --proxy",
+        "origin": "system",
+        "kind": "command"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "~/.cargo/config.toml",
+        "origin": "unattributed",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "~/.config/pip/pip.conf",
+        "origin": "unattributed",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "~/.config/uv/uv.toml",
+        "origin": "unattributed",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "~/.nuget/NuGet/NuGet.Config",
+        "origin": "unattributed",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "~/.yarnrc.yml",
+        "origin": "unattributed",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "~/Library/Application Support/go/env",
+        "origin": "unattributed",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+{
+  "telemetry": { "enabled": true, "endpoint": "https://otel.example-corp.com", "captureContent": false },
+  "allowedModels": ["gpt-example"]
+}

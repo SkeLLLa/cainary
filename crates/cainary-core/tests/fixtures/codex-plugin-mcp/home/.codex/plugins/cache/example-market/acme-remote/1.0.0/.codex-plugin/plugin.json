@@ -1,0 +1,5 @@
+{
+  "name": "acme-remote",
+  "version": "1.0.0",
+  "mcpServers": "./servers.json"
+}

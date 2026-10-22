@@ -1,0 +1,199 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "macos",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "medium",
+    "label": "MEDIUM",
+    "summary": "Network traffic may go through a proxy at proxy.example-corp.com:8080"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "others": [
+    {
+      "id": "network-proxy",
+      "name": "Network proxy",
+      "kind": "monitor",
+      "installed": true,
+      "status": {
+        "level": "medium",
+        "label": "MEDIUM",
+        "summary": "Network traffic may go through a proxy at proxy.example-corp.com:8080"
+      },
+      "sends": [
+        "traffic"
+      ],
+      "surfaces": [],
+      "findings": [
+        {
+          "id": "device-1",
+          "key": "9930c9061c823221",
+          "level": "medium",
+          "title": "Network traffic may go through a proxy at proxy.example-corp.com:8080",
+          "detail": "Electron apps (Claude Desktop, Cursor, VS Code) follow the system proxy; command-line tools do only if they honor it.",
+          "surface": "device",
+          "sends": [
+            "traffic"
+          ],
+          "setBy": "unattributed",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "scutil --proxy",
+            "kind": "command",
+            "evidence": [
+              "proxy = proxy.example-corp.com:8080"
+            ]
+          },
+          "docs": "https://www.electronjs.org/docs/latest/api/net"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "id": "device",
+      "name": "This device",
+      "kind": "monitor",
+      "installed": true,
+      "status": {
+        "level": "ok",
+        "label": "OK",
+        "summary": "Nothing sent"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": [
+        "Whether a corporate root certificate is trusted can't be seen; cAInary doesn't read the Keychain.",
+        "Permissions you granted yourself live in TCC.db, which needs Full Disk Access."
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "tool": "device",
+      "source": {
+        "path": "/Library/Managed Preferences",
+        "origin": "mdm",
+        "kind": "dir"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "/Library/Managed Preferences/com.apple.TCC.configuration-profile-policy.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "/Library/Managed Preferences/com.apple.system-extension-policy.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "/Library/Managed Preferences/com.apple.webcontent-filter.plist",
+        "origin": "mdm",
+        "kind": "marker"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "/Library/SystemExtensions/db.plist",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "scutil --proxy",
+        "origin": "system",
+        "kind": "command"
+      },
+      "state": "present",
+      "note": null
+    }
+  ]
+}

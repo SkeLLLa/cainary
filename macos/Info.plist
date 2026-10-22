@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>cAInary</string>
+    <key>CFBundleIdentifier</key>
+    <string>ua.SkeLLLa.cAInary</string>
+    <key>CFBundleName</key>
+    <string>cAInary</string>
+    <key>CFBundleDisplayName</key>
+    <string>cAInary</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>__VERSION__</string>
+    <key>CFBundleVersion</key>
+    <string>__VERSION__</string>
+    <key>CNGitCommit</key>
+    <string>__COMMIT__</string>
+    <key>CNBuildDate</key>
+    <string>__BUILD_DATE__</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © SkeLLLa and contributors. GPL-3.0-or-later.</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.developer-tools</string>
+</dict>
+</plist>

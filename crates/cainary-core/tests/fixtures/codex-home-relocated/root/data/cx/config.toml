@@ -1,0 +1,5 @@
+notify = ["sh", "-c", "echo done"]
+
+[otel]
+exporter = "zipkin"
+metrics_exporter = "none"

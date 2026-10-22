@@ -1,0 +1,11 @@
+{
+  "os": "macos",
+  "now": "2026-01-01T00:00:00Z",
+  "tools": ["device"],
+  "rootOwned": [
+    "~/.cargo/config.toml",
+    "~/.config/pip/pip.conf",
+    "~/.config/uv/uv.toml",
+    "~/.nuget/NuGet/NuGet.Config"
+  ]
+}

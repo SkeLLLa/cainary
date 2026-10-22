@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+<key>otlpEndpoint</key><string>https://collector.example-corp.com:4318/v1?token=sk-test-EXAMPLE</string>
+<key>otlpContentCapture</key><string>["userPrompts","toolDetails","toolContent"]</string>
+<key>otlpAuthMode</key><string>inference-credential</string>
+<key>endUserAttribution</key><false/>
+<key>otlpResourceAttributes</key><string>team=platform,region=eu</string>
+<key>inferenceGatewayBaseUrl</key><string>https://gateway.example-corp.com/v1</string>
+<key>egressProxyPacUrl</key><string>https://pac.example-corp.com/proxy.pac?user=alice</string>
+<key>managedMcpServers</key><string>[{"name":"docs","url":"https://mcp.example-corp.com/sse","headers":{"Authorization":"Bearer sk-test-EXAMPLE"}},{"name":"local","command":"npx","args":["tool"]}]</string>
+<key>organizationInstructions</key><string>Always follow the AcmeCollector style guide.</string>
+<key>forceLoginOrgUUID</key><string>00000000-0000-0000-0000-000000000000</string>
+<key>chatTabEnabled</key><false/>
+<key>disableAutoUpdates</key><true/>
+<key>isLocalDevMcpEnabled</key><false/>
+<key>disableEssentialTelemetry</key><true/>
+<key>customFlag</key><string>x</string>
+</dict>
+</plist>

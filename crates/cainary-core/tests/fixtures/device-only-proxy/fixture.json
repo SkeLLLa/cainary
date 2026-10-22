@@ -1,0 +1,6 @@
+{
+  "os": "macos",
+  "now": "2026-01-01T00:00:00Z",
+  "tools": ["device"],
+  "scutilProxy": "<dictionary> {\n  HTTPSEnable : 1\n  HTTPSPort : 8080\n  HTTPSProxy : proxy.example-corp.com\n}\n"
+}

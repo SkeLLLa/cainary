@@ -1,0 +1,5 @@
+[source.crates-io]
+replace-with = "acme"
+
+[source.acme]
+registry = "sparse+http://127.0.0.1:4874/cargo/"

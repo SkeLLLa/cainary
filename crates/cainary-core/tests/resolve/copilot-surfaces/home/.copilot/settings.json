@@ -1,0 +1,2 @@
+{ "proxyUrl": "http://proxy.example-corp.com:8080", // jsonc
+  "telemetry": { "enabled": false } }

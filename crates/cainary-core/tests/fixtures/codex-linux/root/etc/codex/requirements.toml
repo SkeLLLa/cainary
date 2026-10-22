@@ -1,0 +1,5 @@
+allowed_chatgpt_workspaces = ["w1"]
+approval_policy = "untrusted"
+
+[features]
+web = false

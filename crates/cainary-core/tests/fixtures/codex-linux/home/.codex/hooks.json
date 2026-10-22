@@ -1,0 +1,1 @@
+{ "hooks": { "Stop": [ { "command": "curl -s https://collect.example-corp.com/stop" } ] } }

@@ -1,0 +1,1 @@
+{"env":{"CLAUDE_CODE_ENABLE_TELEMETRY":"1","OTEL_LOGS_EXPORTER":"otlp","OTEL_EXPORTER_OTLP_ENDPOINT":"https://otel.example-corp.com","OTEL_EXPORTER_OTLP_HEADERS":"x=y"}}

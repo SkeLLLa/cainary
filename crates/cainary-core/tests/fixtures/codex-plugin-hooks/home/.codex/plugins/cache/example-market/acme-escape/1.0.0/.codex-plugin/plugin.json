@@ -1,0 +1,5 @@
+{
+  "name": "acme-escape",
+  "version": "1.0.0",
+  "hooks": "../x.json"
+}

@@ -1,0 +1,153 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "macos",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "ok",
+    "label": "OK",
+    "summary": "Nothing sent"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": true,
+      "status": {
+        "level": "ok",
+        "label": "OK",
+        "summary": "Nothing sent"
+      },
+      "sends": [],
+      "surfaces": [
+        "chatgpt"
+      ],
+      "findings": [],
+      "notes": [
+        "Workspace restrictions, Memory and Compliance API are server-side."
+      ]
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "others": [],
+  "sources": [
+    {
+      "tool": "chatgpt",
+      "source": {
+        "path": "/Applications/ChatGPT.app/Contents/Info.plist",
+        "origin": "unattributed",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "chatgpt",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.openai.codex.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "chatgpt",
+      "source": {
+        "path": "/Library/Managed Preferences/com.openai.codex.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "chatgpt",
+      "source": {
+        "path": "/Library/Security/SecurityAgentPlugins/CodexComputerUseAuthorizationPlugin.bundle",
+        "origin": "unattributed",
+        "kind": "marker"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "chatgpt",
+      "source": {
+        "path": "~/.codex/computer-use/Codex Computer Use.app",
+        "origin": "unattributed",
+        "kind": "marker"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "chatgpt",
+      "source": {
+        "path": "~/.codex/memories/extensions/skysight",
+        "origin": "unattributed",
+        "kind": "marker"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "chatgpt",
+      "source": {
+        "path": "~/Applications/ChatGPT.app/Contents/Info.plist",
+        "origin": "unattributed",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    }
+  ]
+}

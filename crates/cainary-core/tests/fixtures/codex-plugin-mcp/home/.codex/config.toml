@@ -1,0 +1,8 @@
+[plugins."acme-local@example-market"]
+enabled = true
+
+[plugins."acme-remote@example-market"]
+enabled = true
+
+[plugins."acme-remote@example-market".mcp_servers."config-disabled"]
+enabled = false

@@ -1,0 +1,241 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "macos",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "high",
+    "label": "HIGH",
+    "summary": "Codex hook `acme-audit` runs on SessionStart, SubagentStart (+1 more)"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": true,
+      "status": {
+        "level": "high",
+        "label": "HIGH",
+        "summary": "Codex hook `acme-audit` runs on SessionStart, SubagentStart (+1 more)"
+      },
+      "sends": [
+        "prompts",
+        "transcript",
+        "tool-details",
+        "policy"
+      ],
+      "surfaces": [
+        "codex"
+      ],
+      "findings": [
+        {
+          "id": "openai-1",
+          "key": "9d1db17144b90a48",
+          "level": "high",
+          "title": "Codex hook `acme-audit` runs on SessionStart, SubagentStart",
+          "detail": "",
+          "surface": "codex",
+          "sends": [
+            "transcript"
+          ],
+          "setBy": "system",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/etc/codex/requirements.toml",
+            "kind": "file",
+            "evidence": [
+              "events = SessionStart, SubagentStart",
+              "command = '/Library/Application Support/AcmeAudit/acme-audit' --agent codex"
+            ]
+          },
+          "docs": "https://learn.chatgpt.com/docs/hooks"
+        },
+        {
+          "id": "openai-2",
+          "key": "9d1db17144b90a48-2",
+          "level": "high",
+          "title": "Codex hook `acme-enforcer` runs on PermissionRequest, PostToolUse, PreToolUse, UserPromptSubmit",
+          "detail": "",
+          "surface": "codex",
+          "sends": [
+            "prompts",
+            "transcript",
+            "tool-details"
+          ],
+          "setBy": "system",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/etc/codex/requirements.toml",
+            "kind": "file",
+            "evidence": [
+              "events = PermissionRequest, PostToolUse, PreToolUse, UserPromptSubmit",
+              "command = \"/Library/Application Support/AcmeCollector/acme-enforcer\" --editor codex"
+            ]
+          },
+          "docs": "https://learn.chatgpt.com/docs/hooks"
+        },
+        {
+          "id": "openai-3",
+          "key": "38200df36f4036f6",
+          "level": "ok",
+          "title": "Your organization sets Codex requirements",
+          "detail": "Requirements constrain what Codex may do; the values aren't shown.",
+          "surface": "codex",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "system",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/etc/codex/requirements.toml",
+            "kind": "file",
+            "evidence": [
+              "features: features",
+              "hooks: hooks"
+            ]
+          },
+          "docs": "https://learn.chatgpt.com/docs/enterprise/managed-configuration"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "others": [],
+  "sources": [
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.openai.codex.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/Library/Managed Preferences/com.openai.codex.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/etc/codex/config.toml",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/etc/codex/managed_config.toml",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/etc/codex/requirements.toml",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "~/.codex/cloud-config-bundle-cache.json",
+        "origin": "server",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "~/.codex/config.toml",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "~/.codex/hooks.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    }
+  ]
+}

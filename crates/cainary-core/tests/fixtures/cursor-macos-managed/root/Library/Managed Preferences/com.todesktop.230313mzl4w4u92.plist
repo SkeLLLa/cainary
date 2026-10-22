@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+<key>AllowedTeamId</key><string>ABCDE12345</string>
+<key>UpdateMode</key><string>manual</string>
+<key>ExtensionGalleryServiceUrl</key><string>https://gallery.example-corp.com/api?key=sk-test-EXAMPLE</string>
+<key>CustomPolicy</key><true/>
+<key>PayloadIdentifier</key><string>com.example-corp.cursor</string>
+</dict>
+</plist>

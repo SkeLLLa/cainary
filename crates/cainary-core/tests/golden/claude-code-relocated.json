@@ -1,0 +1,238 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "macos",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "high",
+    "label": "HIGH",
+    "summary": "Claude Code sends usage data, your prompts and Claude's responses to collector.example.com"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": true,
+      "status": {
+        "level": "high",
+        "label": "HIGH",
+        "summary": "Claude Code sends usage data, your prompts and Claude's responses to collector.example.com"
+      },
+      "sends": [
+        "prompts",
+        "responses",
+        "usage",
+        "identity"
+      ],
+      "surfaces": [
+        "claude-code"
+      ],
+      "findings": [
+        {
+          "id": "claude-1",
+          "key": "1db4abd5ed50524f",
+          "level": "high",
+          "title": "Claude Code sends usage data, your prompts and Claude's responses to collector.example.com",
+          "detail": "Claude Code's log export is on.",
+          "surface": "claude-code",
+          "sends": [
+            "prompts",
+            "responses",
+            "usage",
+            "identity"
+          ],
+          "setBy": "environment",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "env:OTEL_LOGS_EXPORTER",
+            "kind": "env",
+            "evidence": [
+              "CLAUDE_CODE_ENABLE_TELEMETRY = 1",
+              "OTEL_LOGS_EXPORTER = otlp",
+              "OTEL_EXPORTER_OTLP_ENDPOINT = https://collector.example.com",
+              "OTEL_LOG_USER_PROMPTS = 1"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/monitoring-usage"
+        },
+        {
+          "id": "claude-3",
+          "key": "d1de791daf247fd5",
+          "level": "opted-out",
+          "title": "Anthropic usage telemetry is turned off",
+          "detail": "A setting turns off the vendor's default telemetry, so nothing is sent by default.",
+          "surface": "claude-code",
+          "sends": [],
+          "setBy": "vendor-default",
+          "inEffect": false,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "vendor default",
+            "kind": "marker",
+            "evidence": []
+          },
+          "docs": "https://code.claude.com/docs/en/data-usage#telemetry-services"
+        },
+        {
+          "id": "claude-2",
+          "key": "498897dab262f199",
+          "level": "ok",
+          "title": "You restricted Claude Code yourself",
+          "detail": "Your own settings limit what Claude Code may do.",
+          "surface": "claude-code",
+          "sends": [],
+          "setBy": "user",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "/data/cc/settings.json",
+            "kind": "file",
+            "evidence": [
+              "permissions = {\"deny\":[\"Read(./.env)\"]}"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/settings"
+        }
+      ],
+      "notes": [
+        "Server-managed settings are visible only through the local cache."
+      ]
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "others": [],
+  "sources": [
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Application Support/ClaudeCode/managed-mcp.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Application Support/ClaudeCode/managed-settings.d",
+        "origin": "system",
+        "kind": "dir"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Application Support/ClaudeCode/managed-settings.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.anthropic.claudecode.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Managed Preferences/com.anthropic.claudecode.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/data/cc/policy-limits.json",
+        "origin": "server",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/data/cc/remote-settings.json",
+        "origin": "server",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/data/cc/settings.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    }
+  ]
+}

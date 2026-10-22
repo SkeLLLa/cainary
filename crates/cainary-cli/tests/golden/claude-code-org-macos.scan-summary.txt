@@ -1,0 +1,9 @@
+cAInary · macOS · 2026-01-01 00:00 UTC · complete
+
+HIGH  Claude Code hook posts each event to hooks.example-corp.com (+3 more)
+
+AI apps
+  HIGH           Claude           Claude Code hook posts each event to hooks.example-corp.com (+3 m…
+  NOT INSTALLED  ChatGPT & Codex
+  NOT INSTALLED  Cursor
+  NOT INSTALLED  GitHub Copilot

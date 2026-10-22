@@ -1,0 +1,609 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "macos",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "not-installed",
+    "label": "NOT INSTALLED",
+    "summary": "Not installed"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "others": [],
+  "sources": [
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Application Support/ClaudeCode/managed-mcp.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Application Support/ClaudeCode/managed-settings.d",
+        "origin": "system",
+        "kind": "dir"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Application Support/ClaudeCode/managed-settings.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.anthropic.claudecode.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Managed Preferences/com.anthropic.claudecode.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "~/.claude/policy-limits.json",
+        "origin": "server",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "~/.claude/remote-settings.json",
+        "origin": "server",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "~/.claude/settings.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-desktop",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.anthropic.claudefordesktop.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-desktop",
+      "source": {
+        "path": "/Library/Managed Preferences/com.anthropic.claudefordesktop.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-desktop",
+      "source": {
+        "path": "~/Library/Application Support/Claude/claude_desktop_config.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.openai.codex.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/Library/Managed Preferences/com.openai.codex.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/etc/codex/config.toml",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/etc/codex/managed_config.toml",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/etc/codex/requirements.toml",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "~/.codex/cloud-config-bundle-cache.json",
+        "origin": "server",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "~/.codex/config.toml",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "~/.codex/hooks.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "cursor",
+      "source": {
+        "path": "/Library/Application Support/Cursor/hooks.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "cursor",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/co.anysphere.cursor.nightly.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "cursor",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.todesktop.230313mzl4w4u92.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "cursor",
+      "source": {
+        "path": "/Library/Managed Preferences/co.anysphere.cursor.nightly.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "cursor",
+      "source": {
+        "path": "/Library/Managed Preferences/com.todesktop.230313mzl4w4u92.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "cursor",
+      "source": {
+        "path": "~/.cursor/cli-config.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "cursor",
+      "source": {
+        "path": "~/.cursor/hooks.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/Library/Application Support/GitHubCopilot/managed-settings.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.github.copilot.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.microsoft.VSCode.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.microsoft.VSCodeInsiders.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/Library/Managed Preferences/com.github.copilot.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/Library/Managed Preferences/com.microsoft.VSCode.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/Library/Managed Preferences/com.microsoft.VSCodeInsiders.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/etc/github-copilot/policy.d",
+        "origin": "system",
+        "kind": "dir"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/.copilot/hooks",
+        "origin": "user",
+        "kind": "dir"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/.copilot/providers.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/.copilot/settings.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/.vscode/extensions",
+        "origin": "unattributed",
+        "kind": "dir"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/Library/Application Support/Code - Insiders/User/settings.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/Library/Application Support/Code/User/settings.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "chatgpt",
+      "source": {
+        "path": "/Applications/ChatGPT.app/Contents/Info.plist",
+        "origin": "unattributed",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "chatgpt",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.openai.codex.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "chatgpt",
+      "source": {
+        "path": "/Library/Managed Preferences/com.openai.codex.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "chatgpt",
+      "source": {
+        "path": "/Library/Security/SecurityAgentPlugins/CodexComputerUseAuthorizationPlugin.bundle",
+        "origin": "unattributed",
+        "kind": "marker"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "chatgpt",
+      "source": {
+        "path": "~/.codex/computer-use/Codex Computer Use.app",
+        "origin": "unattributed",
+        "kind": "marker"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "chatgpt",
+      "source": {
+        "path": "~/.codex/memories/extensions/skysight",
+        "origin": "unattributed",
+        "kind": "marker"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "chatgpt",
+      "source": {
+        "path": "~/Applications/ChatGPT.app/Contents/Info.plist",
+        "origin": "unattributed",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "/Library/Managed Preferences",
+        "origin": "mdm",
+        "kind": "dir"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "/Library/Managed Preferences/com.apple.TCC.configuration-profile-policy.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "/Library/Managed Preferences/com.apple.system-extension-policy.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "/Library/Managed Preferences/com.apple.webcontent-filter.plist",
+        "origin": "mdm",
+        "kind": "marker"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "/Library/SystemExtensions/db.plist",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "device",
+      "source": {
+        "path": "scutil --proxy",
+        "origin": "system",
+        "kind": "command"
+      },
+      "state": "absent",
+      "note": null
+    }
+  ]
+}

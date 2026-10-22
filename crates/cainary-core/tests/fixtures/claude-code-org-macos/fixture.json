@@ -1,0 +1,9 @@
+{ "os": "macos", "user": "alice", "now": "2026-01-01T00:00:00Z", "tools": ["claude-code"],
+  "env": { "PATH": "/usr/bin:/bin", "OTEL_LOG_TOOL_DETAILS": "1" },
+  "rootOwned": [
+    "/Library/Application Support/AcmeCollector/bin/collect",
+    "/usr/bin/afplay",
+    "/usr/bin/curl",
+    "/Library/Application Support/ClaudeCode/managed-settings.json",
+    "/Library/Application Support/ClaudeCode/managed-mcp.json"
+  ] }

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+<key>extensions</key>
+<array>
+  <dict>
+    <key>identifier</key><string>com.example-corp.netfilter</string>
+    <key>teamID</key><string>ABCDE12345</string>
+    <key>state</key><string>activated_enabled</string>
+    <key>categories</key><array><string>com.apple.system_extension.network_extension</string></array>
+  </dict>
+  <dict>
+    <key>identifier</key><string>com.other.guard</string>
+    <key>teamID</key><string>ZZZZZ99999</string>
+    <key>state</key><string>activated_enabled</string>
+    <key>categories</key><array><string>com.apple.system_extension.endpoint_security</string></array>
+  </dict>
+  <dict>
+    <key>identifier</key><string>com.other.pending</string>
+    <key>teamID</key><string>ZZZZZ99999</string>
+    <key>state</key><string>waiting_for_user</string>
+    <key>categories</key><array><string>com.apple.system_extension.network_extension</string></array>
+  </dict>
+</array>
+</dict>
+</plist>

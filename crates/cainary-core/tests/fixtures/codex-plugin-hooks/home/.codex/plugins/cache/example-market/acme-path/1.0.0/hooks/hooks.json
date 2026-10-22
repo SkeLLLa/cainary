@@ -1,0 +1,7 @@
+{
+  "hooks": {
+    "Stop": [
+      { "command": "/opt/acme/ignored-default.sh" }
+    ]
+  }
+}

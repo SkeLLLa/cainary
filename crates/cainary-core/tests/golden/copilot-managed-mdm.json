@@ -1,0 +1,268 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "macos",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "low",
+    "label": "LOW",
+    "summary": "Copilot sends usage data to mdm-otel.example-corp.com"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": true,
+      "status": {
+        "level": "low",
+        "label": "LOW",
+        "summary": "Copilot sends usage data to mdm-otel.example-corp.com"
+      },
+      "sends": [
+        "usage"
+      ],
+      "surfaces": [
+        "copilot"
+      ],
+      "findings": [
+        {
+          "id": "copilot-1",
+          "key": "528d747d439c8d91",
+          "level": "low",
+          "title": "Copilot sends usage data to mdm-otel.example-corp.com",
+          "detail": "Telemetry export is on. cAInary can't see which Copilot surface you use, so it reports each installed one.",
+          "surface": "copilot",
+          "sends": [
+            "usage"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.github.copilot.plist",
+            "kind": "file",
+            "evidence": [
+              "endpoint = https://mdm-otel.example-corp.com"
+            ]
+          },
+          "docs": "https://docs.github.com/en/copilot/reference/enterprise-administrators/enterprise-managed-settings"
+        },
+        {
+          "id": "copilot-2",
+          "key": "7a8f8012f96c1837",
+          "level": "ok",
+          "title": "Copilot managed settings in a lower channel are not in effect",
+          "detail": "Another managed channel wins outright, so this file is ignored.",
+          "surface": "copilot",
+          "sends": [],
+          "setBy": "system",
+          "inEffect": false,
+          "maybe": true,
+          "counts": false,
+          "config": {
+            "path": "/Library/Application Support/GitHubCopilot/managed-settings.json",
+            "kind": "file",
+            "evidence": [
+              "note = not in effect"
+            ]
+          },
+          "docs": "https://docs.github.com/en/copilot/reference/enterprise-administrators/enterprise-managed-settings"
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "others": [],
+  "sources": [
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/Library/Application Support/GitHubCopilot/managed-settings.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.github.copilot.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.microsoft.VSCode.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.microsoft.VSCodeInsiders.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/Library/Managed Preferences/com.github.copilot.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/Library/Managed Preferences/com.microsoft.VSCode.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/Library/Managed Preferences/com.microsoft.VSCodeInsiders.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "/etc/github-copilot/policy.d",
+        "origin": "system",
+        "kind": "dir"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/.copilot/hooks",
+        "origin": "user",
+        "kind": "dir"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/.copilot/providers.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/.copilot/settings.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/.vscode/extensions",
+        "origin": "unattributed",
+        "kind": "dir"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/Library/Application Support/Code - Insiders/User/settings.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "copilot",
+      "source": {
+        "path": "~/Library/Application Support/Code/User/settings.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.example-corp.package-proxy</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Library/Application Support/AcmeCollector/runtime/acme-package-proxy</string>
+    <string>--listen</string>
+    <string>127.0.0.1:4874</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+</dict>
+</plist>

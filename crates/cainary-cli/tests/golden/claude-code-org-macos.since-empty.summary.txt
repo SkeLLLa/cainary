@@ -1,0 +1,37 @@
+cAInary · macOS · 2026-01-01 00:00 UTC · complete
+
+HIGH  Claude Code hook posts each event to hooks.example-corp.com (+3 more)
+
+Changes since 2026-01-01 00:00 UTC
+  ↑ Claude  NOT INSTALLED → HIGH  Claude is now HIGH: Claude Code hook posts each event to hooks.example-corp.com (+3 more)
+  + Claude  HIGH                  New: Claude Code hook posts each event to hooks.example-corp.com
+  + Claude  HIGH                  New: Claude Code hook `afplay` runs on Notification
+  + Claude  HIGH                  New: Claude Code hook `collect` runs on Stop
+  + Claude  HIGH                  New: Claude Code hook `curl` runs on PostToolUse and sends what it receives to collect.example-corp.com
+  + Claude  MEDIUM                New: MCP server `acme-docs` receives your tool requests at mcp.example-corp.com
+  + Claude  MEDIUM                New: Plugins your organization enabled may run hooks or MCP servers
+  + Claude  MEDIUM                New: Your organization added 1 MCP servers to Claude Code
+  + Claude  MEDIUM                New: MCP server `acme-search` receives your tool requests at search.example-corp.com
+  + Claude  MEDIUM                New: Claude Code sends tool details to otel.example-corp.com
+  + Claude  LOW                   New: Your organization may monitor Claude Code use
+  + Claude  LOW                   New: Claude Code sends usage data to otel.example-corp.com
+  + Claude  LOW                   New: Claude Code sends usage data to otel.example-corp.com
+  + Claude  LOW                   New: Anthropic receives usage metrics by default
+  + Claude  OK                    New: Your organization turns off some Claude Code features
+  + Claude  OK                    New: Your organization controls how you sign in to Claude Code
+  + Claude  OK                    New: Your organization controls which MCP servers and plugins Claude Code uses
+  + Claude  OK                    New: Your organization sets Claude Code's permissions and sandbox
+  + Claude  OK                    New: Your organization sets other Claude Code policies
+  + Claude  OK                    New: Your organization fixes which MCP servers Claude Code uses
+  + Claude  OK                    New: You restricted Claude Code yourself
+  + Claude  OK                    New: Settings in the managed settings file are ignored
+  ~ Claude                        Claude Code config appeared: /Library/Application Support/ClaudeCode/managed-mcp.json
+  ~ Claude                        Claude Code config appeared: /Library/Application Support/ClaudeCode/managed-settings.json
+  ~ Claude                        Claude Code config appeared: /Library/Managed Preferences/com.anthropic.claudecode.plist
+  ~ Claude                        Claude Code config appeared: ~/.claude/policy-limits.json
+
+AI apps
+  HIGH           Claude           Claude Code hook posts each event to hooks.example-corp.com (+3 m…
+  NOT INSTALLED  ChatGPT & Codex
+  NOT INSTALLED  Cursor
+  NOT INSTALLED  GitHub Copilot

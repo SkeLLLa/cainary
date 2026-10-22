@@ -1,0 +1,16 @@
+{
+  "signed_payload": {
+    "bundle": {
+      "requirements_toml": {
+        "enterprise_managed": [
+          { "contents": "approval_policy = \"untrusted\"\nsandbox_mode = \"workspace-write\"\nallowed_sandbox_modes = [\"read-only\"]\nallowed_login_methods = [\"chatgpt\"]\nallowed_chatgpt_workspaces = [\"w1\"]\ncli_auth_credentials_store = \"file\"\nchatgpt_base_url = \"https://chat.example-corp.com\"\n" }
+        ]
+      },
+      "config_toml": {
+        "enterprise_managed": [
+          { "contents": "[otel]\nexporter = \"otlp-grpc\"\n" }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,17 @@
+# Build output
+target/
+dist/
+release-assets/
+
+# Local tool overrides
+mise.local.toml
+.mise.local.toml
+.env
+.env.*
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store

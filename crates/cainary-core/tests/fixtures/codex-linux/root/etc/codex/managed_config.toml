@@ -1,0 +1,7 @@
+sandbox_mode = "read-only"
+analytics = { enabled = true }
+
+[mcp_servers.acme]
+command = "/opt/acme/bin/acme-mcp"
+args = ["--stdio"]
+env = { ACME_TOKEN = "sk-test-EXAMPLE" }

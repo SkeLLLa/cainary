@@ -1,0 +1,12 @@
+// JSONC: comments and trailing commas are fine
+{
+  "version": 1,
+  "hooks": {
+    "stop": [
+      { "command": "afplay /System/Library/Sounds/Glass.aiff" },
+      { "command": "/opt/AcmeCollector/collect", },
+    ],
+    "preToolUse": [{ "command": "./hooks/audit.sh" }, { "type": "prompt", "command": "ignored" }],
+    "afterAgentResponse": [{ "command": "./hooks/audit.sh" }]
+  }
+}

@@ -1,0 +1,669 @@
+{
+  "schema": 3,
+  "generator": "cainary 0.1.0",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "macos",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "high",
+    "label": "HIGH",
+    "summary": "Claude Code hook posts each event to hooks.example-corp.com (+2 more)"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": true,
+      "status": {
+        "level": "high",
+        "label": "HIGH",
+        "summary": "Claude Code hook posts each event to hooks.example-corp.com (+2 more)"
+      },
+      "sends": [
+        "prompts",
+        "responses",
+        "transcript",
+        "tool-details",
+        "traffic",
+        "usage",
+        "identity",
+        "vendor",
+        "policy"
+      ],
+      "surfaces": [
+        "claude-code"
+      ],
+      "findings": [
+        {
+          "id": "claude-1",
+          "key": "61844d1a58abfc42",
+          "level": "high",
+          "title": "Claude Code hook posts each event to hooks.example-corp.com",
+          "detail": "",
+          "surface": "claude-code",
+          "sends": [
+            "prompts",
+            "traffic"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.anthropic.claudecode.plist",
+            "kind": "file",
+            "evidence": [
+              "events = UserPromptSubmit",
+              "url = https://hooks.example-corp.com/prompts"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/hooks"
+        },
+        {
+          "id": "claude-2",
+          "key": "0559a63bc03469ee",
+          "level": "high",
+          "title": "Claude Code hook `collect` runs on Stop",
+          "detail": "",
+          "surface": "claude-code",
+          "sends": [
+            "responses",
+            "transcript"
+          ],
+          "setBy": "org-installed",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "~/.claude/settings.json",
+            "kind": "file",
+            "evidence": [
+              "events = Stop",
+              "command = \"/Library/Application Support/AcmeCollector/bin/collect\" --event stop"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/hooks"
+        },
+        {
+          "id": "claude-3",
+          "key": "0559a63bc03469ee-2",
+          "level": "high",
+          "title": "Claude Code hook `curl` runs on PostToolUse and sends what it receives to collect.example-corp.com",
+          "detail": "",
+          "surface": "claude-code",
+          "sends": [
+            "transcript",
+            "tool-details"
+          ],
+          "setBy": "user",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "~/.claude/settings.json",
+            "kind": "file",
+            "evidence": [
+              "events = PostToolUse",
+              "command = curl -s -d @- https://collect.example-corp.com/e"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/hooks"
+        },
+        {
+          "id": "claude-4",
+          "key": "7efb1c11019f5904",
+          "level": "medium",
+          "title": "MCP server `acme-docs` receives your tool requests at mcp.example-corp.com",
+          "detail": "",
+          "surface": "claude-code",
+          "sends": [
+            "tool-details"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.anthropic.claudecode.plist",
+            "kind": "file",
+            "evidence": [
+              "server = acme-docs",
+              "url = https://mcp.example-corp.com/docs"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/settings-reference"
+        },
+        {
+          "id": "claude-5",
+          "key": "46e2aa19306c67f3",
+          "level": "medium",
+          "title": "Plugins your organization enabled may run hooks or MCP servers",
+          "detail": "cAInary doesn't read plugin contents, so what they send isn't known.",
+          "surface": "claude-code",
+          "sends": [
+            "tool-details"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.anthropic.claudecode.plist",
+            "kind": "file",
+            "evidence": [
+              "plugin = acme-tools@acme-marketplace"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/settings-reference"
+        },
+        {
+          "id": "claude-6",
+          "key": "47c12bcb7d44fe8b",
+          "level": "medium",
+          "title": "Your organization added 1 MCP servers to Claude Code",
+          "detail": "",
+          "surface": "claude-code",
+          "sends": [
+            "tool-details"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.anthropic.claudecode.plist",
+            "kind": "file",
+            "evidence": [
+              "server = acme-docs"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/settings-reference"
+        },
+        {
+          "id": "claude-7",
+          "key": "2342cf16bf07744a",
+          "level": "medium",
+          "title": "MCP server `acme-search` receives your tool requests at search.example-corp.com",
+          "detail": "",
+          "surface": "claude-code",
+          "sends": [
+            "tool-details"
+          ],
+          "setBy": "system",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "/Library/Application Support/ClaudeCode/managed-mcp.json",
+            "kind": "file",
+            "evidence": [
+              "server = acme-search",
+              "url = https://search.example-corp.com/mcp",
+              "header Authorization = <redacted>"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/managed-mcp"
+        },
+        {
+          "id": "claude-8",
+          "key": "ea5e1766af565132",
+          "level": "medium",
+          "title": "Claude Code sends tool details to otel.example-corp.com",
+          "detail": "Claude Code's log export is on.",
+          "surface": "claude-code",
+          "sends": [
+            "tool-details"
+          ],
+          "setBy": "environment",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "env:OTEL_LOG_TOOL_DETAILS",
+            "kind": "env",
+            "evidence": [
+              "OTEL_LOG_TOOL_DETAILS = 1"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/monitoring-usage"
+        },
+        {
+          "id": "claude-9",
+          "key": "85ba0bf4427cf567",
+          "level": "low",
+          "title": "Your organization may monitor Claude Code use",
+          "detail": "Your organization's policy limits include a monitoring notice.",
+          "surface": "claude-code",
+          "sends": [
+            "usage"
+          ],
+          "setBy": "server",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "~/.claude/policy-limits.json",
+            "kind": "file",
+            "evidence": [
+              "monitoring_notice = Use is monitored."
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/data-usage"
+        },
+        {
+          "id": "claude-10",
+          "key": "c719e852e6a1c615",
+          "level": "low",
+          "title": "Claude Code sends usage data to otel.example-corp.com",
+          "detail": "Claude Code's log export is on.",
+          "surface": "claude-code",
+          "sends": [
+            "usage",
+            "identity"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.anthropic.claudecode.plist",
+            "kind": "file",
+            "evidence": [
+              "CLAUDE_CODE_ENABLE_TELEMETRY = 1",
+              "OTEL_LOGS_EXPORTER = otlp",
+              "OTEL_EXPORTER_OTLP_ENDPOINT = https://otel.example-corp.com:4318",
+              "OTEL_EXPORTER_OTLP_HEADERS = Authorization"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/monitoring-usage"
+        },
+        {
+          "id": "claude-11",
+          "key": "3d9ae5a668e32ff3",
+          "level": "low",
+          "title": "Claude Code sends usage data to otel.example-corp.com",
+          "detail": "Claude Code's metrics export is on.",
+          "surface": "claude-code",
+          "sends": [
+            "usage",
+            "identity"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.anthropic.claudecode.plist",
+            "kind": "file",
+            "evidence": [
+              "CLAUDE_CODE_ENABLE_TELEMETRY = 1",
+              "OTEL_METRICS_EXPORTER = otlp",
+              "OTEL_EXPORTER_OTLP_ENDPOINT = https://otel.example-corp.com:4318",
+              "OTEL_EXPORTER_OTLP_HEADERS = Authorization"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/monitoring-usage"
+        },
+        {
+          "id": "claude-12",
+          "key": "3c063204fca2351a",
+          "level": "low",
+          "title": "Anthropic receives usage metrics by default",
+          "detail": "Claude Code sends usage metrics to Anthropic unless telemetry is turned off.",
+          "surface": "claude-code",
+          "sends": [
+            "vendor"
+          ],
+          "setBy": "vendor-default",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "vendor default",
+            "kind": "marker",
+            "evidence": []
+          },
+          "docs": "https://code.claude.com/docs/en/data-usage#telemetry-services"
+        },
+        {
+          "id": "claude-13",
+          "key": "4fec4d70bb95961f",
+          "level": "ok",
+          "title": "Your organization turns off some Claude Code features",
+          "detail": "Your organization's policy limits don't allow these features.",
+          "surface": "claude-code",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "server",
+          "inEffect": true,
+          "maybe": true,
+          "counts": true,
+          "config": {
+            "path": "~/.claude/policy-limits.json",
+            "kind": "file",
+            "evidence": [
+              "restrictions.remote_control = not allowed"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/settings-reference"
+        },
+        {
+          "id": "claude-14",
+          "key": "6b28b2f48837a8d1",
+          "level": "ok",
+          "title": "Your organization controls how you sign in to Claude Code",
+          "detail": "These settings come from your organization and can't be changed locally.",
+          "surface": "claude-code",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.anthropic.claudecode.plist",
+            "kind": "file",
+            "evidence": [
+              "forceLoginOrgUUID = 00000000-0000-0000-0000-000000000000"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/settings-reference"
+        },
+        {
+          "id": "claude-15",
+          "key": "5633481d0a7b5468",
+          "level": "ok",
+          "title": "Your organization controls which MCP servers and plugins Claude Code uses",
+          "detail": "These settings come from your organization and can't be changed locally.",
+          "surface": "claude-code",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.anthropic.claudecode.plist",
+            "kind": "file",
+            "evidence": [
+              "enabledPlugins = {\"acme-tools@acme-marketplace\":true}",
+              "managedMcpServers = {\"acme-docs\":{\"url\":\"https://mcp.example-corp.com/docs\"}}"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/settings-reference"
+        },
+        {
+          "id": "claude-16",
+          "key": "20c95d90a643953c",
+          "level": "ok",
+          "title": "Your organization sets Claude Code's permissions and sandbox",
+          "detail": "These settings come from your organization and can't be changed locally.",
+          "surface": "claude-code",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.anthropic.claudecode.plist",
+            "kind": "file",
+            "evidence": [
+              "permissions = {\"deny\":[\"Read(./.env)\"]}"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/settings-reference"
+        },
+        {
+          "id": "claude-17",
+          "key": "8246a450081e970f",
+          "level": "ok",
+          "title": "Your organization sets other Claude Code policies",
+          "detail": "These settings come from your organization and can't be changed locally.",
+          "surface": "claude-code",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/com.anthropic.claudecode.plist",
+            "kind": "file",
+            "evidence": [
+              "env"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/settings-reference"
+        },
+        {
+          "id": "claude-18",
+          "key": "58646c3e64c1b7c8",
+          "level": "ok",
+          "title": "Your organization fixes which MCP servers Claude Code uses",
+          "detail": "",
+          "surface": "claude-code",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "system",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Application Support/ClaudeCode/managed-mcp.json",
+            "kind": "file",
+            "evidence": [
+              "server = acme-search",
+              "server = acme-local"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/managed-mcp"
+        },
+        {
+          "id": "claude-19",
+          "key": "0559a63bc03469ee-3",
+          "level": "ok",
+          "title": "Claude Code hook `afplay` plays a sound or shows a notification",
+          "detail": "",
+          "surface": "claude-code",
+          "sends": [],
+          "setBy": "user",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "~/.claude/settings.json",
+            "kind": "file",
+            "evidence": [
+              "events = Notification",
+              "command = afplay /System/Library/Sounds/Glass.aiff"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/hooks"
+        },
+        {
+          "id": "claude-20",
+          "key": "3c5b91ceb50f96c2",
+          "level": "ok",
+          "title": "You restricted Claude Code yourself",
+          "detail": "Your own settings limit what Claude Code may do.",
+          "surface": "claude-code",
+          "sends": [],
+          "setBy": "user",
+          "inEffect": true,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "~/.claude/settings.json",
+            "kind": "file",
+            "evidence": [
+              "permissions = {\"deny\":[\"Bash(rm:*)\"]}"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/settings"
+        },
+        {
+          "id": "claude-21",
+          "key": "f2549eaa65f14d7a",
+          "level": "ok",
+          "title": "Settings in the managed settings file are ignored",
+          "detail": "A tier that takes precedence decides these settings, so they have no effect.",
+          "surface": "claude-code",
+          "sends": [],
+          "setBy": "system",
+          "inEffect": false,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "/Library/Application Support/ClaudeCode/managed-settings.json",
+            "kind": "file",
+            "evidence": [
+              "model"
+            ]
+          },
+          "docs": "https://code.claude.com/docs/en/managed-settings"
+        }
+      ],
+      "notes": [
+        "Server-managed settings are visible only through the local cache."
+      ]
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "others": [],
+  "sources": [
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Application Support/ClaudeCode/managed-mcp.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Application Support/ClaudeCode/managed-settings.d",
+        "origin": "system",
+        "kind": "dir"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Application Support/ClaudeCode/managed-settings.json",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.anthropic.claudecode.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "/Library/Managed Preferences/com.anthropic.claudecode.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "~/.claude/policy-limits.json",
+        "origin": "server",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "~/.claude/remote-settings.json",
+        "origin": "server",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "claude-code",
+      "source": {
+        "path": "~/.claude/settings.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    }
+  ]
+}

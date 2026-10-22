@@ -1,0 +1,53 @@
+claude-code	system	absent	/Library/Application Support/ClaudeCode/managed-mcp.json
+claude-code	system	absent	/Library/Application Support/ClaudeCode/managed-settings.d
+claude-code	system	absent	/Library/Application Support/ClaudeCode/managed-settings.json
+claude-code	mdm	absent	/Library/Managed Preferences/alice/com.anthropic.claudecode.plist
+claude-code	mdm	absent	/Library/Managed Preferences/com.anthropic.claudecode.plist
+claude-code	server	absent	~/.claude/policy-limits.json
+claude-code	server	absent	~/.claude/remote-settings.json
+claude-code	user	absent	~/.claude/settings.json
+claude-desktop	mdm	absent	/Library/Managed Preferences/alice/com.anthropic.claudefordesktop.plist
+claude-desktop	mdm	absent	/Library/Managed Preferences/com.anthropic.claudefordesktop.plist
+claude-desktop	user	absent	~/Library/Application Support/Claude/claude_desktop_config.json
+codex	mdm	absent	/Library/Managed Preferences/alice/com.openai.codex.plist
+codex	mdm	absent	/Library/Managed Preferences/com.openai.codex.plist
+codex	system	absent	/etc/codex/config.toml
+codex	system	absent	/etc/codex/managed_config.toml
+codex	system	absent	/etc/codex/requirements.toml
+codex	server	absent	~/.codex/cloud-config-bundle-cache.json
+codex	user	absent	~/.codex/config.toml
+codex	user	absent	~/.codex/hooks.json
+cursor	system	absent	/Library/Application Support/Cursor/hooks.json
+cursor	mdm	absent	/Library/Managed Preferences/alice/co.anysphere.cursor.nightly.plist
+cursor	mdm	absent	/Library/Managed Preferences/alice/com.todesktop.230313mzl4w4u92.plist
+cursor	mdm	absent	/Library/Managed Preferences/co.anysphere.cursor.nightly.plist
+cursor	mdm	absent	/Library/Managed Preferences/com.todesktop.230313mzl4w4u92.plist
+cursor	user	absent	~/.cursor/cli-config.json
+cursor	user	absent	~/.cursor/hooks.json
+copilot	system	absent	/Library/Application Support/GitHubCopilot/managed-settings.json
+copilot	mdm	absent	/Library/Managed Preferences/alice/com.github.copilot.plist
+copilot	mdm	absent	/Library/Managed Preferences/alice/com.microsoft.VSCode.plist
+copilot	mdm	absent	/Library/Managed Preferences/alice/com.microsoft.VSCodeInsiders.plist
+copilot	mdm	absent	/Library/Managed Preferences/com.github.copilot.plist
+copilot	mdm	absent	/Library/Managed Preferences/com.microsoft.VSCode.plist
+copilot	mdm	absent	/Library/Managed Preferences/com.microsoft.VSCodeInsiders.plist
+copilot	system	absent	/etc/github-copilot/policy.d
+copilot	user	absent	~/.copilot/hooks
+copilot	user	absent	~/.copilot/providers.json
+copilot	user	absent	~/.copilot/settings.json
+copilot	unattributed	absent	~/.vscode/extensions
+copilot	user	absent	~/Library/Application Support/Code - Insiders/User/settings.json
+copilot	user	absent	~/Library/Application Support/Code/User/settings.json
+chatgpt	unattributed	absent	/Applications/ChatGPT.app/Contents/Info.plist
+chatgpt	mdm	absent	/Library/Managed Preferences/alice/com.openai.codex.plist
+chatgpt	mdm	absent	/Library/Managed Preferences/com.openai.codex.plist
+chatgpt	unattributed	absent	/Library/Security/SecurityAgentPlugins/CodexComputerUseAuthorizationPlugin.bundle
+chatgpt	unattributed	absent	~/.codex/computer-use/Codex Computer Use.app
+chatgpt	unattributed	absent	~/.codex/memories/extensions/skysight
+chatgpt	unattributed	absent	~/Applications/ChatGPT.app/Contents/Info.plist
+device	mdm	absent	/Library/Managed Preferences
+device	mdm	absent	/Library/Managed Preferences/com.apple.TCC.configuration-profile-policy.plist
+device	mdm	absent	/Library/Managed Preferences/com.apple.system-extension-policy.plist
+device	mdm	absent	/Library/Managed Preferences/com.apple.webcontent-filter.plist
+device	system	absent	/Library/SystemExtensions/db.plist
+device	system	absent	scutil --proxy

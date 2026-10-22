@@ -1,0 +1,1 @@
+GOPROXY=http://localhost:4874/go,direct

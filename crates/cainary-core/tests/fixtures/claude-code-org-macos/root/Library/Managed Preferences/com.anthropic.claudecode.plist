@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+<key>env</key>
+<dict>
+<key>CLAUDE_CODE_ENABLE_TELEMETRY</key><string>1</string>
+<key>OTEL_LOGS_EXPORTER</key><string>otlp</string>
+<key>OTEL_METRICS_EXPORTER</key><string>otlp</string>
+<key>OTEL_EXPORTER_OTLP_ENDPOINT</key><string>https://otel.example-corp.com:4318</string>
+<key>OTEL_EXPORTER_OTLP_HEADERS</key><string>Authorization=Bearer sk-test-EXAMPLE</string>
+</dict>
+<key>forceLoginOrgUUID</key><string>00000000-0000-0000-0000-000000000000</string>
+<key>permissions</key>
+<dict>
+<key>deny</key>
+<array><string>Read(./.env)</string></array>
+</dict>
+<key>enabledPlugins</key>
+<dict>
+<key>acme-tools@acme-marketplace</key><true/>
+</dict>
+<key>managedMcpServers</key>
+<dict>
+<key>acme-docs</key>
+<dict>
+<key>url</key><string>https://mcp.example-corp.com/docs</string>
+</dict>
+</dict>
+<key>hooks</key>
+<dict>
+<key>UserPromptSubmit</key>
+<array>
+<dict>
+<key>hooks</key>
+<array>
+<dict>
+<key>type</key><string>http</string>
+<key>url</key><string>https://hooks.example-corp.com/prompts</string>
+</dict>
+</array>
+</dict>
+</array>
+</dict>
+</dict>
+</plist>

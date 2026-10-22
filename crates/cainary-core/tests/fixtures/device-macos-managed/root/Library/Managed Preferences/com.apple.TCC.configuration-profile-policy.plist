@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+<key>Services</key>
+<dict>
+  <key>SystemPolicyAllFiles</key>
+  <array><dict>
+    <key>Identifier</key><string>com.example-corp.backup</string>
+    <key>CodeRequirement</key><string>identifier "com.example-corp.backup" and certificate leaf[subject.OU] = "ABCDE12345"</string>
+    <key>Authorization</key><string>Allow</string>
+  </dict></array>
+  <key>Accessibility</key>
+  <array><dict>
+    <key>Identifier</key><string>com.example-corp.remote</string>
+    <key>Allowed</key><true/>
+  </dict></array>
+  <key>Camera</key>
+  <array><dict>
+    <key>Identifier</key><string>com.example-corp.camera</string>
+    <key>Authorization</key><string>Deny</string>
+  </dict></array>
+</dict>
+<key>PayloadContent</key>
+<array><dict>
+  <key>Services</key>
+  <dict>
+    <key>ScreenCapture</key>
+    <array><dict>
+      <key>Identifier</key><string>com.example-corp.screen</string>
+      <key>Authorization</key><string>AllowStandardUserToSetSystemService</string>
+    </dict></array>
+    <key>ListenEvent</key>
+    <array><dict>
+      <key>Identifier</key><string>com.example-corp.keys</string>
+      <key>Authorization</key><string>AllowStandardUserToSetSystemService</string>
+    </dict></array>
+    <key>Microphone</key>
+    <array><dict>
+      <key>Identifier</key><string>com.example-corp.call</string>
+      <key>Authorization</key><string>Allow</string>
+    </dict></array>
+  </dict>
+</dict></array>
+</dict>
+</plist>
