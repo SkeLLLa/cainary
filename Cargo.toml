@@ -22,7 +22,7 @@ publish = ["crates-io"]
 cainary-core = { path = "crates/cainary-core", version = "=0.1.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
-toml = "0.8"
+toml = "1.1"
 # Tilde: cainary-core uses plist::stream, which may break between minor versions.
 plist = { version = "~1.10.3", features = ["enable_unstable_features_that_may_break_with_minor_version_bumps"] }
 libc = { version = "0.2", default-features = false }
