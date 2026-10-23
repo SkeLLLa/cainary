@@ -14,7 +14,7 @@
 
 deps_pkgs() {
     case "$1:$2" in
-        apt:rust) echo "ca-certificates curl git musl-tools python3-minimal" ;;
+        apt:rust) echo "ca-certificates curl git musl-tools python3" ;;
         dnf:rust) echo "ca-certificates curl git-core musl-gcc python3" ;;
         pacman:rust) echo "ca-certificates curl git musl python" ;;
         apt:build)
