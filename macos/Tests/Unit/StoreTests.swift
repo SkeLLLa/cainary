@@ -75,9 +75,10 @@ private func realClient(_ fixtureDir: String) -> CoreClient {
 
 @MainActor
 private func newStore(
-    _ client: CoreClient, _ defaults: MemoryStore, _ notifier: RecordingNotifier
+    _ client: CoreClient, _ defaults: MemoryStore, _ notifier: RecordingNotifier,
+    confirmDelay: TimeInterval = 0.05
 ) -> ReportStore {
-    ReportStore(client: client, defaults: defaults, notifier: notifier, confirmDelay: 0.05)
+    ReportStore(client: client, defaults: defaults, notifier: notifier, confirmDelay: confirmDelay)
 }
 
 /// One scan, finished.
@@ -146,7 +147,9 @@ func trackingStoreTests() async {
         let defaults = MemoryStore()
         let notifier = RecordingNotifier()
         await scanOnce(newStore(realClient(empty), defaults, notifier))
-        let store = newStore(realClient(org), defaults, notifier)
+        // A 1 s delay, as in the flap case: with 0.05 s a slow runner can finish the confirm scan
+        // while scanOnce is still polling, and the check below sees the post.
+        let store = newStore(realClient(org), defaults, notifier, confirmDelay: 1)
         await scanOnce(store)
         let ids = notifyingIds(readyReport(store))
         check(
