@@ -29,7 +29,11 @@ fn golden_on(fixture_name: &str, name: &str, args: &[&str]) {
     full.extend(["--fixture", &fx]);
     let out = run(&full);
     assert_eq!(out.status.code(), Some(0), "{args:?}");
-    let got = String::from_utf8(out.stdout).unwrap();
+    // The generator's version is masked, so a release doesn't rewrite the goldens.
+    let got = String::from_utf8(out.stdout).unwrap().replace(
+        &format!("\"generator\": \"cainary {}\"", env!("CARGO_PKG_VERSION")),
+        "\"generator\": \"cainary <version>\"",
+    );
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/golden")
         .join(name);

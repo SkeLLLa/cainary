@@ -15,7 +15,15 @@ fn render(fixture: &std::path::Path) -> String {
     let report = scan(&h, &ScanOptions::default());
     let mut json = serde_json::to_string_pretty(&report).expect("report serializes");
     json.push('\n');
-    json
+    unversioned(&json)
+}
+
+/// The report with the generator's version masked, so a release doesn't rewrite every golden.
+fn unversioned(json: &str) -> String {
+    json.replace(
+        &format!("\"generator\": \"cainary {}\"", env!("CARGO_PKG_VERSION")),
+        "\"generator\": \"cainary <version>\"",
+    )
 }
 
 fn diff(want: &str, got: &str) -> String {

@@ -4,10 +4,11 @@
 # workstation: it installs packages without asking. docs/linux.md lists the same dependencies.
 #
 # Usage:
-#   packaging/ci/linux-ci.sh deps rust|build|package
+#   packaging/ci/linux-ci.sh deps rust|build|tools|package
 #       rust     curl, git, the distro musl linker, and the Rust toolchain from mise.toml
 #       build    rust + the tray's build dependencies + the linux-check tools
-#       package  build + cargo-deb and cargo-generate-rpm at the versions in mise.toml
+#       tools    cargo-deb and cargo-generate-rpm at the versions in mise.toml, after build
+#       package  build + tools
 #   packaging/ci/linux-ci.sh version
 #       the release version, from Cargo.toml
 #   packaging/ci/linux-ci.sh inspect DIR VERSION ARCH
@@ -103,8 +104,8 @@ deps_build() {
     "$QMAKE" -query QT_VERSION
 }
 
-deps_package() {
-    deps_build
+# Needs only deps_build's toolchain, so it can run alongside the tray build.
+deps_tools() {
     extra="$(deps_pkgs "$PM" package)"
     # shellcheck disable=SC2086
     if [ -n "$extra" ]; then pkg_install $extra; fi
@@ -112,6 +113,11 @@ deps_package() {
         v="$(toml_get mise.toml tools "cargo:$tool")" || die "no $tool version in mise.toml"
         cargo install --locked "$tool@$v"
     done
+}
+
+deps_package() {
+    deps_build
+    deps_tools
 }
 
 # --- inspect --------------------------------------------------------------------------------
@@ -264,8 +270,9 @@ case "${1:-}" in
         case "${2:-}" in
             rust) deps_rust ;;
             build) deps_build ;;
+            tools) deps_tools ;;
             package) deps_package ;;
-            *) die "usage: $0 deps rust|build|package" ;;
+            *) die "usage: $0 deps rust|build|tools|package" ;;
         esac
         ;;
     version) cargo_version ;;

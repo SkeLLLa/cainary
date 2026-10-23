@@ -52,15 +52,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install Rust (version from mise.toml)
-        run: |
-          set -eu
-          v="$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' mise.toml)"
-          test -n "${v}"
-          rustup toolchain install "${v}" --profile minimal --component rustfmt,clippy
-          rustup default "${v}"
-      - name: Install shellcheck
-        run: command -v shellcheck || brew install shellcheck
+      # Independent: rustup and Homebrew install into separate prefixes.
+      - parallel:
+          - name: Install Rust (version from mise.toml)
+            run: |
+              set -eu
+              v="$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' mise.toml)"
+              test -n "${v}"
+              rustup toolchain install "${v}" --profile minimal --component rustfmt,clippy
+              rustup default "${v}"
+          - name: Install shellcheck
+            run: command -v shellcheck || brew install shellcheck
       - name: Show toolchain
         run: |
           cargo --version
