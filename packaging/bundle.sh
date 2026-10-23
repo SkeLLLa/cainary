@@ -40,6 +40,18 @@ cp "$CORE" "$APP/Contents/Helpers/cainary"
 # GPL text ships with the app; the About panel points at it.
 cp COPYING "$APP/Contents/Resources/COPYING"
 
+# Icon: PNG -> iconset -> icns. The PNG is rendered from the Linux scalable SVG.
+SRC_ICON="resources/icons/cainary-1024.png"
+ICONSET="$(mktemp -d)/AppIcon.iconset"
+mkdir -p "$ICONSET"
+for size in 16 32 128 256 512; do
+    sips -z "$size" "$size" "$SRC_ICON" --out "$ICONSET/icon_${size}x${size}.png" > /dev/null
+    double=$((size * 2))
+    sips -z "$double" "$double" "$SRC_ICON" --out "$ICONSET/icon_${size}x${size}@2x.png" > /dev/null
+done
+iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
+rm -rf "$(dirname "$ICONSET")"
+
 # --- 3. Stamp and lint the plist ---------------------------------------------
 COMMIT="$(git rev-parse --verify -q HEAD 2> /dev/null || echo unknown)"
 if [ -n "$(git status --porcelain 2> /dev/null)" ]; then COMMIT="$COMMIT-dirty"; fi
