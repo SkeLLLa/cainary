@@ -141,13 +141,15 @@ cargo's defaults.
 The `crates` job in `release.yml` publishes them with crates.io Trusted Publishing: the job runs
 in the `crates-io` environment, `rust-lang/crates-io-auth-action` exchanges the GitHub OIDC
 token for a crates.io token that expires after 30 minutes, and no API token is stored. The job
-runs after `publish`, and only when the repository variable `CRATES_IO_PUBLISH` is `true`. It
-skips a crate whose version is already on crates.io, so after a partial upload, rerunning the
-workflow (or **Re-run failed jobs**) publishes the rest; the tag from the first attempt is reused.
+runs after `publish` on every release, unless the repository variable `CRATES_IO_PUBLISH` is
+`false`. Trusted Publishing can't create a crate, so a crate that isn't on crates.io yet is skipped
+with a warning in the run. It also skips a crate whose version is already on crates.io, so after
+a partial upload, rerunning the workflow (or **Re-run failed jobs**) publishes the rest; the tag
+from the first attempt is reused.
 
 One-time setup:
 
-1. Let the first release (`v0.1.0`) run with `CRATES_IO_PUBLISH` unset.
+1. Let the first release (`v0.1.0`) run; its `crates` job skips both crates with a warning.
 2. Check out the tag and publish by hand with an API token (crates.io needs a crate to exist
    before it can have a trusted publisher): `cargo login --registry crates-io`, then
    `cargo publish --workspace --locked --registry crates-io`. `--registry crates-io` is needed when
@@ -157,8 +159,7 @@ One-time setup:
 4. On crates.io, for both `cainary-core` and `cainary`: Settings → Trusted Publishing → add a
    GitHub publisher with owner `SkeLLLa`, repository `cainary`, workflow `release.yml` and
    environment `crates-io`.
-5. Set the repository variable `CRATES_IO_PUBLISH` to `true`.
-6. Turn on "trusted publishing only" for both crates, and revoke the API token from step 2.
+5. Turn on "trusted publishing only" for both crates, and revoke the API token from step 2.
 
 ## Verifying a download
 

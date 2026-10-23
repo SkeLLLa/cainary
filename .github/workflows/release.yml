@@ -826,14 +826,15 @@ jobs:
             git push origin HEAD:master
           fi
 
-  # crates.io Trusted Publishing: a short-lived token from GitHub OIDC, no stored secret. Off
-  # until the maintainer has published 0.1.0 by hand, added this workflow as the trusted
-  # publisher of both crates (environment crates-io) and set CRATES_IO_PUBLISH=true. After a
-  # partial upload, rerun the workflow: the tag from the first attempt is detected and the missing crates are published.
+  # crates.io Trusted Publishing: a short-lived token from GitHub OIDC, no stored secret. On
+  # unless the repository variable CRATES_IO_PUBLISH is "false". A crate that isn't on crates.io
+  # yet is skipped with a warning: its first version is published by hand, then this workflow is
+  # added as its trusted publisher (environment crates-io). After a partial upload, rerun the
+  # workflow: the tag from the first attempt is detected and the missing crates are published.
   crates:
     name: Publish crates to crates.io
     needs: [prepare, publish]
-    if: ${{ needs.prepare.outputs.released == 'true' && vars.CRATES_IO_PUBLISH == 'true' }}
+    if: ${{ needs.prepare.outputs.released == 'true' && vars.CRATES_IO_PUBLISH != 'false' }}
     runs-on: ubuntu-latest
     environment: crates-io
     permissions:
@@ -856,8 +857,9 @@ jobs:
           rustup toolchain install "${v}" --profile minimal
           rustup default "${v}"
 
-      # 200: this version is already published, so skip that crate; 404: publish it; anything
-      # else fails. A rerun after a partial upload then publishes only what is missing.
+      # 200: this version is already published, so skip that crate; 404: publish it, unless the
+      # crate itself is new (Trusted Publishing can't create a crate); anything else fails. A
+      # rerun after a partial upload then publishes only what is missing.
       - name: Find crates not yet on crates.io
         id: missing
         run: |
@@ -870,7 +872,19 @@ jobs:
               "https://crates.io/api/v1/crates/${crate}/${VERSION}")"
             case "${code}" in
               200) echo "${crate} ${VERSION} is already on crates.io"; exclude="${exclude} --exclude ${crate}" ;;
-              404) count=$((count + 1)) ;;
+              404)
+                crate_code="$(curl -sS -o /dev/null -w '%{http_code}' --retry 3 \
+                  -A "cainary-release (https://github.com/${GITHUB_REPOSITORY})" \
+                  "https://crates.io/api/v1/crates/${crate}")"
+                case "${crate_code}" in
+                  200) count=$((count + 1)) ;;
+                  404)
+                    echo "::warning::${crate} is not on crates.io yet: publish ${VERSION} by hand once (docs/distribution.md#cratesio)"
+                    exclude="${exclude} --exclude ${crate}"
+                    ;;
+                  *) echo "::error::crates.io returned HTTP ${crate_code} for ${crate}"; exit 1 ;;
+                esac
+                ;;
               *) echo "::error::crates.io returned HTTP ${code} for ${crate} ${VERSION}"; exit 1 ;;
             esac
           done
