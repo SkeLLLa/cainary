@@ -92,7 +92,7 @@ looks for it:
 | `share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml` | AppStream metadata |
 | `share/doc/cainary/` | `README.md` |
 | `share/licenses/cainary/LICENSE` | the license (also at the tarball's top level) |
-| `share/icons/hicolor/scalable/apps/`, `<size>x<size>/apps/` | app icon (16–256 px PNG and SVG); the tray draws its status icons at run time |
+| `share/icons/hicolor/scalable/apps/`, `<size>x<size>/apps/` | app icon (16–256 px PNG and SVG, plus a monochrome `ua.SkeLLLa.cAInary-symbolic.svg`); the tray draws its status icons at run time |
 
 The tarball adds `install-user.sh`, the asset list, `README.md` and `LICENSE` and has one top-level directory,
 `cainary-<version>-linux-<arch>/`. No package installs system-wide autostart; the tray writes a

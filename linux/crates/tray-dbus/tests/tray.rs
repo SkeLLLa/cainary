@@ -93,7 +93,7 @@ fn registers_shows_state_and_sends_clicks() {
         let (tx, rx) = async_channel::unbounded();
         let options = Options {
             icon_theme_path: "/opt/cainary/share/icons".into(),
-            tray: update("ua.SkeLLLa.cAInary-tray-plain-symbolic"),
+            tray: update("ua.SkeLLLa.cAInary.tray-plain-symbolic"),
             with_tray: true,
         };
         let mut service = Service::start(conn, options, tx).expect("start the service");
@@ -128,17 +128,17 @@ fn registers_shows_state_and_sends_clicks() {
         assert_eq!(prop("Category").await, "ApplicationStatus");
         assert_eq!(
             prop("IconName").await,
-            "ua.SkeLLLa.cAInary-tray-plain-symbolic"
+            "ua.SkeLLLa.cAInary.tray-plain-symbolic"
         );
         assert_eq!(prop("IconThemePath").await, "/opt/cainary/share/icons");
         assert_eq!(prop("Status").await, "Active");
 
         service.send(Command::Tray(update(
-            "ua.SkeLLLa.cAInary-tray-plain-red2-symbolic",
+            "ua.SkeLLLa.cAInary.tray-plain-red2-symbolic",
         )));
         // The update is applied on the D-Bus thread; poll until it lands.
         let mut tries = 0;
-        while prop("IconName").await != "ua.SkeLLLa.cAInary-tray-plain-red2-symbolic" {
+        while prop("IconName").await != "ua.SkeLLLa.cAInary.tray-plain-red2-symbolic" {
             tries += 1;
             assert!(tries < 100, "the update never arrived");
             async_io_sleep(std::time::Duration::from_millis(50)).await;

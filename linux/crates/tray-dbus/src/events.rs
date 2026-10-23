@@ -47,7 +47,7 @@ pub struct Pixmap {
 /// Everything the tray item shows.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TrayUpdate {
-    /// The icon's name in the icon theme path, `ua.SkeLLLa.cAInary-tray-…`.
+    /// The icon's name in the icon theme path, `ua.SkeLLLa.cAInary.tray-…`.
     pub icon_name: String,
     pub tooltip_title: String,
     pub tooltip_body: String,

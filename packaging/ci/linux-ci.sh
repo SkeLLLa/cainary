@@ -121,6 +121,7 @@ bin/cainary-tray
 share/applications/ua.SkeLLLa.cAInary.desktop
 share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml
 share/icons/hicolor/scalable/apps/ua.SkeLLLa.cAInary.svg
+share/icons/hicolor/scalable/apps/ua.SkeLLLa.cAInary-symbolic.svg
 share/icons/hicolor/48x48/apps/ua.SkeLLLa.cAInary.png
 share/icons/hicolor/256x256/apps/ua.SkeLLLa.cAInary.png"
 

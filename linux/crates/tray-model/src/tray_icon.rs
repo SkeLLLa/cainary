@@ -83,6 +83,9 @@ const DIMMED: &str = "0.45";
 impl TrayIcon {
     /// A distinct name per distinct picture, so a host's icon cache never shows a stale one.
     /// Panel-colored icons end in `-symbolic`, which is what lets GTK-based hosts recolor them.
+    /// The app id is joined with a `.`, not a `-`: KIconLoader searches the system theme before
+    /// the icon theme path, dropping `-` parts until a name matches, so `<app id>-tray-…` would
+    /// resolve to the installed app icon.
     pub fn name(self, style: IconStyle) -> String {
         let tint = match self.bird_tint(style) {
             None if self.look == Look::TemplateDimmed => "dimmed",
@@ -102,7 +105,7 @@ impl TrayIcon {
         } else {
             ""
         };
-        format!("{}-tray-{tint}{badge}{symbolic}", crate::APP_ID)
+        format!("{}.tray-{tint}{badge}{symbolic}", crate::APP_ID)
     }
 
     pub fn svg(self, style: IconStyle) -> String {
@@ -286,7 +289,7 @@ mod tests {
         assert!(!svg.contains(RED));
         assert!(
             icon.name(IconStyle::FullMonochrome)
-                .ends_with("-tray-plain-3-symbolic")
+                .ends_with(".tray-plain-3-symbolic")
         );
         // The default keeps the bird panel-colored and tints only the badge.
         let svg = icon.svg(IconStyle::Monochrome);
@@ -294,10 +297,24 @@ mod tests {
         assert!(svg.contains("class=\"ColorScheme-Text\""));
         assert!(
             icon.name(IconStyle::Monochrome)
-                .ends_with("-tray-plain-red3-symbolic")
+                .ends_with(".tray-plain-red3-symbolic")
         );
         // Color tints the bird too; nothing is left for the host to recolor.
-        assert!(icon.name(IconStyle::Color).ends_with("-tray-red-red3"));
+        assert!(icon.name(IconStyle::Color).ends_with(".tray-red-red3"));
+    }
+
+    #[test]
+    fn names_never_fall_back_to_the_app_icon() {
+        for style in IconStyle::ALL {
+            for look in ALL_LOOKS {
+                for badge in badges() {
+                    let name = TrayIcon { look, badge }.name(style);
+                    // What a `-`-stripping lookup reaches last.
+                    let stem = name.split('-').next().unwrap();
+                    assert_eq!(stem, format!("{}.tray", crate::APP_ID), "{name}");
+                }
+            }
+        }
     }
 
     #[test]
@@ -307,7 +324,7 @@ mod tests {
             badge: Badge::Unknown,
         };
         for style in IconStyle::ALL {
-            assert!(icon.name(style).ends_with("-tray-plain-unknown-symbolic"));
+            assert!(icon.name(style).ends_with(".tray-plain-unknown-symbolic"));
         }
     }
 

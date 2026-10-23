@@ -15,6 +15,7 @@
 644 share/applications/ua.SkeLLLa.cAInary.desktop usr/share/applications/ua.SkeLLLa.cAInary.desktop
 644 share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml usr/share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml
 644 share/icons/hicolor/scalable/apps/ua.SkeLLLa.cAInary.svg usr/share/icons/hicolor/scalable/apps/ua.SkeLLLa.cAInary.svg
+644 share/icons/hicolor/scalable/apps/ua.SkeLLLa.cAInary-symbolic.svg usr/share/icons/hicolor/scalable/apps/ua.SkeLLLa.cAInary-symbolic.svg
 644 share/icons/hicolor/16x16/apps/ua.SkeLLLa.cAInary.png usr/share/icons/hicolor/16x16/apps/ua.SkeLLLa.cAInary.png
 644 share/icons/hicolor/22x22/apps/ua.SkeLLLa.cAInary.png usr/share/icons/hicolor/22x22/apps/ua.SkeLLLa.cAInary.png
 644 share/icons/hicolor/24x24/apps/ua.SkeLLLa.cAInary.png usr/share/icons/hicolor/24x24/apps/ua.SkeLLLa.cAInary.png
