@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2026 SkeLLLa -->
+<component type="desktop-application">
+  <id>ua.SkeLLLa.cAInary</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>cAInary</name>
+  <summary>See what your AI coding tools track and send</summary>
+  <developer id="ua.skellla">
+    <name>SkeLLLa</name>
+  </developer>
+  <description>
+    <p>
+      cAInary shows what your AI tools, and the device monitoring around them, track and send,
+      and where it goes. It covers Claude Code and Claude Desktop, ChatGPT and Codex, Cursor and
+      GitHub Copilot, and reports policies your organization enforces, telemetry exporters,
+      hooks, proxies and vendor defaults.
+    </p>
+    <p>
+      The tray icon shows the worst level found. A popup lists one row per tool, and a Details
+      window shows every finding with its source file, the exact keys and a link to the vendor
+      documentation. cAInary notifies you when a later scan adds or raises a finding.
+    </p>
+    <p>
+      cAInary only reads files. It never uses the network and never changes your configuration.
+    </p>
+  </description>
+  <launchable type="desktop-id">ua.SkeLLLa.cAInary.desktop</launchable>
+  <url type="homepage">https://github.com/SkeLLLa/cainary</url>
+  <url type="bugtracker">https://github.com/SkeLLLa/cainary/issues</url>
+  <url type="vcs-browser">https://github.com/SkeLLLa/cainary</url>
+  <categories>
+    <category>Utility</category>
+  </categories>
+  <keywords>
+    <keyword>AI</keyword>
+    <keyword>telemetry</keyword>
+    <keyword>privacy</keyword>
+  </keywords>
+  <provides>
+    <binary>cainary</binary>
+    <binary>cainary-tray</binary>
+  </provides>
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-10-22"/>
+  </releases>
+</component>

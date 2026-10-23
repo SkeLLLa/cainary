@@ -6,6 +6,9 @@ on:
     branches:
       - master
 
+# Nothing is granted by default; each job asks for what it needs.
+permissions: {}
+
 jobs:
   pin-gate:
     name: Action pin gate
@@ -54,7 +57,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -72,41 +75,93 @@ jobs:
       - name: Run checks
         run: make check
 
-  # Same flow as the sibling Rust repos' release-plz setup, with git-cliff: bump the version,
-  # commit it to master as github-actions[bot], tag, and create the release. No release PR, so
-  # the default GITHUB_TOKEN is enough.
-  release:
-    name: Release
-    needs: quality
+  # The shared Rust core and CLI on Linux, as ci.yml's linux job; the macOS gate only covers macOS.
+  quality-rust-linux:
+    name: Quality gate (Rust core and CLI, Linux)
+    needs: pin-gate
+    if: ${{ github.repository_owner == 'SkeLLLa' && !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust (version from mise.toml)
+        run: |
+          set -eu
+          v="$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' mise.toml)"
+          test -n "${v}"
+          rustup toolchain install "${v}" --profile minimal --component rustfmt,clippy
+          rustup default "${v}"
+
+      - name: Run checks
+        run: make check-rust
+
+  # The Linux tray app, as ci.yml's linux-app job on debian:trixie.
+  quality-linux:
+    name: Quality gate (Linux tray)
+    needs: pin-gate
+    if: ${{ github.repository_owner == 'SkeLLLa' && !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-24.04
+    container: debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
+    permissions:
+      contents: read
+    env:
+      CARGO_HOME: /usr/local/cargo
+      RUSTUP_HOME: /usr/local/rustup
+    steps:
+      - name: Install git
+        run: apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates git
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust and the tray's build dependencies
+        run: packaging/ci/linux-ci.sh deps build
+
+      - name: Run checks
+        run: make linux-check
+
+  # Decides what to release and publishes nothing: the version, the commit every build starts
+  # from, and a hash of the version-bumped files. The bump is committed, tagged and released
+  # only by `publish`, once every build has passed. Same flow as the sibling Rust repos'
+  # release-plz setup, with git-cliff: no release PR, so the default GITHUB_TOKEN is enough.
+  prepare:
+    name: Prepare release
+    needs: [quality, quality-rust-linux, quality-linux]
     if: ${{ github.repository_owner == 'SkeLLLa' && !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
     outputs:
-      released: ${{ steps.release.outputs.released }}
-      version: ${{ steps.release.outputs.version }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
-    concurrency:
-      group: release-${{ github.ref }}
-      cancel-in-progress: false
+      released: ${{ steps.prepare.outputs.released }}
+      resumed: ${{ steps.prepare.outputs.resumed }}
+      version: ${{ steps.prepare.outputs.version }}
+      tag_name: ${{ steps.prepare.outputs.tag_name }}
+      base_sha: ${{ steps.prepare.outputs.base_sha }}
+      release_date: ${{ steps.prepare.outputs.release_date }}
+      version_hash: ${{ steps.prepare.outputs.version_hash }}
     permissions:
-      contents: write
+      contents: read
     steps:
-      # This job pushes the version bump and the tag, so it keeps the token in the checkout
-      # (the only checkout that does).
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The commit that triggered the run, also on a rerun, even if master has moved on.
+          ref: ${{ github.sha }}
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
 
       - name: Install git-cliff
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: git-cliff@2.14.2
 
-      - name: Bump version, commit, tag, and create the release
-        id: release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compute the version and the release tree
+        id: prepare
         run: |
           set -euo pipefail
           # cliff.toml: the first release is v0.1.0; afterwards feat bumps minor, others patch.
@@ -118,53 +173,77 @@ jobs:
             TAG_NAME="${PINNED}"
           fi
           VERSION="${TAG_NAME#v}"
+          BASE_SHA="$(git rev-parse HEAD)"
+          RESUMED=false
           if git rev-parse -q --verify "refs/tags/${TAG_NAME}" > /dev/null; then
-            echo "Nothing to release: ${TAG_NAME} already exists"
-            echo "released=false" >> "${GITHUB_OUTPUT}"
-            exit 0
+            # A tag on the bump commit made from this very commit means an earlier run of this
+            # workflow got as far as tagging; build again and let `publish` finish the release.
+            if [ "$(git rev-parse -q --verify "refs/tags/${TAG_NAME}^{commit}^" || true)" = "${BASE_SHA}" ]; then
+              echo "${TAG_NAME} was tagged from ${BASE_SHA} by an earlier run: resuming"
+              RESUMED=true
+            else
+              echo "Nothing to release: ${TAG_NAME} already exists"
+              echo "released=false" >> "${GITHUB_OUTPUT}"
+              exit 0
+            fi
           fi
-          NOTES="${RUNNER_TEMP}/notes.md"
-          git cliff --unreleased --tag "${TAG_NAME}" --strip all > "${NOTES}"
-          git cliff --tag "${TAG_NAME}" --output CHANGELOG.md
-          # Cargo.toml is the single source; bundle.sh stamps it into Info.plist and checks
-          # that the helper reports it.
-          scripts/set-version.sh "${VERSION}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add CHANGELOG.md Cargo.toml Cargo.lock
-          git commit -m "chore(release): ${TAG_NAME} [skip ci]"
-          git tag "${TAG_NAME}"
-          git push --atomic origin HEAD:master "refs/tags/${TAG_NAME}"
-          gh release create "${TAG_NAME}" --title "${TAG_NAME}" --notes-file "${NOTES}" --verify-tag
+          mkdir -p prepared
+          git cliff --unreleased --tag "${TAG_NAME}" --strip all > prepared/NOTES.md
+          git cliff --tag "${TAG_NAME}" --output prepared/CHANGELOG.md
+          # The date is fixed here so every job produces the same AppStream <release>. This
+          # run's checkout is not pushed anywhere; the hash is what the builds must reproduce.
+          RELEASE_DATE="$(date -u +%Y-%m-%d)"
+          HASH="$(SET_VERSION_DATE="${RELEASE_DATE}" scripts/release-tree.sh "${VERSION}" | tail -n 1)"
+          test "${#HASH}" -eq 64
           {
             echo "released=true"
+            echo "resumed=${RESUMED}"
             echo "version=${VERSION}"
             echo "tag_name=${TAG_NAME}"
+            echo "base_sha=${BASE_SHA}"
+            echo "release_date=${RELEASE_DATE}"
+            echo "version_hash=${HASH}"
           } >> "${GITHUB_OUTPUT}"
 
+      - name: Keep the notes and changelog
+        if: ${{ steps.prepare.outputs.released == 'true' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: prepared-notes
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            prepared/NOTES.md
+            prepared/CHANGELOG.md
+
   build:
-    name: Build and publish macOS assets
-    needs: release
-    if: ${{ needs.release.outputs.released == 'true' }}
+    name: Build macOS assets
+    needs: prepare
+    if: ${{ needs.prepare.outputs.released == 'true' }}
     runs-on: macos-latest
+    # Checksums and provenance come from the checksums job, the release from publish.
     permissions:
-      contents: write
-      id-token: write
-      attestations: write
+      contents: read
     env:
-      VERSION: ${{ needs.release.outputs.version }}
-      TAG_NAME: ${{ needs.release.outputs.tag_name }}
+      VERSION: ${{ needs.prepare.outputs.version }}
       # Optional Developer ID signing + notarization; skipped when secrets are absent. Only
       # these presence flags are job-wide (booleans, never secret values); each secret itself
       # is set in the env of the one step that needs it.
       SIGNING_CONFIGURED: ${{ secrets.MACOS_CERTIFICATE_P12 != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' && secrets.MACOS_SIGNING_IDENTITY != '' }}
       NOTARIZE_CONFIGURED: ${{ secrets.MACOS_CERTIFICATE_P12 != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' && secrets.MACOS_SIGNING_IDENTITY != '' && secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_PASSWORD != '' }}
     steps:
-      - name: Checkout release tag
-        uses: actions/checkout@v7
+      - name: Checkout the base commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.release.outputs.tag_name }}
+          ref: ${{ needs.prepare.outputs.base_sha }}
           persist-credentials: false
+
+      # The bump is only committed by `publish`; every build applies the same one locally.
+      - name: Apply the release version
+        env:
+          SET_VERSION_DATE: ${{ needs.prepare.outputs.release_date }}
+          EXPECTED_HASH: ${{ needs.prepare.outputs.version_hash }}
+        run: scripts/release-tree.sh "${VERSION}"
 
       - name: Install Rust (version from mise.toml)
         run: |
@@ -266,33 +345,26 @@ jobs:
           TGZ="cainary-${VERSION}-macos-universal.tar.gz"
           cp "dist/cAInary-${VERSION}-macos.zip" "release-assets/${ZIP}"
           COPYFILE_DISABLE=1 tar --no-mac-metadata -C dist -czf "release-assets/${TGZ}" cAInary.app
-          cd release-assets
-          for f in "${ZIP}" "${TGZ}"; do
-            shasum -a 256 "${f}" > "${f}.sha256"
-          done
-          shasum -a 256 "${ZIP}" "${TGZ}" > SHA256SUMS
-          cat SHA256SUMS
 
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@v4
+      # For the checksums job, which hashes and attests every platform's assets together.
+      - name: Keep release assets
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          subject-path: |
+          name: release-macos
+          retention-days: 1
+          if-no-files-found: error
+          path: |
             release-assets/cainary-${{ env.VERSION }}-macos-universal.zip
             release-assets/cainary-${{ env.VERSION }}-macos-universal.tar.gz
 
-      - name: Publish release assets
-        uses: softprops/action-gh-release@v3
+      # The macOS caveat, appended to the release notes by publish.
+      - name: Keep the release note
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          tag_name: ${{ env.TAG_NAME }}
-          append_body: true
-          body_path: release-assets/NOTES.md
-          fail_on_unmatched_files: true
-          files: |
-            release-assets/cainary-${{ env.VERSION }}-macos-universal.zip
-            release-assets/cainary-${{ env.VERSION }}-macos-universal.tar.gz
-            release-assets/cainary-${{ env.VERSION }}-macos-universal.zip.sha256
-            release-assets/cainary-${{ env.VERSION }}-macos-universal.tar.gz.sha256
-            release-assets/SHA256SUMS
+          name: notes-macos
+          retention-days: 1
+          if-no-files-found: error
+          path: release-assets/NOTES.md
 
       - name: Remove temporary keychain and certificate
         if: ${{ always() && env.SIGNING_CONFIGURED == 'true' }}
@@ -300,26 +372,480 @@ jobs:
           rm -f "${RUNNER_TEMP}/certificate.p12"
           security delete-keychain "${RUNNER_TEMP}/build.keychain-db" || true
 
+  # --- Linux ---------------------------------------------------------------------------------
+  # The static musl CLI, once per architecture on a native runner; every Linux artifact ships it.
+  build-linux-cli:
+    name: Build Linux CLI (${{ matrix.arch }})
+    needs: prepare
+    if: ${{ needs.prepare.outputs.released == 'true' }}
+    runs-on: ${{ matrix.runner }}
+    container: debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    env:
+      CARGO_HOME: /usr/local/cargo
+      RUSTUP_HOME: /usr/local/rustup
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Install git
+        run: apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates git make file
+
+      - name: Checkout the base commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.base_sha }}
+          persist-credentials: false
+
+      # The bump is only committed by `publish`; every build applies the same one locally.
+      - name: Apply the release version
+        env:
+          SET_VERSION_DATE: ${{ needs.prepare.outputs.release_date }}
+          EXPECTED_HASH: ${{ needs.prepare.outputs.version_hash }}
+        run: scripts/release-tree.sh "${VERSION}"
+
+      - name: Install Rust (version from mise.toml, musl target)
+        run: packaging/ci/linux-ci.sh deps rust
+
+      - name: Build
+        run: |
+          set -eu
+          make linux-cli LINUX_ARCH=${{ matrix.arch }}
+          BIN="target/${{ matrix.arch }}-unknown-linux-musl/release/cainary"
+          file "${BIN}"
+          file "${BIN}" | grep -q static
+          test "$("${BIN}" --version)" = "cainary ${VERSION}"
+
+      - name: Keep the CLI
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-cli-${{ matrix.arch }}
+          retention-days: 1
+          if-no-files-found: error
+          path: target/${{ matrix.arch }}-unknown-linux-musl/release/cainary
+
+  # The tray app links the distro's Qt, so each format is built in its distro: the tarball and
+  # .deb on Debian trixie, the .rpm on the oldest supported Fedora.
+  build-linux:
+    name: Build Linux ${{ matrix.formats }} (${{ matrix.arch }})
+    needs: [prepare, build-linux-cli]
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    container: ${{ matrix.image }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+        family: [deb, rpm]
+        include:
+          - family: deb
+            image: debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
+            formats: tar,deb
+          - family: rpm
+            image: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
+            formats: rpm
+    env:
+      CARGO_HOME: /usr/local/cargo
+      RUSTUP_HOME: /usr/local/rustup
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Install git
+        run: |
+          if command -v apt-get > /dev/null; then apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates git
+          else dnf install -y -q git-core gawk; fi
+
+      - name: Checkout the base commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.base_sha }}
+          persist-credentials: false
+
+      # The bump is only committed by `publish`; every build applies the same one locally.
+      - name: Apply the release version
+        env:
+          SET_VERSION_DATE: ${{ needs.prepare.outputs.release_date }}
+          EXPECTED_HASH: ${{ needs.prepare.outputs.version_hash }}
+        run: scripts/release-tree.sh "${VERSION}"
+
+      - name: Install Rust, build dependencies, cargo-deb and cargo-generate-rpm
+        run: packaging/ci/linux-ci.sh deps package
+
+      - name: Fetch the CLI
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: linux-cli-${{ matrix.arch }}
+          path: cli
+
+      - name: Build the tray app and package
+        env:
+          ARCH: ${{ matrix.arch }}
+          FORMATS: ${{ matrix.formats }}
+        run: |
+          set -eu
+          # Artifacts drop the executable bit.
+          chmod 755 cli/cainary
+          cargo build --manifest-path linux/Cargo.toml --release --locked -p cainary-tray
+          packaging/linux.sh --version "${VERSION}" --arch "${ARCH}" --cli cli/cainary \
+            --tray linux/target/release/cainary-tray --formats "${FORMATS}" --out dist
+
+      - name: Inspect the artifacts
+        run: packaging/ci/linux-ci.sh inspect dist "${VERSION}" "${{ matrix.arch }}"
+
+      - name: Keep the artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-linux-${{ matrix.family }}-${{ matrix.arch }}
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.rpm
+
+  # ci.yml's install smoke test, on the artifacts about to be published.
+  verify-linux:
+    name: Verify Linux ${{ matrix.kind }} (${{ matrix.name }})
+    needs: [prepare, build-linux]
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    container: ${{ matrix.image }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: debian-trixie, image: "debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308", kind: deb, family: deb, arch: x86_64 }
+          - { name: ubuntu-26.04, image: "ubuntu:26.04@sha256:c098726dd9b9733f3e885f8de0ef375206a311b0a317eadc40d347b1115fb944", kind: deb, family: deb, arch: x86_64 }
+          - { name: fedora-44, image: "fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80", kind: rpm, family: rpm, arch: x86_64 }
+          - { name: archlinux, image: "archlinux:latest@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0", kind: tar, family: deb, arch: x86_64 }
+          - { name: debian-trixie-arm64, image: "debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308", kind: deb, family: deb, arch: aarch64 }
+          - { name: fedora-44-aarch64, image: "fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80", kind: rpm, family: rpm, arch: aarch64 }
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Checkout the base commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.base_sha }}
+          persist-credentials: false
+
+      - name: Fetch the artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-linux-${{ matrix.family }}-${{ matrix.arch }}
+          path: dist
+
+      - name: Install and run
+        run: packaging/ci/linux-ci.sh smoke ${{ matrix.kind }} dist
+
+  # Every platform's assets are hashed and attested together, after they are all built and
+  # the Linux ones verified, so SHA256SUMS has one writer and lists everything. It works only
+  # on this run's artifacts and publishes nothing; `publish` uploads the result.
+  checksums:
+    name: Checksums and provenance
+    needs: [prepare, build, build-linux, verify-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Fetch the assets
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Write checksums
+        run: |
+          set -euo pipefail
+          cd release-assets
+          expected=(
+            "cainary-${VERSION}-macos-universal.zip"
+            "cainary-${VERSION}-macos-universal.tar.gz"
+            "cainary-${VERSION}-linux-x86_64.tar.gz"
+            "cainary-${VERSION}-linux-aarch64.tar.gz"
+            "cainary_${VERSION}_amd64.deb"
+            "cainary_${VERSION}_arm64.deb"
+            "cainary-${VERSION}-1.x86_64.rpm"
+            "cainary-${VERSION}-1.aarch64.rpm"
+          )
+          for f in "${expected[@]}"; do
+            test -f "${f}" || { echo "::error::${f} is missing"; exit 1; }
+            sha256sum "${f}" > "${f}.sha256"
+          done
+          if [ "$(find . -maxdepth 1 -type f ! -name '*.sha256' | wc -l)" -ne "${#expected[@]}" ]; then
+            echo "::error::unexpected files in release-assets"
+            ls -la
+            exit 1
+          fi
+          sha256sum "${expected[@]}" > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            release-assets/*.zip
+            release-assets/*.tar.gz
+            release-assets/*.deb
+            release-assets/*.rpm
+
+      # `publish` merges these with the assets; the names must not match release-*.
+      - name: Keep the checksums
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: checksums
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            release-assets/*.sha256
+            release-assets/SHA256SUMS
+
+  # The only job that changes the repository or the release page, and it runs only after every
+  # build, the Linux verification and the checksums succeeded. It rebuilds nothing: it applies
+  # the version bump to the base commit (checking it is the tree the builds used), commits it,
+  # tags it and uploads the artifacts. The push is not forced, so it fails if master moved
+  # since the base commit. After a failure past the tag, "Re-run failed jobs" (or the whole
+  # run) finds the tag prepare saw and only completes the release.
+  publish:
+    name: Publish release
+    needs: [prepare, build, build-linux, verify-linux, checksums]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-publish-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
+      BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+      RESUMED: ${{ needs.prepare.outputs.resumed }}
+    steps:
+      # This job pushes the bump and the tag, so its checkout keeps the token (the only one).
+      - name: Checkout the base commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.base_sha }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch the notes and changelog
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: "{prepared-notes,notes-macos}"
+          path: notes
+
+      - name: Fetch the assets and checksums
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: "{release-*,checksums}"
+          path: release-assets
+          merge-multiple: true
+
+      - name: Check the assets
+        run: |
+          set -euo pipefail
+          cd release-assets
+          expected=(
+            "cainary-${VERSION}-macos-universal.zip"
+            "cainary-${VERSION}-macos-universal.tar.gz"
+            "cainary-${VERSION}-linux-x86_64.tar.gz"
+            "cainary-${VERSION}-linux-aarch64.tar.gz"
+            "cainary_${VERSION}_amd64.deb"
+            "cainary_${VERSION}_arm64.deb"
+            "cainary-${VERSION}-1.x86_64.rpm"
+            "cainary-${VERSION}-1.aarch64.rpm"
+          )
+          want=("${expected[@]}" SHA256SUMS)
+          for f in "${expected[@]}"; do want+=("${f}.sha256"); done
+          have="$(find . -maxdepth 1 -type f -printf '%f\n' | sort)"
+          if [ "${have}" != "$(printf '%s\n' "${want[@]}" | sort)" ]; then
+            echo "::error::release-assets is not the expected file set"
+            echo "${have}"
+            exit 1
+          fi
+          sha256sum --check --strict SHA256SUMS
+
+      - name: Apply the release version and check the tree
+        env:
+          SET_VERSION_DATE: ${{ needs.prepare.outputs.release_date }}
+          EXPECTED_HASH: ${{ needs.prepare.outputs.version_hash }}
+        run: scripts/release-tree.sh "${VERSION}"
+
+      - name: Commit the bump and tag it
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${BASE_SHA}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          remote_tag="$(git ls-remote --tags origin "refs/tags/${TAG_NAME}^{}" "refs/tags/${TAG_NAME}" | awk 'END { print $1 }')"
+          if [ -n "${remote_tag}" ]; then
+            # Only an earlier run of this workflow, from this same commit, may have made it.
+            git fetch --no-tags origin "refs/tags/${TAG_NAME}:refs/tags/${TAG_NAME}"
+            if [ "$(git rev-parse "refs/tags/${TAG_NAME}^{commit}^")" != "${BASE_SHA}" ]; then
+              echo "::error::${TAG_NAME} exists but was not made from ${BASE_SHA}"
+              exit 1
+            fi
+            echo "${TAG_NAME} already exists for ${BASE_SHA}: completing the release"
+            exit 0
+          fi
+          cp notes/prepared-notes/CHANGELOG.md CHANGELOG.md
+          git add CHANGELOG.md Cargo.toml Cargo.lock linux/Cargo.toml linux/Cargo.lock \
+            linux/data/ua.SkeLLLa.cAInary.metainfo.xml
+          git commit -m "chore(release): ${TAG_NAME} [skip ci]"
+          git tag "${TAG_NAME}"
+          # No force: fails, and nothing is pushed, if master has moved past the base commit.
+          git push --atomic origin HEAD:refs/heads/master "refs/tags/${TAG_NAME}"
+
+      - name: Compose the release notes
+        run: |
+          set -euo pipefail
+          cat notes/prepared-notes/NOTES.md notes/notes-macos/NOTES.md > release-assets-notes.md
+
+      # Creates the release, or on a rerun updates it and replaces the assets.
+      - name: Create the release and upload the assets
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+          name: ${{ env.TAG_NAME }}
+          body_path: release-assets-notes.md
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/cainary-${{ env.VERSION }}-macos-universal.zip
+            release-assets/cainary-${{ env.VERSION }}-macos-universal.tar.gz
+            release-assets/cainary-${{ env.VERSION }}-linux-x86_64.tar.gz
+            release-assets/cainary-${{ env.VERSION }}-linux-aarch64.tar.gz
+            release-assets/cainary_${{ env.VERSION }}_amd64.deb
+            release-assets/cainary_${{ env.VERSION }}_arm64.deb
+            release-assets/cainary-${{ env.VERSION }}-1.x86_64.rpm
+            release-assets/cainary-${{ env.VERSION }}-1.aarch64.rpm
+            release-assets/*.sha256
+            release-assets/SHA256SUMS
+
+  # The AUR package cainary-bin, from the published tarballs. Off until the maintainer has
+  # created the AUR package, added the deploy key's public half to the AUR account, and set
+  # AUR_PUBLISH=true and the AUR_SSH_KEY secret.
+  aur:
+    name: Publish AUR package
+    needs: [prepare, publish]
+    if: ${{ vars.AUR_PUBLISH == 'true' }}
+    runs-on: ubuntu-latest
+    container: archlinux:latest@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
+    environment: aur
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
+      # aur.archlinux.org's published Ed25519 host key fingerprint (shown on its home page).
+      AUR_HOST_KEY_SHA256: "SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4"
+    steps:
+      - name: Install tools
+        run: pacman -Syu --noconfirm --needed base-devel curl git openssh
+
+      - name: Checkout release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.tag_name }}
+          persist-credentials: false
+
+      # The checksums come from the artifacts this run built (the ones `checksums` published), not
+      # from a file fetched over the network; `makepkg --verifysource` below then proves the
+      # published tarballs match them.
+      - name: Fetch the built tarballs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-linux-deb-*
+          path: built
+          merge-multiple: true
+
+      - name: Render PKGBUILD and .SRCINFO
+        run: |
+          set -euo pipefail
+          sum() {
+            sha256sum "built/cainary-${VERSION}-linux-$1.tar.gz" | awk '{ print $1 }'
+          }
+          x86="$(sum x86_64)"
+          arm="$(sum aarch64)"
+          test "${#x86}" -eq 64 && test "${#arm}" -eq 64
+          mkdir -p aur-out
+          sed -e "s/^pkgver=.*/pkgver=${VERSION}/" \
+            -e "s/^pkgrel=.*/pkgrel=1/" \
+            -e "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('${x86}')/" \
+            -e "s/^sha256sums_aarch64=.*/sha256sums_aarch64=('${arm}')/" \
+            packaging/aur/PKGBUILD > aur-out/PKGBUILD
+          grep -qx "pkgver=${VERSION}" aur-out/PKGBUILD
+          grep -q "${x86}" aur-out/PKGBUILD && grep -q "${arm}" aur-out/PKGBUILD
+          # makepkg refuses to run as root.
+          useradd -m builder
+          chown -R builder aur-out
+          su builder -c 'cd aur-out && makepkg --printsrcinfo > .SRCINFO && makepkg --verifysource'
+          cat aur-out/PKGBUILD aur-out/.SRCINFO
+
+      - name: Push to the AUR
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          key="${RUNNER_TEMP}/aur-key"
+          known="${RUNNER_TEMP}/aur-known-hosts"
+          printf '%s\n' "${AUR_SSH_KEY}" > "${key}"
+          trap 'rm -f "${key}"' EXIT
+          # Pin the host key: accept the scanned key only if its fingerprint is AUR's.
+          ssh-keyscan -t ed25519 aur.archlinux.org > "${known}"
+          fp="$(ssh-keygen -lf "${known}" | awk '{ print $2 }')"
+          if [ "${fp}" != "${AUR_HOST_KEY_SHA256}" ]; then
+            echo "::error::aur.archlinux.org host key ${fp} is not ${AUR_HOST_KEY_SHA256}"
+            exit 1
+          fi
+          # Explicit files: ssh reads ~/.ssh from the passwd entry, not from HOME.
+          export GIT_SSH_COMMAND="ssh -i ${key} -o IdentitiesOnly=yes -o UserKnownHostsFile=${known} -o StrictHostKeyChecking=yes"
+          git clone ssh://aur@aur.archlinux.org/cainary-bin.git "${RUNNER_TEMP}/aur"
+          cp aur-out/PKGBUILD aur-out/.SRCINFO "${RUNNER_TEMP}/aur/"
+          cd "${RUNNER_TEMP}/aur"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add PKGBUILD .SRCINFO
+          if git diff --cached --quiet; then
+            echo "AUR already has ${VERSION}"
+          else
+            git commit -m "Update to ${VERSION}"
+            git push origin HEAD:master
+          fi
+
   # crates.io Trusted Publishing: a short-lived token from GitHub OIDC, no stored secret. Off
   # until the maintainer has published 0.1.0 by hand, added this workflow as the trusted
   # publisher of both crates (environment crates-io) and set CRATES_IO_PUBLISH=true. After a
-  # partial upload, use "Re-run failed jobs": a full rerun repeats the version logic.
+  # partial upload, rerun the workflow: the tag from the first attempt is detected and the missing crates are published.
   crates:
     name: Publish crates to crates.io
-    needs: [release, build]
-    if: ${{ needs.release.outputs.released == 'true' && vars.CRATES_IO_PUBLISH == 'true' }}
+    needs: [prepare, publish]
+    if: ${{ needs.prepare.outputs.released == 'true' && vars.CRATES_IO_PUBLISH == 'true' }}
     runs-on: ubuntu-latest
     environment: crates-io
     permissions:
       contents: read
       id-token: write
     env:
-      VERSION: ${{ needs.release.outputs.version }}
+      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.release.outputs.tag_name }}
+          ref: ${{ needs.prepare.outputs.tag_name }}
           persist-credentials: false
 
       - name: Install Rust (version from mise.toml)
@@ -372,42 +898,64 @@ jobs:
 
   packslip:
     name: Sign packslip manifest
-    needs: [release, build]
-    if: ${{ needs.release.outputs.released == 'true' }}
+    needs: [prepare, publish]
+    if: ${{ needs.prepare.outputs.released == 'true' }}
     runs-on: ubuntu-latest
     # Signing never holds release-write access; publish-packslip uploads the bundle.
     permissions:
       contents: read
       id-token: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
     steps:
+      # For packaging/packslip.toml.
+      - name: Checkout release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.tag_name }}
+          persist-credentials: false
+
       # The tag sits on the version-bump commit, not on github.sha (the push that triggered
       # this run), so record the commit the tag actually names.
       - name: Resolve tagged commit
         id: source
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG_NAME: ${{ needs.release.outputs.tag_name }}
         run: |
           set -euo pipefail
           echo "commit=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG_NAME}" --jq .sha)" >> "${GITHUB_OUTPUT}"
 
-      # A macOS archive named for no architecture is recorded as universal (os = darwin, no
-      # arch). The command is the bundle's executable; the bundle itself is an app resource.
+      # The manifest (packaging/packslip.toml) names the executables in each archive: the
+      # macOS bundle's helper, and bin/cainary and bin/cainary-tray in the Linux tarballs. Its
+      # paths are release-assets/<asset>, so the published assets are fetched there.
+      - name: Fetch release tarballs and render the manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download "${TAG_NAME}" --repo "${GITHUB_REPOSITORY}" --dir release-assets \
+            --pattern "cainary-${VERSION}-macos-universal.tar.gz" \
+            --pattern "cainary-${VERSION}-linux-x86_64.tar.gz" \
+            --pattern "cainary-${VERSION}-linux-aarch64.tar.gz"
+          test "$(find release-assets -name '*.tar.gz' | wc -l)" -eq 3
+          sed "s/@VERSION@/${VERSION}/g" packaging/packslip.toml > "${RUNNER_TEMP}/packslip.toml"
+          if grep -q '@VERSION@' "${RUNNER_TEMP}/packslip.toml"; then exit 1; fi
+
       - name: Sign packslip manifest
         id: packslip
-        uses: jdx/packslip@v1
+        uses: jdx/packslip@7d397618045bd98b76cd5cb8177767b2f52789b8 # v1.10.1
         with:
-          download: cainary-*-macos-universal.tar.gz
-          bin: cainary=cAInary.app/Contents/Helpers/cainary
-          resources: app=archive:cAInary.app
-          tag: ${{ needs.release.outputs.tag_name }}
-          version: ${{ needs.release.outputs.version }}
+          artifacts: release-assets/*.tar.gz
+          manifest: ${{ runner.temp }}/packslip.toml
+          tag: ${{ needs.prepare.outputs.tag_name }}
+          version: ${{ needs.prepare.outputs.version }}
           commit: ${{ steps.source.outputs.commit }}
           attest: link
           upload: false
 
       - name: Keep signed bundle
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: packslip-bundle
           retention-days: 1
@@ -416,13 +964,13 @@ jobs:
 
   publish-packslip:
     name: Publish packslip manifest
-    needs: [release, packslip]
+    needs: [prepare, packslip]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - name: Fetch signed bundle
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: packslip-bundle
           path: packslip
@@ -430,7 +978,7 @@ jobs:
       - name: Upload signed bundle
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG_NAME: ${{ needs.release.outputs.tag_name }}
+          TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
         run: |
           set -euo pipefail
           test -f packslip/packslip.sigstore.json
@@ -438,7 +986,7 @@ jobs:
 
   verify-packslip:
     name: Verify published packslip manifest
-    needs: [release, publish-packslip]
+    needs: [prepare, publish-packslip]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -448,15 +996,15 @@ jobs:
       PACKSLIP_PIN: ${{ vars.PACKSLIP_PIN }}
     steps:
       - name: Install packslip
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: packslip@1.6.0
 
       # Check what users download: the public release URLs, not this run's local files.
       - name: Verify manifest against the published tarball
         env:
-          TAG_NAME: ${{ needs.release.outputs.tag_name }}
-          VERSION: ${{ needs.release.outputs.version }}
+          TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
           base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG_NAME}"

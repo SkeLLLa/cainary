@@ -1,0 +1,109 @@
+[package]
+name = "cainary-tray"
+description = "cAInary tray app for Linux (Qt 6 / QML)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+build = "build.rs"
+
+[[bin]]
+name = "cainary-tray"
+path = "src/main.rs"
+
+[dependencies]
+cainary-tray-model.workspace = true
+cainary-tray-dbus.workspace = true
+cxx.workspace = true
+cxx-qt.workspace = true
+cxx-qt-lib.workspace = true
+serde_json.workspace = true
+async-channel.workspace = true
+futures-lite.workspace = true
+zbus.workspace = true
+libc.workspace = true
+wayland-client.workspace = true
+
+[build-dependencies]
+cc.workspace = true
+cxx-qt-build.workspace = true
+
+[features]
+default = ["layer-shell"]
+# The popup is a wlr-layer-shell surface on compositors that offer it. Needs LayerShellQt's
+# development files; build with --no-default-features to use the decorated-window fallback only.
+layer-shell = []
+
+[dev-dependencies]
+toml.workspace = true
+
+# --- packaging metadata below is owned by packaging/linux.sh workstream ---
+
+[package.metadata.deb]
+name = "cainary"
+maintainer = "SkeLLLa"
+copyright = "2026, SkeLLLa"
+section = "utils"
+priority = "optional"
+depends = "$auto, qml6-module-qtquick, qml6-module-qtquick-controls, qml6-module-qtquick-layouts, qml6-module-qtquick-window, qml6-module-qtquick-templates, qml6-module-qtqml-workerscript, qt6-wayland, qt6-svg-plugins"
+recommends = "qml6-module-org-kde-desktop"
+suggests = "gnome-shell-extension-appindicator"
+extended-description = """\
+The cAInary Linux tray app shows what AI tools and device monitoring
+services track and send. It includes the static cainary command-line scanner.
+"""
+assets = [
+  ["target/release/bin/cainary", "usr/bin/cainary", "755"],
+  ["target/release/bin/cainary-tray", "usr/bin/cainary-tray", "755"],
+  ["target/release/share/applications/ua.SkeLLLa.cAInary.desktop", "usr/share/applications/ua.SkeLLLa.cAInary.desktop", "644"],
+  ["target/release/share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml", "usr/share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml", "644"],
+  ["target/release/share/icons/hicolor/scalable/apps/ua.SkeLLLa.cAInary.svg", "usr/share/icons/hicolor/scalable/apps/ua.SkeLLLa.cAInary.svg", "644"],
+  ["target/release/share/icons/hicolor/16x16/apps/ua.SkeLLLa.cAInary.png", "usr/share/icons/hicolor/16x16/apps/ua.SkeLLLa.cAInary.png", "644"],
+  ["target/release/share/icons/hicolor/22x22/apps/ua.SkeLLLa.cAInary.png", "usr/share/icons/hicolor/22x22/apps/ua.SkeLLLa.cAInary.png", "644"],
+  ["target/release/share/icons/hicolor/24x24/apps/ua.SkeLLLa.cAInary.png", "usr/share/icons/hicolor/24x24/apps/ua.SkeLLLa.cAInary.png", "644"],
+  ["target/release/share/icons/hicolor/32x32/apps/ua.SkeLLLa.cAInary.png", "usr/share/icons/hicolor/32x32/apps/ua.SkeLLLa.cAInary.png", "644"],
+  ["target/release/share/icons/hicolor/48x48/apps/ua.SkeLLLa.cAInary.png", "usr/share/icons/hicolor/48x48/apps/ua.SkeLLLa.cAInary.png", "644"],
+  ["target/release/share/icons/hicolor/64x64/apps/ua.SkeLLLa.cAInary.png", "usr/share/icons/hicolor/64x64/apps/ua.SkeLLLa.cAInary.png", "644"],
+  ["target/release/share/icons/hicolor/128x128/apps/ua.SkeLLLa.cAInary.png", "usr/share/icons/hicolor/128x128/apps/ua.SkeLLLa.cAInary.png", "644"],
+  ["target/release/share/icons/hicolor/256x256/apps/ua.SkeLLLa.cAInary.png", "usr/share/icons/hicolor/256x256/apps/ua.SkeLLLa.cAInary.png", "644"],
+  ["target/release/README.md", "usr/share/doc/cainary/README.md", "644"],
+  ["target/release/LICENSE", "usr/share/licenses/cainary/LICENSE", "644"],
+]
+
+[package.metadata.generate-rpm]
+name = "cainary"
+summary = "Qt 6 tray app for AI tool and device monitoring reports"
+license = "GPL-3.0-or-later"
+assets = [
+  { source = "target/release/bin/cainary", dest = "/usr/bin/cainary", mode = "755" },
+  { source = "target/release/bin/cainary-tray", dest = "/usr/bin/cainary-tray", mode = "755" },
+  { source = "target/release/share/applications/ua.SkeLLLa.cAInary.desktop", dest = "/usr/share/applications/ua.SkeLLLa.cAInary.desktop", mode = "644" },
+  { source = "target/release/share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml", dest = "/usr/share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml", mode = "644" },
+  { source = "target/release/share/icons/hicolor/scalable/apps/ua.SkeLLLa.cAInary.svg", dest = "/usr/share/icons/hicolor/scalable/apps/ua.SkeLLLa.cAInary.svg", mode = "644" },
+  { source = "target/release/share/icons/hicolor/16x16/apps/ua.SkeLLLa.cAInary.png", dest = "/usr/share/icons/hicolor/16x16/apps/ua.SkeLLLa.cAInary.png", mode = "644" },
+  { source = "target/release/share/icons/hicolor/22x22/apps/ua.SkeLLLa.cAInary.png", dest = "/usr/share/icons/hicolor/22x22/apps/ua.SkeLLLa.cAInary.png", mode = "644" },
+  { source = "target/release/share/icons/hicolor/24x24/apps/ua.SkeLLLa.cAInary.png", dest = "/usr/share/icons/hicolor/24x24/apps/ua.SkeLLLa.cAInary.png", mode = "644" },
+  { source = "target/release/share/icons/hicolor/32x32/apps/ua.SkeLLLa.cAInary.png", dest = "/usr/share/icons/hicolor/32x32/apps/ua.SkeLLLa.cAInary.png", mode = "644" },
+  { source = "target/release/share/icons/hicolor/48x48/apps/ua.SkeLLLa.cAInary.png", dest = "/usr/share/icons/hicolor/48x48/apps/ua.SkeLLLa.cAInary.png", mode = "644" },
+  { source = "target/release/share/icons/hicolor/64x64/apps/ua.SkeLLLa.cAInary.png", dest = "/usr/share/icons/hicolor/64x64/apps/ua.SkeLLLa.cAInary.png", mode = "644" },
+  { source = "target/release/share/icons/hicolor/128x128/apps/ua.SkeLLLa.cAInary.png", dest = "/usr/share/icons/hicolor/128x128/apps/ua.SkeLLLa.cAInary.png", mode = "644" },
+  { source = "target/release/share/icons/hicolor/256x256/apps/ua.SkeLLLa.cAInary.png", dest = "/usr/share/icons/hicolor/256x256/apps/ua.SkeLLLa.cAInary.png", mode = "644" },
+  { source = "target/release/README.md", dest = "/usr/share/doc/cainary/README.md", mode = "644", doc = true },
+  { source = "target/release/LICENSE", dest = "/usr/share/licenses/cainary/LICENSE", mode = "644", doc = true },
+]
+
+[package.metadata.generate-rpm.requires]
+qt6-qtbase-gui = "*"
+qt6-qtdeclarative = "*"
+qt6-qtsvg = "*"
+qt6-qtwayland = "*"
+layer-shell-qt = "*"
+
+[package.metadata.generate-rpm.recommends]
+kf6-qqc2-desktop-style = "*"
+
+[package.metadata.generate-rpm.suggests]
+gnome-shell-extension-appindicator = "*"

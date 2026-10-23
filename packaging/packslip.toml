@@ -1,0 +1,33 @@
+# packslip manifest for a release (https://packslip.dev/docs/describing-releases/).
+# A template: the `packslip` job in .github/workflows/release.yml replaces @VERSION@ with the
+# release version and passes the result to jdx/packslip (`manifest:`), which sets project,
+# version, url_base, notes_url and [source] itself. Paths are relative to the job's working
+# directory, where the job downloads the release tarballs into release-assets/.
+#
+# Executable paths include the archive's top-level directory.
+
+# macOS: universal (no arch in the name). The command is the bundle's helper; the bundle itself
+# is an `app` resource.
+[[artifact]]
+path = "release-assets/cainary-@VERSION@-macos-universal.tar.gz"
+bin = [{ name = "cainary", path = "cAInary.app/Contents/Helpers/cainary" }]
+
+[[resource]]
+kind = "app"
+artifact = "cainary-@VERSION@-macos-universal.tar.gz"
+archive = "cAInary.app"
+
+# Linux: the static musl CLI and the Qt tray app (which needs the host's Qt 6).
+[[artifact]]
+path = "release-assets/cainary-@VERSION@-linux-x86_64.tar.gz"
+bin = [
+  { name = "cainary", path = "cainary-@VERSION@-linux-x86_64/bin/cainary" },
+  { name = "cainary-tray", path = "cainary-@VERSION@-linux-x86_64/bin/cainary-tray" },
+]
+
+[[artifact]]
+path = "release-assets/cainary-@VERSION@-linux-aarch64.tar.gz"
+bin = [
+  { name = "cainary", path = "cainary-@VERSION@-linux-aarch64/bin/cainary" },
+  { name = "cainary-tray", path = "cainary-@VERSION@-linux-aarch64/bin/cainary-tray" },
+]

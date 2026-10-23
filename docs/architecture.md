@@ -40,7 +40,8 @@ server-side visibility.
   mise.toml                  local toolchain pins and tasks (rust, swift, shellcheck, …)
   Makefile                   the only build entry point (mise tasks wrap it)
   rustfmt.toml  clippy.toml  .swift-format  cliff.toml
-  docs/                      this file, rules.md, macos.md, integrations.md
+  docs/                      this file, rules.md, macos.md, linux.md, integrations.md,
+                             distribution.md
   crates/
     cainary-core/            library: model, harness, parsers, scanners, analysis, diff
       src/lib.rs             scan(): run the scanners, sort, analyze → Report
@@ -82,7 +83,11 @@ server-side visibility.
       tests/cli.rs           runs the binary on fixtures; text/status/sources goldens in tests/golden/
   macos/                     SwiftUI menu bar app (macos.md)
     Info.plist  Sources/*.swift  Tests/
+  linux/                     Qt 6 tray app: its own workspace, Cargo.lock and guards (linux.md)
+    crates/tray-model  crates/tray-dbus  crates/cainary-tray   data/
   packaging/bundle.sh        assemble and sign dist/cAInary.app, zip it (POSIX sh)
+  packaging/linux.sh         tarball, .deb and .rpm from built binaries (distribution.md)
+  packaging/aur/  packaging/ci/  packaging/dist/  packaging/packslip.toml  packaging/mise-registry/
   scripts/                   action-pin checker and its test, set-version.sh (release)
   .github/workflows/         ci.yml, release.yml: plain make with rustup and Xcode (§11)
 ```
@@ -104,6 +109,28 @@ visible, reviewed change. That guard is a regression check, not a proof. What ke
 read-only and offline is that the only call sites that open files or start a process are
 `harness/fs.rs` and the one `Command::new` in `harness/platform.rs`, and fixture-mode tests show
 both are bypassed (§10).
+
+**The Linux tray has its own policy.** `linux/` is a separate workspace (`exclude = ["linux"]` in
+the root `Cargo.toml`) with its own `Cargo.lock`, so none of its crates enter the table above or
+the root lockfile guard. Its guards live in `linux/crates/cainary-tray/tests/guards.rs`:
+
+1. **L1, direct dependencies.** Every `linux/crates/*/Cargo.toml` may depend only on
+   `cainary-tray-model`, `cainary-tray-dbus`, `cxx`, `cxx-qt`, `cxx-qt-lib`, `cxx-qt-build`,
+   `ksni`, `zbus`, `serde`, `serde_json`, `toml`, `libc`, `async-channel` and `futures-lite`.
+2. **L2, transitive denylist.** `linux/Cargo.lock` must not contain GTK, GLib or GIO crates
+   (`gtk*`, `gdk*`, `glib*`, `gio*`, `gobject*`, `pango*`, `cairo*`, `atk*`), AppIndicator
+   libraries, `rfd`, `tray-icon`, `muda`, `webkit*`, `wry`, `tokio*`, or HTTP, TLS and networking
+   clients (`reqwest`, `hyper*`, `ureq`, `curl*`, `isahc`, `h2`, `rustls*`, `openssl`,
+   `native-tls`, `tungstenite*`, `webbrowser`). `ksni`'s `gtk4` is a dev-dependency and never
+   reaches the lockfile used for the build.
+3. **L3, source guards.** `Command::new` only in the runner (`tray-model/src/runner.rs`), no
+   `std::net`, file writes only in `settings.rs` (which the baseline store writes through) and `autostart.rs`,
+   and no scanning code (no `~/.claude` or similar path literals). It also needs the
+   crates' `publish = false`.
+4. **L4, version sync.** `linux/Cargo.toml` has the same version as the root workspace.
+
+Qt itself comes from the distro, outside Cargo's view (see [linux.md](linux.md) §6 for what that
+does and doesn't mean for GTK).
 
 ## 3. Report model
 
@@ -629,7 +656,7 @@ cainary --version | --help
 COMMON: [--alert org|org-unknown|everything]   (aliases relaxed|balanced|paranoid; default org-unknown)
         [--tool <slug>]...                      (repeatable; default all)
         [--fixture <dir> | --root <dir> --home <dir> [--os macos|linux]]
-        [--env-kind shell|launchd]              (default shell; the app passes launchd)
+        [--env-kind launchd|shell]              (default shell; both apps pass launchd)
         [--no-color]                            (also NO_COLOR; colour only on a tty)
 ```
 
@@ -725,11 +752,52 @@ The macOS app bundles the helper at `cAInary.app/Contents/Helpers/cainary` (not
 runs `scan --json --env-kind launchd [--since -]` with the baseline on stdin. Its bounded runner,
 change tracking and screens are in [macos.md](macos.md).
 
-### 9.2 Linux UI (planned)
+### 9.2 Linux UI
 
-It needs nothing from the core beyond the CLI: a tray app (toolkit not chosen) that runs
-`cainary scan --json` and draws `status`, `apps`, `others` and their findings, and can keep a
-baseline for `--since` the same way the macOS app does.
+The Linux tray app (`cainary-tray`, Qt 6 / QML, in the separate `linux/` workspace) follows the
+same contract and needs nothing from the core beyond the CLI. It runs
+`cainary scan --json --env-kind launchd`, like the macOS app, refuses a schema major other than 3,
+and draws `status`, `apps`, `others` and their findings. It keeps a baseline and the notified
+change ids under `$XDG_STATE_HOME/cainary/` and passes it as `--since -`, like the macOS app's
+change tracking. It looks for the CLI next to its own executable, then at `/usr/bin/cainary`,
+never on `PATH`. `launchd` is the core's "no login shell" environment kind: a tray started at
+login has no shell exports, so scanners mark environment-dependent findings best effort (§6.5)
+and they can differ from a terminal scan ([linux.md](linux.md) §3). Both apps show the same text
+for the same report, and the CLI's output is identical on macOS and Linux (the shared starship
+config). Placement, packaging and the runner are in [linux.md](linux.md).
+
+**Toolkit split.** The UI is QML, driven by cxx-qt `QObject`s that stay thin: `AppController`
+and `SettingsController` hold a view as JSON that `tray-model` computes, so the QML never
+interprets the report. About 360 lines of C++ remain, in `linux/crates/cainary-tray/cpp/`,
+because Qt offers no Rust-callable API for them:
+
+| File | Lines (approx.) | Why it is C++ |
+| --- | --- | --- |
+| `icons.cpp` | 110 | The QML image provider and the pixmap fallback for the tray host: SVG rendering with a recoloured palette. |
+| `layershell.cpp` | 85 | LayerShellQt is a C++ API (`LayerShellQt::Window`); built only with the `layer-shell` feature. |
+| `qt_shims.cpp` | 160 | Qt message capture for `--self-test`, controls-style probe, platform name, screen geometry, clipboard, activation token, window grab and the dark palette. |
+| `cainary.h` | 35 | The declarations the bridge imports. |
+
+Popup placement has three strategies (`layer-shell`, `x11`, `decorated`). There is no
+compositor-specific scripting: layer-shell covers Plasma and wlroots, and GNOME gets an ordinary
+window (linux.md §2).
+
+**Threads.**
+
+- **Qt main thread:** every `QObject`, the QML engine and the controller's slots. Nothing
+  blocks it.
+- **Controller thread:** one worker that serialises `AppMessage`s from the Qt thread and the
+  D-Bus thread and turns store outcomes into view updates.
+- **Store threads:** the runner worker that spawns `cainary` and a scheduler timer thread; both
+  talk to the controller only through channels.
+- **D-Bus thread:** one `async_io::block_on` thread in `tray-dbus` (ksni, notifications,
+  single instance, logind, watcher). It exchanges `UiEvent` and `TrayUpdate` with the controller.
+
+**Shutdown order.** On Quit or a signal the app stops in this order, so nothing writes to a
+service that is already gone: `scheduler.stop()`, then the D-Bus `service.shutdown()`, then
+`store.shutdown(3 s)`, which cancels a scan in flight and kills the child's process group, then
+the controller gets `Stop` and is joined. If the scan doesn't stop within 3 s the app logs it and
+exits anyway.
 
 ## 10. Testing
 
@@ -775,11 +843,13 @@ state.
 
 ## 11. Build, CI and release
 
-- **Toolchain:** `mise.toml` pins rust (with both Apple targets, rustfmt and clippy), swift,
-  shellcheck, jactionlint and mr-boxington for local work, and its tasks wrap the Makefile.
-  Under mise, cargo runs through `mbx` (a shared build cache) and `SWIFTC` points at mise's
-  swiftc. When `CARGO_HOME` isn't writable (a sandbox), the Makefile moves it to
-  `$TMPDIR/cargo-home`.
+- **Toolchain:** `mise.toml` pins rust (with both Apple and both Linux musl targets, rustfmt and
+  clippy), swift (macOS only), shellcheck, jactionlint, mr-boxington, and on Linux `cargo-deb` and
+  `cargo-generate-rpm`. Its tasks wrap the Makefile. Under mise, cargo runs through `mbx` (a shared
+  build cache) and `SWIFTC` points at mise's swiftc, or plain `swiftc` where swift isn't a mise
+  tool. When `CARGO_HOME` isn't writable (a sandbox), the Makefile moves it to
+  `$TMPDIR/cargo-home`. The Linux tray also needs the distro's Qt 6 development packages
+  ([linux.md](linux.md) §8).
 - **Version:** `[workspace.package] version` in `Cargo.toml` is the single source.
   `bundle.sh` stamps it into the app's `Info.plist` and refuses a helper that reports a
   different version.
@@ -787,16 +857,29 @@ state.
   `-D warnings`, `swift format lint --strict`, shellcheck), `check-rust`, `check` (lint + test +
   ui-test), `core-universal` (release builds for both Apple targets, `lipo` →
   `target/universal/cainary`), `app`, `bundle` (`RELEASE=1` for the universal release app),
-  `ui-test`, `scan`, `publish-check` (`cargo publish --workspace --dry-run`), `clean`. The app and bundle steps are in macos.md §4. `linux` is reserved for
-  a static Linux tarball and isn't implemented yet.
+  `ui-test`, `scan`, `publish-check` (`cargo publish --workspace --dry-run`), `clean` (also
+  `linux/target`). The app and bundle steps are in macos.md §4. The Linux targets use the
+  `linux/` workspace through `--manifest-path`: `linux-cli` (static musl `cainary`),
+  `linux-build`, `linux-test` (under `dbus-run-session`, `QT_QPA_PLATFORM=offscreen`),
+  `linux-fmt`, `linux-lint`, `linux-check` (lint, test, shellcheck, desktop-file and AppStream
+  validation), `linux-ui-test`, `linux-run`, and `linux` (CLI plus tray release build, then
+  `packaging/linux.sh` into `dist/`; `LINUX_FORMATS` defaults to `tar`). See
+  [linux.md](linux.md) §8.
 - **Install:** copy `cAInary.app` to `/Applications`. For the CLI, optionally
   `ln -s /Applications/cAInary.app/Contents/Helpers/cainary ~/.local/bin/cainary`, or
   `cargo install cainary --locked`. The other methods are in [distribution.md](distribution.md).
 - **CI** (`.github/workflows/ci.yml`): Conventional Commit messages, action pins, `make check` on
-  macOS (uploading the UI snapshots), and `make check-rust` plus `make publish-check` on Linux. CI doesn't use mise: it runs
-  plain `make` with rustup's cargo (version read from `mise.toml`) and Xcode's swiftc.
-- **Release** (`.github/workflows/release.yml`): an action-pin gate and `make check`, then
-  git-cliff bumps the version (`scripts/set-version.sh` updates `Cargo.toml`, `Cargo.lock` and
-  `CHANGELOG.md`), tags, and builds and publishes the universal macOS bundle, then publishes the crates `cainary-core`
-  and `cainary` (the CLI package; its directory is `crates/cainary-cli`) to crates.io. Developer ID signing
-  and notarization are optional steps there; local bundles are signed ad hoc.
+  macOS (uploading the UI snapshots), and `make check-rust` plus `make publish-check` on Linux.
+  CI doesn't use mise: it runs plain `make` with rustup's cargo (version read from `mise.toml`)
+  and Xcode's swiftc. The Linux tray has its own jobs, which run `packaging/ci/linux-ci.sh` in
+  distro containers (Debian trixie, Fedora, Arch; see [distribution.md](distribution.md)).
+- **Release** (`.github/workflows/release.yml`): an action-pin gate, `make check` and the Linux
+  tray checks (`make linux-check` on Debian trixie), then `prepare` has git-cliff
+  pick the version (`scripts/set-version.sh` updates `Cargo.toml`, `Cargo.lock`,
+  `linux/Cargo.toml`, `linux/Cargo.lock` and the AppStream release list) without pushing, the
+  builds apply it locally to the same commit for the universal macOS bundle and the Linux
+  tarballs, .deb and .rpm, and one `checksums` job hashes and attests every asset. Only then does
+  `publish` commit the bump and `CHANGELOG.md`, tag, and create the release with all assets. The crates `cainary-core` and `cainary` (the CLI
+  package; its directory is `crates/cainary-cli`) are then published to crates.io. Developer ID
+  signing and notarization are optional steps there; local bundles are signed ad hoc. The jobs
+  are in [distribution.md](distribution.md).

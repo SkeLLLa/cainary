@@ -64,6 +64,8 @@ function pinned(v,    p, h, parts, n) {
     return parts[1] ~ /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+(\/[^ \t@]+)?$/
 }
 
+function imgpinned(v) { return v ~ /@sha256:[0-9a-f]+$/ && length(v) - index(v, "@sha256:") - 7 == 64 }
+
 FNR == 1 { inblock = 0; split("", seen) }
 
 {
@@ -117,6 +119,20 @@ FNR == 1 { inblock = 0; split("", seen) }
     if (nopen != nclose) { hard("multi-line flow collections are not allowed"); bad = 1 }
     if (bad) next
 
+    # `container:` / `image:` values (job containers, services, matrix entries) need a digest.
+    t = s
+    while (match(t, /(^|[ \t{,-])(image|container):[ \t]*("[^"]*"|\047[^\047]*\047|[^ \t,}]+)/)) {
+        seg = substr(t, RSTART, RLENGTH)
+        t = substr(t, RSTART + RLENGTH)
+        sub(/^[ \t{,-]*(image|container):[ \t]*/, "", seg)
+        if (length(seg) >= 2 && ((seg ~ /^".*"$/) || (seg ~ /^\047.*\047$/))) seg = substr(seg, 2, length(seg) - 2)
+        if (seg == "" || seg ~ /\$\{\{/) continue
+        if (!imgpinned(seg)) {
+            note(warnmode ? "warning" : "error", "container image is not pinned to an @sha256 digest")
+            nsoft++
+        }
+    }
+
     if (s ~ /(^|[^A-Za-z0-9_-])uses($|[^A-Za-z0-9_-])/) {
         if (r ~ /^uses:[ \t]+[^ \t]/) {
             v = r; sub(/^uses:[ \t]+/, "", v)
@@ -149,7 +165,7 @@ END {
         exit 1
     }
     if (nsoft > 0 && !warnmode) {
-        printf "%d action reference(s) are not pinned to a 40-hex commit SHA, local path or docker digest.\n", nsoft > "/dev/stderr"
+        printf "%d action reference(s) are not pinned to a 40-hex commit SHA, local path or docker digest (action or container image).\n", nsoft > "/dev/stderr"
         exit 1
     }
     if (nsoft == 0) print "All actions are pinned."
@@ -170,4 +186,23 @@ while [ "${n}" -gt 0 ]; do
     n=$((n - 1))
 done
 
-awk -v warnmode="${warn}" -v prehard="${prehard}" -f "${prog}" "$@" /dev/null
+awk_status=0
+awk -v warnmode="${warn}" -v prehard="${prehard}" -f "${prog}" "$@" /dev/null || awk_status=$?
+
+# Every pinned container image must be one of packaging/ci/images.env, so CI and the local
+# `mise run linux:container:*` tasks run the same bits.
+images="$(dirname "$0")/../packaging/ci/images.env"
+if [ -f "${images}" ] && [ "${awk_status}" -eq 0 ]; then
+    known="$(sed -n 's/^[A-Z_]*_IMAGE=//p' "${images}")"
+    for f in "$@"; do
+        grep -E '(^|[^A-Za-z0-9_-])(image|container):' "${f}" |
+            grep -oE '[A-Za-z0-9._/-]+:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}' |
+            while read -r ref; do
+                printf '%s\n' "${known}" | grep -qxF "${ref}" || {
+                    echo "::error file=${f}::image ${ref} is not in packaging/ci/images.env" >&2
+                    echo bad
+                }
+            done
+    done | grep -q bad && exit 1
+fi
+exit "${awk_status}"

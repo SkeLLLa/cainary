@@ -26,7 +26,9 @@ it with `grep`; an empty output hides a starship module.
 
 These examples need `cainary` on `PATH`, for example
 `ln -s /Applications/cAInary.app/Contents/Helpers/cainary ~/.local/bin/cainary`, or
-`mise use -g packslip:github.com/SkeLLLa/cainary` (see [Distribution](distribution.md)). `when = true` is
+`mise use -g packslip:github.com/SkeLLLa/cainary` (see [Distribution](distribution.md)). The Linux
+packages install it as `/usr/bin/cainary`, and `install-user.sh` as `~/.local/bin/cainary`. The
+output is the same on macOS and Linux, so one `starship.toml` works on both. `when = true` is
 required, because a custom module is off by default. `shell = ["sh"]` keeps your fish or zsh
 startup files out of every prompt and makes `|` work the same everywhere. With a custom top-level
 `format`, add `${custom.cainary}` (or `$custom`) to it.

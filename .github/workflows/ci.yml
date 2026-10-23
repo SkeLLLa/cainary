@@ -24,7 +24,7 @@ jobs:
       pull-requests: read
     steps:
       - name: Verify Conventional Commit messages
-        uses: opensource-nepal/commitlint@v2
+        uses: opensource-nepal/commitlint@9c112b70de7b0e51f81d12a5268a451db5419794 # v2.0.0
 
   # Warn mode: unpinned actions are annotated here and fail the release pin-gate. CI stays in
   # `--warn` until the maintainer pins the current refs; that commit removes `--warn`. If
@@ -35,7 +35,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Test the pin checker
@@ -49,7 +49,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install Rust (version from mise.toml)
@@ -67,7 +67,7 @@ jobs:
           swiftc --version
           swift format --version
       - name: Cache cargo
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -80,7 +80,7 @@ jobs:
         run: make check
       - name: Upload UI snapshots
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ui-snapshots
           retention-days: 7
@@ -93,7 +93,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install Rust (version from mise.toml)
@@ -104,7 +104,7 @@ jobs:
           rustup toolchain install "${v}" --profile minimal --component rustfmt,clippy
           rustup default "${v}"
       - name: Cache cargo
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -124,7 +124,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install Rust (version from mise.toml)
@@ -154,9 +154,174 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "${APP}"
           "${APP}/Contents/Helpers/cainary" --version
       - name: Upload bundle
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cainary-macos-universal
           retention-days: 7
           if-no-files-found: error
           path: dist/cAInary-*-macos.zip
+
+  # The Qt tray app, in containers of the distros it ships for (docs/linux.md). The CLI is the
+  # root workspace, checked by `linux` above; the musl build of it is checked by linux-package.
+  linux-app:
+    name: Tray app (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Primary: the .deb and tarball are built here (Qt 6.8, LayerShellQt 6.3).
+          - name: debian-trixie
+            image: debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
+            target: linux-check
+          # The newest Qt and LayerShellQt.
+          - name: fedora-44
+            image: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
+            target: linux-check
+          - name: archlinux
+            image: archlinux:latest@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
+            target: linux-build
+    env:
+      CARGO_HOME: /usr/local/cargo
+      RUSTUP_HOME: /usr/local/rustup
+    steps:
+      # git first, so that checkout clones (SOURCE_DATE_EPOCH, set-version) instead of
+      # downloading a tarball.
+      - name: Install git
+        run: |
+          if command -v apt-get > /dev/null; then apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates git
+          elif command -v dnf > /dev/null; then dnf install -y -q git-core
+          else pacman -Syu --noconfirm --needed git; fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust and the tray's build dependencies
+        run: packaging/ci/linux-ci.sh deps build
+      - name: Cache cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
+            linux/target
+          key: linux-app-${{ matrix.name }}-${{ hashFiles('mise.toml', 'linux/Cargo.lock') }}
+          restore-keys: |
+            linux-app-${{ matrix.name }}-
+      - name: make ${{ matrix.target }}
+        run: make ${{ matrix.target }}
+      - name: make linux-ui-test
+        if: matrix.name == 'debian-trixie'
+        run: make linux-ui-test
+      - name: Upload UI snapshots
+        if: always() && matrix.name == 'debian-trixie'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ui-snapshots-linux
+          retention-days: 7
+          if-no-files-found: ignore
+          path: target/ui-snapshots/linux/
+
+  # Unsigned packages for this commit; release.yml builds the published ones the same way.
+  linux-package:
+    name: Package (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: debian-trixie
+            image: debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
+            formats: tar,deb
+          # Fedora 44 only: the rpm is built and installed there.
+          - name: fedora-44
+            image: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
+            formats: rpm
+    env:
+      CARGO_HOME: /usr/local/cargo
+      RUSTUP_HOME: /usr/local/rustup
+    steps:
+      - name: Install git
+        run: |
+          if command -v apt-get > /dev/null; then apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates git
+          else dnf install -y -q git-core; fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust, build dependencies, cargo-deb and cargo-generate-rpm
+        run: packaging/ci/linux-ci.sh deps package
+      - name: Cache cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
+            target
+            linux/target
+          key: linux-package-${{ matrix.name }}-${{ hashFiles('mise.toml', 'Cargo.lock', 'linux/Cargo.lock') }}
+          restore-keys: |
+            linux-package-${{ matrix.name }}-
+      - name: make linux
+        run: make linux LINUX_FORMATS=${{ matrix.formats }}
+      - name: Inspect the artifacts
+        run: |
+          set -eu
+          packaging/ci/linux-ci.sh inspect dist "$(packaging/ci/linux-ci.sh version)" "$(uname -m)"
+      - name: Upload packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-package-${{ matrix.name }}
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.rpm
+
+  # Install the packages on clean systems, as users would, and run both binaries. The QML
+  # modules are invisible to shlibdeps and auto-req; the self-test loads every component.
+  linux-install-smoke:
+    name: Install smoke test (${{ matrix.name }})
+    needs: linux-package
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: debian-trixie
+            image: debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
+            kind: deb
+            package: linux-package-debian-trixie
+          - name: ubuntu-26.04
+            image: ubuntu:26.04@sha256:c098726dd9b9733f3e885f8de0ef375206a311b0a317eadc40d347b1115fb944
+            kind: deb
+            package: linux-package-debian-trixie
+          - name: fedora-44
+            image: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
+            kind: rpm
+            package: linux-package-fedora-44
+          # The tarball with the AUR package's depends, through install-user.sh.
+          - name: archlinux
+            image: archlinux:latest@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
+            kind: tar
+            package: linux-package-debian-trixie
+    steps:
+      # No git: the smoke test needs only the scripts, PKGBUILD and Cargo.toml.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fetch packages
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ matrix.package }}
+          path: dist
+      - name: Install and run
+        run: packaging/ci/linux-ci.sh smoke ${{ matrix.kind }} dist

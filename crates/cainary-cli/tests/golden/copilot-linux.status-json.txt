@@ -1,0 +1,1 @@
+{"schema":3,"level":"low","label":"LOW","badge":1,"complete":true,"entries":{"claude":{"level":"not-installed","installed":false},"openai":{"level":"not-installed","installed":false},"cursor":{"level":"not-installed","installed":false},"copilot":{"level":"low","installed":true}}}

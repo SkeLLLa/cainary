@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <title>cAInary</title>
+  <rect x="4" y="4" width="120" height="120" rx="26" fill="#263238"/>
+  <g transform="translate(20 20) scale(6.5)">
+    <path fill="#f57c00" d="M 10.6 3.1 L 13.2 4.1 L 10.6 5.1 Z"/>
+    <path fill="#e0a800" d="M 2.2 8.6 L 0.4 12 L 4.4 10.5 Z"/>
+    <ellipse fill="#f5c518" cx="6" cy="7.6" rx="4.6" ry="3.1" transform="rotate(-25 6 7.6)"/>
+    <circle fill="#f5c518" cx="8.5" cy="4" r="2.6"/>
+    <path fill="#e0a800" d="M 3.2 7.4 C 4.6 6.8, 6.5 7, 7.8 8 C 6.2 9.6, 4.2 9.9, 2.5 9.2 Z"/>
+    <circle fill="#263238" cx="9.3" cy="3.4" r="0.55"/>
+  </g>
+</svg>

@@ -248,3 +248,90 @@ fn since_reads_stdin() {
     let r: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert!(r["since"]["error"].as_str().unwrap().contains("1 MiB"));
 }
+
+/// `status` goldens in every format for fixtures covering each state: high, medium, low,
+/// incomplete and a badge of 2 or more.
+#[test]
+fn status_goldens_cover_every_state() {
+    for fixture_name in [
+        "claude-code-linux",
+        "codex-linux",
+        "cursor-linux",
+        "copilot-linux",
+        "device-linux",
+        "claude-code-helper",
+        "codex-bad-base64",
+        "device-macos-managed",
+    ] {
+        for format in ["emoji", "text", "nerd", "json"] {
+            golden_on(
+                fixture_name,
+                &format!("{fixture_name}.status-{format}.txt"),
+                &["status", "--format", format],
+            );
+        }
+    }
+}
+
+/// The same state prints the same bytes whichever OS it was scanned on.
+#[test]
+fn status_matches_for_the_same_state_on_macos_and_linux() {
+    let status = |fixture_name: &str, format: &str| {
+        let fx = fixture(fixture_name);
+        let out = run(&["status", "--format", format, "--fixture", &fx]);
+        assert_eq!(out.status.code(), Some(0), "{fixture_name} {format}");
+        String::from_utf8(out.stdout).unwrap()
+    };
+    for (linux, macos) in [
+        ("cursor-linux", "cursor-macos-managed"),
+        ("codex-linux", "codex-mdm-macos"),
+        ("copilot-linux", "copilot-managed-mdm"),
+    ] {
+        for format in ["emoji", "text", "nerd", "json"] {
+            assert_eq!(
+                status(linux, format),
+                status(macos, format),
+                "status --format {format}: {linux} vs {macos}"
+            );
+        }
+    }
+}
+
+/// Prompt integrations (starship, tmux, statusline) share one config across macOS and Linux, so
+/// `status` must print the same bytes for the same state on both, and `scan --json` must keep the
+/// same shape.
+#[test]
+fn output_is_the_same_on_macos_and_linux() {
+    let out = |fixture_name: &str, args: &[&str]| {
+        let fx = fixture(fixture_name);
+        let mut full = args.to_vec();
+        full.extend(["--fixture", &fx]);
+        let out = run(&full);
+        assert_eq!(out.status.code(), Some(0), "{fixture_name} {args:?}");
+        out.stdout
+    };
+    for format in ["emoji", "text", "nerd", "json"] {
+        let args = ["status", "--format", format];
+        assert_eq!(
+            String::from_utf8(out("empty-macos", &args)).unwrap(),
+            String::from_utf8(out("empty-linux", &args)).unwrap(),
+            "status --format {format}"
+        );
+    }
+    let mac: Value = serde_json::from_slice(&out("empty-macos", &["scan", "--json"])).unwrap();
+    let linux: Value = serde_json::from_slice(&out("empty-linux", &["scan", "--json"])).unwrap();
+    assert_eq!(mac["schema"], linux["schema"]);
+    assert_eq!(mac["os"], "macos");
+    assert_eq!(linux["os"], "linux");
+    let keys = |v: &Value| v.as_object().unwrap().keys().cloned().collect::<Vec<_>>();
+    assert_eq!(keys(&mac), keys(&linux), "scan --json top-level keys");
+    let ids = |v: &Value| {
+        v["apps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["id"].clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ids(&mac), ids(&linux), "scan --json apps");
+}

@@ -1,0 +1,37 @@
+# Maintainer: SkeLLLa <https://github.com/SkeLLLa>
+#
+# cainary-bin: the prebuilt release tarball (static musl `cainary` CLI + Qt 6 `cainary-tray`).
+# The release workflow's `aur` job renders pkgver and the sha256sums from the release's
+# SHA256SUMS, runs `makepkg --printsrcinfo` and pushes to aur.archlinux.org. The values committed
+# here are placeholders for the next release; `updpkgsums` works too.
+
+pkgname=cainary-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Shows what your AI tools (Claude, Codex, Cursor, Copilot) and device monitoring track and send"
+arch=('x86_64' 'aarch64')
+url="https://github.com/SkeLLLa/cainary"
+license=('GPL-3.0-or-later')
+depends=('glibc' 'gcc-libs' 'qt6-base' 'qt6-declarative' 'qt6-svg' 'qt6-wayland' 'layer-shell-qt')
+optdepends=('qqc2-desktop-style: native Plasma look'
+            'gnome-shell-extension-appindicator: tray on GNOME')
+provides=('cainary')
+conflicts=('cainary')
+# Prebuilt and already stripped.
+options=('!strip' '!debug')
+source_x86_64=("https://github.com/SkeLLLa/cainary/releases/download/v${pkgver}/cainary-${pkgver}-linux-x86_64.tar.gz")
+source_aarch64=("https://github.com/SkeLLLa/cainary/releases/download/v${pkgver}/cainary-${pkgver}-linux-aarch64.tar.gz")
+sha256sums_x86_64=('SKIP')
+sha256sums_aarch64=('SKIP')
+
+package() {
+    cd "cainary-${pkgver}-linux-${CARCH}"
+
+    # linux-assets.txt: `<mode> <path in the tarball> <destination>`; the licence goes under the
+    # package's own name.
+    while read -r mode path dest; do
+        case "${mode}" in '' | '#'*) continue ;; esac
+        dest="${dest/#usr\/share\/licenses\/cainary\//usr/share/licenses/${pkgname}/}"
+        install -Dm"${mode}" "${path}" "${pkgdir}/${dest}"
+    done < linux-assets.txt
+}

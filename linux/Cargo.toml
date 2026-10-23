@@ -1,0 +1,46 @@
+# The Linux tray app (linux/README.md). Its own workspace: the root one excludes `linux/`, so
+# Qt, ksni and zbus never enter the root Cargo.lock or its dependency guard.
+[workspace]
+resolver = "3"
+members = ["crates/tray-model", "crates/tray-dbus", "crates/cainary-tray"]
+
+[workspace.package]
+# Equal to the root workspace version (guard L4); scripts/set-version.sh bumps both.
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/SkeLLLa/cainary"
+homepage = "https://github.com/SkeLLLa/cainary"
+
+# The only direct dependencies the tray may have (linux-plan §8, guard L1). Adding one is a
+# reviewed change; crates/cainary-tray/tests/guards.rs checks every crate manifest and Cargo.lock.
+[workspace.dependencies]
+cainary-tray-model = { path = "crates/tray-model" }
+cainary-tray-dbus = { path = "crates/tray-dbus" }
+# Exact: cxx-qt is pre-1.0 and its generated code must match the runtime crates.
+cxx = "=1.0.205"
+cxx-qt = "=0.10.0"
+cxx-qt-lib = { version = "=0.10.0", default-features = false, features = ["qt_gui", "qt_qml"] }
+cxx-qt-build = "=0.10.0"
+# Exact, and async-io: the default is tokio.
+ksni = { version = "=0.3.7", default-features = false, features = ["async-io"] }
+zbus = { version = "5", default-features = false, features = ["async-io"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+toml = "0.8"
+libc = { version = "0.2", default-features = false }
+# Build-time only: the LayerShellQt compile probe (cainary-tray/build.rs). Already in cxx-build's tree.
+cc = "1"
+# The layer-shell probe: a pure-Rust Wayland registry roundtrip, no libwayland-client link.
+wayland-client = { version = "0.31", default-features = false }
+# All three are already in zbus's tree.
+async-channel = "2"
+async-io = "2"
+futures-lite = "2"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

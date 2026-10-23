@@ -1,0 +1,2 @@
+# The repository ignores build output directories named dist; this directory contains source.
+!/dist/

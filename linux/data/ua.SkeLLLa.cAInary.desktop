@@ -1,8 +1,13 @@
 [Desktop Entry]
 Type=Application
 Name=cAInary
+GenericName=AI Tool Telemetry Monitor
 Comment=See what your organization enforces on, and collects from, AI coding assistants
 Exec=cainary-tray
 Icon=ua.SkeLLLa.cAInary
 Categories=Utility;
+Keywords=AI;telemetry;privacy;Claude;Codex;Copilot;Cursor;ChatGPT;MDM;
 Terminal=false
+StartupNotify=false
+SingleMainWindow=true
+X-GNOME-UsesNotifications=true

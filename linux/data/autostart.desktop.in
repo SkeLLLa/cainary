@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=cAInary
+Comment=Start the cAInary tray icon at login
+Exec=cainary-tray --autostart
+Icon=ua.SkeLLLa.cAInary
+Terminal=false
+StartupNotify=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+X-KDE-autostart-phase=2

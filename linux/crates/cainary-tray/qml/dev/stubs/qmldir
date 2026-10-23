@@ -1,0 +1,3 @@
+module ua.SkeLLLa.cAInary
+singleton AppController 1.0 AppController.qml
+singleton SettingsController 1.0 SettingsController.qml

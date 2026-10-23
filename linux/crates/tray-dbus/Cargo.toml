@@ -1,0 +1,19 @@
+[package]
+name = "cainary-tray-dbus"
+description = "cAInary tray: StatusNotifierItem, notifications, single instance and other D-Bus glue (no Qt)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[dependencies]
+ksni.workspace = true
+zbus.workspace = true
+serde.workspace = true
+async-channel.workspace = true
+async-io.workspace = true
+futures-lite.workspace = true
+libc.workspace = true

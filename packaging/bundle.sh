@@ -16,7 +16,9 @@ CORE="${CORE:-target/debug/cainary}"
 OUT="${OUT:-dist}"
 
 # --- 1. Version: Cargo.toml is the single source; a stale helper must not slip through ----
-VERSION="$(sed -n '/^\[workspace\.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p;}' Cargo.toml)"
+# shellcheck source=/dev/null
+. packaging/ci/deps-lib.sh
+VERSION="$(toml_get Cargo.toml workspace package version)" || VERSION=""
 [ -n "$VERSION" ] || { echo "error: no [workspace.package] version in Cargo.toml" >&2; exit 1; }
 for f in "$APP_BIN" "$CORE"; do
     [ -x "$f" ] || { echo "error: $f is missing or not executable" >&2; exit 1; }

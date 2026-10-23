@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/cainary-core", "crates/cainary-cli"]
+exclude = ["linux"]
 
 [workspace.package]
 version = "0.1.0"

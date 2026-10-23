@@ -2,11 +2,18 @@
 # In a sandbox where ~/.cargo is read-only, the Makefile points CARGO_HOME at $TMPDIR itself.
 
 [tools]
-rust = { version = "1.99.0", targets = "aarch64-apple-darwin,x86_64-apple-darwin", components = "rustfmt,clippy" }
-swift = "6.4.0"
+rust = { version = "1.99.0", targets = "aarch64-apple-darwin,x86_64-apple-darwin,x86_64-unknown-linux-musl,aarch64-unknown-linux-musl", components = "rustfmt,clippy" }
+# The SwiftUI app is macOS-only; on Linux there is nothing for swiftc to build.
+swift = { version = "6.4.0", os = ["macos"] }
 jactionlint = "1.8.2"
 shellcheck = "0.11.0"
 mr-boxington = "1.16.0"
+# The install smoke test (packaging/ci/linux-ci.sh) and the release notes (release.yml).
+jq = "1.8.2"
+git-cliff = "2.14.2"
+# Linux packages (packaging/linux.sh): .deb and .rpm from the staged install tree.
+"cargo:cargo-deb" = { version = "3.8.0", os = ["linux"] }
+"cargo:cargo-generate-rpm" = { version = "0.21.0", os = ["linux"] }
 
 # Only under mise; CI runs the Makefile with plain cargo and swiftc.
 [env]
@@ -14,7 +21,8 @@ mr-boxington = "1.16.0"
 CARGO_BIN = "mbx"
 # The real binary, not bin/swiftc: through that symlink the driver looks for its libraries under
 # bin/../lib and warns "Unable to locate libSwiftScan".
-SWIFTC = { value = "{{ tools.swift.path }}/usr/bin/swiftc", tools = true }
+# Falls back to plain swiftc where swift isn't a mise tool (Linux) or isn't installed yet.
+SWIFTC = { value = "{% if tools.swift %}{{ tools.swift.path }}/usr/bin/swiftc{% else %}swiftc{% endif %}", tools = true }
 
 # Tasks wrap the Makefile so `make <target>` keeps working without mise.
 [tasks.build]
@@ -60,3 +68,60 @@ run = "open dist/cAInary.app"
 [tasks.scan]
 description = "Scan this machine and print the report"
 run = "make scan"
+
+# Linux (docs/linux.md). The tray app needs the distro's Qt 6 development packages.
+[tasks."linux:check"]
+description = "Linux tray: fmt, clippy, tests, shellcheck, desktop and AppStream validation"
+run = "make linux-check"
+
+[tasks."linux:ui-test"]
+description = "Offscreen snapshots of the tray windows (target/ui-snapshots/linux/)"
+run = "make linux-ui-test"
+
+[tasks."linux:run"]
+description = "Run the tray app against the debug cainary"
+run = "make linux-run"
+
+[tasks."linux:build"]
+description = "Debug build of the Qt tray app (linux/)"
+run = "make linux-build"
+
+[tasks."linux:test"]
+description = "Tray tests under a private D-Bus session, offscreen"
+run = "make linux-test"
+
+[tasks."linux:lint"]
+description = "Tray: cargo fmt --check and clippy -D warnings"
+run = "make linux-lint"
+
+[tasks."linux:fmt"]
+description = "cargo fmt for the tray, in place"
+run = "make linux-fmt"
+
+[tasks."linux:cli"]
+description = "Static musl cainary for this machine's architecture (LINUX_ARCH=... to override)"
+run = "make linux-cli"
+
+[tasks."linux:package"]
+description = "Linux release artifacts in dist/: tarball, .deb and .rpm for this machine"
+# Through mbx like everything else here: its release builds are stripped on Linux (unlike
+# macOS, see bundle-universal), and the artifacts pass the same inspect and smoke checks.
+run = "make linux LINUX_FORMATS=tar,deb,rpm"
+
+[tasks."linux:deps"]
+description = "Distro packages the tray needs on this machine; add `-- --install` to install (asks first)"
+run = "packaging/ci/host-deps.sh"
+
+# Local runs of the CI jobs in a container (podman, or docker): the source is copied in, the
+# images are the digest-pinned ones from ci.yml, artifacts go to dist/container/<kind>/.
+[tasks."linux:container:deb"]
+description = "debian:trixie: deps, tray + CLI, tarball + .deb, inspect, install smoke test"
+run = "packaging/ci/container.sh deb"
+
+[tasks."linux:container:rpm"]
+description = "fedora:44: deps, tray + CLI, .rpm, inspect, install smoke test"
+run = "packaging/ci/container.sh rpm"
+
+[tasks."linux:container:arch"]
+description = "archlinux: deps and a build of the tray"
+run = "packaging/ci/container.sh arch"

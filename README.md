@@ -56,10 +56,34 @@ rm -rf /Applications/cAInary.app   # quit cAInary first when upgrading
 cp -R dist/cAInary.app /Applications/
 ```
 
-Homebrew and Linux release archives aren't available yet. See [Distribution](docs/distribution.md) for
-the release files and how to verify them.
+Homebrew isn't available yet. See [Distribution](docs/distribution.md) for the release files and
+how to verify them.
 
 </details>
+
+## Install on Linux
+
+The tray app (Qt 6.5 or newer) shows the same status icon, popup and Details window as the macOS
+app. It runs on Debian 13+, Ubuntu 25.04+ (including 26.04 LTS), Fedora 44+, Arch and openSUSE
+Tumbleweed. **Ubuntu 24.04 isn't supported** for the app, because its Qt is too old; the CLI works
+there. Download the file for your distribution and architecture from the
+[latest release](https://github.com/SkeLLLa/cainary/releases/latest):
+
+```sh
+sudo apt install ./cainary_<version>_amd64.deb          # Debian, Ubuntu (arm64 for ARM)
+sudo dnf install ./cainary-<version>-1.x86_64.rpm       # Fedora (aarch64 for ARM)
+yay -S cainary-bin                                      # Arch (AUR)
+```
+
+Or, on any distribution, unpack `cainary-<version>-linux-<x86_64|aarch64>.tar.gz` and run
+`./install-user.sh`. It installs for your user only, into `~/.local`, and
+`./install-user.sh --uninstall` removes it.
+
+Start **cAInary** from the application menu, or run `cainary-tray`. GNOME needs the
+AppIndicator extension (`gnome-shell-extension-appindicator`) to show
+the tray icon; without it the Details window opens instead. "Launch at login" is off until you
+turn it on in Settings. The `cainary` CLI is installed alongside. See [docs/linux.md](docs/linux.md)
+for supported distributions, popup placement, building from source and troubleshooting.
 
 ## Build
 
@@ -74,7 +98,9 @@ Inside a mise environment (`mise run <task>`, or a shell with mise activated), `
 `CARGO_BIN=mbx`, so cargo runs through [mr-boxington](https://github.com/jdx/mr-boxington), a
 shared build cache. It also sets `SWIFTC` to mise's Swift toolchain. Plain `make` without mise
 (as in CI) uses `cargo` and `swiftc` from PATH. The macOS SDK path, `codesign`, `lipo`, `plutil` and
-`ditto` still come from the system, because mise has no equivalent.
+`ditto` still come from the system, because mise has no equivalent. The Linux tasks (`mise tasks`,
+`linux:*`; see [docs/linux.md](docs/linux.md) §8) build, test and package the tray, also in a
+distro container.
 
 For an optimized binary, run `cargo build --release -p cainary`. It writes `target/release/cainary`.
 
@@ -99,7 +125,7 @@ For an optimized binary, run `cargo build --release -p cainary`. It writes `targ
 | `--alert org\|org-unknown\|everything` | Which findings count toward the `status` badge. |
 | `--fixture <dir>` | Scan a recorded fixture instead of this machine, e.g. `crates/cainary-core/tests/fixtures/claude-code-org-macos`. |
 | `--root <dir> --home <dir> [--os macos\|linux]` | Scan a copied filesystem tree. |
-| `--env-kind shell\|launchd` | Treat the environment as a login shell's or as launchd's. The menu-bar app passes `launchd`. |
+| `--env-kind launchd\|shell` | Treat the environment as launchd's or as a login shell's (default). Both apps pass `launchd`. |
 | `--no-color` | Plain output. `NO_COLOR` also turns colour off. |
 
 **Exit codes:**
