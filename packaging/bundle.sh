@@ -40,9 +40,9 @@ cp "$CORE" "$APP/Contents/Helpers/cainary"
 # GPL text ships with the app; the About panel points at it.
 cp COPYING "$APP/Contents/Resources/COPYING"
 
-# Icon: PNG -> iconset -> icns. The PNG is rendered from the Linux scalable SVG.
+# Icon: PNG -> iconset -> icns. The PNG is rendered from resources/icons/cainary-macos.svg.
 SRC_ICON="resources/icons/cainary-1024.png"
-ICONSET="$(mktemp -d)/AppIcon.iconset"
+ICONSET="$(mktemp -d "${TMPDIR:-/tmp}/cainary-icon.XXXXXX")/AppIcon.iconset"
 mkdir -p "$ICONSET"
 for size in 16 32 128 256 512; do
     sips -z "$size" "$size" "$SRC_ICON" --out "$ICONSET/icon_${size}x${size}.png" > /dev/null

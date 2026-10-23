@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
+  <title id="title">cAInary GitHub social preview</title>
+  <desc id="desc">A social preview banner for cAInary, featuring the robot canary icon with a red eye and the project description.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1280" y2="640" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#25333a"/>
+      <stop offset=".54" stop-color="#1a2429"/>
+      <stop offset="1" stop-color="#0e1417"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="88" y1="82" x2="1192" y2="558" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#34454d"/>
+      <stop offset="1" stop-color="#172024"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="150" y1="0" x2="440" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffd84d"/>
+      <stop offset="1" stop-color="#ff1744"/>
+    </linearGradient>
+    <radialGradient id="redglow" cx="300" cy="320" r="360" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff1744" stop-opacity=".22"/>
+      <stop offset=".45" stop-color="#ff1744" stop-opacity=".07"/>
+      <stop offset="1" stop-color="#ff1744" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1280" height="640" fill="url(#background)"/>
+  <circle cx="300" cy="320" r="360" fill="url(#redglow)"/>
+  <path d="M0 514c140-42 262-46 382-15 128 33 236 70 384 34 118-29 235-81 514-28v135H0z" fill="#f5c518" opacity=".07"/>
+  <path d="M0 552c210-30 354-8 496 22 162 34 312 46 500-14 105-34 196-45 284-27v107H0z" fill="#ff1744" opacity=".06"/>
+
+  <rect x="88" y="82" width="1104" height="476" rx="22" fill="url(#panel)"/>
+  <rect x="88" y="82" width="1104" height="68" rx="22" fill="#3b4d56"/>
+  <path d="M88 128h1104v22H88z" fill="#3b4d56"/>
+  <path d="M88 150h1104" stroke="#f5c518" stroke-width="4" stroke-opacity=".7"/>
+  <circle cx="128" cy="116" r="9" fill="#ff5f57"/>
+  <circle cx="158" cy="116" r="9" fill="#febc2e"/>
+  <circle cx="188" cy="116" r="9" fill="#28c840"/>
+  <path d="M222 116h250" stroke="#cfd8dc" stroke-width="10" stroke-linecap="round" stroke-opacity=".3"/>
+
+  <!-- the app icon (linux/data/icons/hicolor/scalable/apps/ua.SkeLLLa.cAInary.svg), inlined -->
+  <svg x="113" y="166" width="340" height="340" viewBox="0 0 128 128">
+    <defs>
+      <linearGradient id="icon-bg" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#2e3d45"/>
+        <stop offset="1" stop-color="#1b252a"/>
+      </linearGradient>
+      <linearGradient id="icon-plate" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#ffd84d"/>
+        <stop offset="1" stop-color="#e8b100"/>
+      </linearGradient>
+      <linearGradient id="icon-steel" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#cfd8dc"/>
+        <stop offset="1" stop-color="#78909c"/>
+      </linearGradient>
+      <radialGradient id="icon-glow" gradientUnits="userSpaceOnUse" cx="86" cy="38" r="14">
+        <stop offset="0" stop-color="#ff1744" stop-opacity="0.75"/>
+        <stop offset="0.45" stop-color="#ff1744" stop-opacity="0.3"/>
+        <stop offset="1" stop-color="#ff1744" stop-opacity="0"/>
+      </radialGradient>
+      <radialGradient id="icon-eye" cx="0.4" cy="0.4">
+        <stop offset="0" stop-color="#ff8a80"/>
+        <stop offset="0.35" stop-color="#ff1744"/>
+        <stop offset="1" stop-color="#b0001e"/>
+      </radialGradient>
+    </defs>
+    <rect x="4" y="4" width="120" height="120" rx="26" fill="url(#icon-bg)"/>
+    <!-- legs -->
+    <g stroke="#90a4ae" stroke-width="4" stroke-linecap="round">
+      <path d="M 56 94 L 54 104"/>
+      <path d="M 72 92 L 72 104"/>
+    </g>
+    <g stroke="#546e7a" stroke-width="2.2" stroke-linecap="round" fill="none">
+      <path d="M 54 104 L 48 108 M 54 104 L 54 110 M 54 104 L 60 108"/>
+      <path d="M 72 104 L 66 108 M 72 104 L 72 110 M 72 104 L 78 108"/>
+    </g>
+    <circle cx="54" cy="104" r="2.6" fill="#cfd8dc" stroke="#455a64" stroke-width="1"/>
+    <circle cx="72" cy="104" r="2.6" fill="#cfd8dc" stroke="#455a64" stroke-width="1"/>
+    <!-- tail -->
+    <path fill="#c99700" d="M 36 82 L 12 106 L 24 104 L 18 114 L 46 94 Z"/>
+    <!-- body -->
+    <path fill="url(#icon-plate)" d="M 38 62 L 68 50 L 92 62 L 90 84 L 70 98 L 44 98 L 30 84 Z"/>
+    <g stroke="#b38600" stroke-width="1.6" fill="none">
+      <path d="M 68 50 L 66 70 L 90 84"/>
+      <path d="M 66 70 L 44 98"/>
+    </g>
+    <g fill="#9e7700">
+      <circle cx="86" cy="66" r="1.4"/>
+      <circle cx="85" cy="80" r="1.4"/>
+    </g>
+    <!-- wing -->
+    <path fill="#e0a800" stroke="#9e7700" stroke-width="1.6" stroke-linejoin="round"
+          d="M 40 72 L 70 66 L 80 76 L 58 90 L 38 86 Z"/>
+    <g stroke="#9e7700" stroke-width="1.4">
+      <path d="M 46 78 L 72 72"/>
+      <path d="M 46 84 L 66 80"/>
+    </g>
+    <!-- neck joint -->
+    <rect x="64" y="50" width="24" height="7" rx="2" fill="url(#icon-steel)"/>
+    <!-- antenna -->
+    <path d="M 74 28 L 68 13" stroke="url(#icon-steel)" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="67.5" cy="12" r="3.2" fill="#ff1744"/>
+    <!-- head -->
+    <rect x="60" y="24" width="38" height="30" rx="9" fill="url(#icon-plate)"/>
+    <path d="M 60 40 L 72 40" stroke="#b38600" stroke-width="1.6"/>
+    <g fill="#9e7700">
+      <circle cx="65" cy="30" r="1.4"/>
+      <circle cx="65" cy="48" r="1.4"/>
+    </g>
+    <!-- beak -->
+    <path fill="url(#icon-steel)" d="M 97 32 L 116 40 L 97 47 Z"/>
+    <path d="M 97 40 L 112 40" stroke="#455a64" stroke-width="1.4"/>
+    <!-- eye -->
+    <rect x="72" y="30" width="28" height="16" rx="5" fill="#11181c"/>
+    <rect x="72" y="30" width="28" height="16" rx="5" fill="url(#icon-glow)"/>
+    <circle cx="86" cy="38" r="5" fill="url(#icon-eye)"/>
+    <circle cx="84.4" cy="36.4" r="1.3" fill="#ffe0e0"/>
+  </svg>
+  <path d="M143 516h280" stroke="url(#accent)" stroke-width="7" stroke-linecap="round" opacity=".75"/>
+
+  <text x="520" y="283" font-family="HelveticaNeue-Bold, SF Pro Display, Inter, Helvetica Neue, Arial, sans-serif" font-size="82" font-weight="800" fill="#fff8e1">cAInary</text>
+  <text x="524" y="352" font-family="HelveticaNeue-Bold, SF Pro Display, Inter, Helvetica Neue, Arial, sans-serif" font-size="34" font-weight="650" fill="#ffd84d">What your AI tools track and send</text>
+  <text x="524" y="411" font-family="Menlo-Bold, SF Mono, Menlo, JetBrains Mono, monospace" font-size="26" font-weight="700" fill="#ffe9a8">&gt; Claude, ChatGPT, Codex, Cursor, Copilot</text>
+  <text x="524" y="455" font-family="Menlo-Bold, SF Mono, Menlo, JetBrains Mono, monospace" font-size="26" font-weight="700" fill="#ffcdd2">&gt; local only, never uses the network</text>
+  <g font-family="Menlo-Bold, SF Mono, Menlo, JetBrains Mono, monospace" font-size="20" font-weight="700" fill="#11181c">
+    <rect x="524" y="480" width="86" height="32" rx="16" fill="#ff5252"/><text x="542" y="503">HIGH</text>
+    <rect x="622" y="480" width="110" height="32" rx="16" fill="#ff9800"/><text x="640" y="503">MEDIUM</text>
+    <rect x="744" y="480" width="74" height="32" rx="16" fill="#ffd600"/><text x="762" y="503">LOW</text>
+    <rect x="830" y="480" width="64" height="32" rx="16" fill="#66bb6a"/><text x="848" y="503">OK</text>
+  </g>
+
+  <path d="M88 82h1104v476H88z" fill="none" stroke="#f5c518" stroke-width="2" stroke-opacity=".3"/>
+</svg>

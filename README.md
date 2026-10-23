@@ -1,5 +1,9 @@
 # cAInary
 
+<p align="center">
+  <img src="linux/data/icons/hicolor/scalable/apps/ua.SkeLLLa.cAInary.svg" alt="cAInary icon" width="128" height="128">
+</p>
+
 cAInary shows what your AI tools and the device monitoring around them track and send, and where it goes. It covers Claude (Code and Desktop), ChatGPT & Codex, Cursor and GitHub Copilot. The core is written in Rust and runs on macOS and Linux. It only reads files and never uses the network.
 
 ## Install
