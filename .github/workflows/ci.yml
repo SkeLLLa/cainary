@@ -26,11 +26,11 @@ jobs:
       - name: Verify Conventional Commit messages
         uses: opensource-nepal/commitlint@9c112b70de7b0e51f81d12a5268a451db5419794 # v2.0.0
 
-  # Warn mode: unpinned actions are annotated here and fail the release pin-gate. CI stays in
-  # `--warn` until the maintainer pins the current refs; that commit removes `--warn`. If
+  # Every action is pinned to a commit SHA (Dependabot bumps the SHA and its version comment).
+  # An unpinned action fails here and in the release pin-gate. If
   # `.github/actions/**/action.y?ml` appears, the gate and this check must cover it too.
   pin-check:
-    name: Action pins (warn)
+    name: Action pins
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -41,7 +41,7 @@ jobs:
       - name: Test the pin checker
         run: scripts/test-action-pins.sh
       - name: Check action pins
-        run: scripts/check-action-pins.sh --warn .github/workflows/*.yml
+        run: scripts/check-action-pins.sh .github/workflows/*.yml
 
   macos:
     name: Lint, test, ui-test (macOS)

@@ -207,7 +207,7 @@ jobs:
 
       - name: Keep the notes and changelog
         if: ${{ steps.prepare.outputs.released == 'true' }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           name: prepared-notes
           retention-days: 1
@@ -348,7 +348,7 @@ jobs:
 
       # For the checksums job, which hashes and attests every platform's assets together.
       - name: Keep release assets
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           name: release-macos
           retention-days: 1
