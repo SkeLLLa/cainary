@@ -60,7 +60,7 @@ case "$ARCH" in
     aarch64) DEB_ARCH=arm64 ;;
     *) echo "error: --arch must be x86_64 or aarch64, got '$ARCH'" >&2; usage ;;
 esac
-[ -n "$CLI" ] && [ -n "$TRAY" ] || usage
+if [ -z "$CLI" ] || [ -z "$TRAY" ]; then usage; fi
 
 DO_TAR=0
 DO_DEB=0
@@ -80,7 +80,10 @@ DATA="$LINUX/data"
 
 # --- 1. Versions: both binaries must report V; a stale build must not slip through ----------
 for f in "$CLI" "$TRAY"; do
-    [ -f "$f" ] && [ -x "$f" ] || { echo "error: $f is missing or not executable" >&2; exit 1; }
+    if [ ! -f "$f" ] || [ ! -x "$f" ]; then
+        echo "error: $f is missing or not executable" >&2
+        exit 1
+    fi
 done
 check_version() {
     got="$("$1" --version)" || { echo "error: '$1 --version' failed" >&2; exit 1; }

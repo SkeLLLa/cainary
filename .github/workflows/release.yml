@@ -207,7 +207,7 @@ jobs:
 
       - name: Keep the notes and changelog
         if: ${{ steps.prepare.outputs.released == 'true' }}
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: prepared-notes
           retention-days: 1
@@ -348,7 +348,7 @@ jobs:
 
       # For the checksums job, which hashes and attests every platform's assets together.
       - name: Keep release assets
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-macos
           retention-days: 1
@@ -734,13 +734,14 @@ jobs:
             release-assets/*.sha256
             release-assets/SHA256SUMS
 
-  # The AUR package cainary-bin, from the published tarballs. Off until the maintainer has
-  # created the AUR package, added the deploy key's public half to the AUR account, and set
-  # AUR_PUBLISH=true and the AUR_SSH_KEY secret.
+  # The AUR package cainary-bin, from the published tarballs. On unless the repository variable
+  # AUR_PUBLISH is "false"; skipped with a warning until the AUR_SSH_KEY secret (in the aur
+  # environment) holds a key whose public half is on the maintainer's AUR account. The first push
+  # creates the package.
   aur:
     name: Publish AUR package
     needs: [prepare, publish]
-    if: ${{ vars.AUR_PUBLISH == 'true' }}
+    if: ${{ needs.prepare.outputs.released == 'true' && vars.AUR_PUBLISH != 'false' }}
     runs-on: ubuntu-latest
     container: archlinux:latest@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
     environment: aur
@@ -752,10 +753,24 @@ jobs:
       # aur.archlinux.org's published Ed25519 host key fingerprint (shown on its home page).
       AUR_HOST_KEY_SHA256: "SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4"
     steps:
+      - name: Check for the deploy key
+        id: key
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          if [ -n "${AUR_SSH_KEY}" ]; then
+            echo "present=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "::warning::AUR_SSH_KEY is not set: the AUR package is not updated (docs/distribution.md#aur)"
+            echo "present=false" >> "${GITHUB_OUTPUT}"
+          fi
+
       - name: Install tools
+        if: ${{ steps.key.outputs.present == 'true' }}
         run: pacman -Syu --noconfirm --needed base-devel curl git openssh
 
       - name: Checkout release tag
+        if: ${{ steps.key.outputs.present == 'true' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.tag_name }}
@@ -765,6 +780,7 @@ jobs:
       # from a file fetched over the network; `makepkg --verifysource` below then proves the
       # published tarballs match them.
       - name: Fetch the built tarballs
+        if: ${{ steps.key.outputs.present == 'true' }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: release-linux-deb-*
@@ -772,6 +788,7 @@ jobs:
           merge-multiple: true
 
       - name: Render PKGBUILD and .SRCINFO
+        if: ${{ steps.key.outputs.present == 'true' }}
         run: |
           set -euo pipefail
           sum() {
@@ -795,6 +812,7 @@ jobs:
           cat aur-out/PKGBUILD aur-out/.SRCINFO
 
       - name: Push to the AUR
+        if: ${{ steps.key.outputs.present == 'true' }}
         env:
           AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
         run: |
@@ -825,6 +843,112 @@ jobs:
             git commit -m "Update to ${VERSION}"
             git push origin HEAD:master
           fi
+
+  # APT and DNF repositories on GitHub Pages, deployed from this job (Pages source "GitHub
+  # Actions"), the same layout as SkeLLLa/plasma-drop's: packaging/ci/pages-repo.sh builds them
+  # from this run's verified .deb and .rpm files plus those of the 9 releases before it, since
+  # each deploy replaces the site. Unsigned like plasma-drop's unless the REPO_SIGNING_KEY secret
+  # holds an unprotected OpenPGP secret key (armored); then the metadata is signed. On unless the
+  # repository variable PAGES_PUBLISH is "false". PAGES_BASE_URL overrides the URL for a custom
+  # domain.
+  pages:
+    name: Publish APT and DNF repositories (GitHub Pages)
+    needs: [prepare, publish]
+    if: ${{ needs.prepare.outputs.released == 'true' && vars.PAGES_PUBLISH != 'false' }}
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: release-pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG_NAME }}
+          persist-credentials: false
+
+      - name: Fetch this release's packages
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-linux-*
+          path: assets
+          merge-multiple: true
+
+      # The 9 releases before this one, as plasma-drop keeps them, so users can still pin or
+      # downgrade. A release without Linux packages contributes nothing.
+      - name: Fetch earlier releases' packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mapfile -t tags < <(
+            gh release list --repo "${GITHUB_REPOSITORY}" --limit 30 \
+              --json tagName,isDraft,isPrerelease \
+              --jq '.[] | select(.isDraft == false and .isPrerelease == false) | .tagName' |
+              grep -vxF "${TAG_NAME}" | head -n 9 || true
+          )
+          for tag in "${tags[@]}"; do
+            gh release download "${tag}" --repo "${GITHUB_REPOSITORY}" --dir assets --skip-existing \
+              --pattern 'cainary_*_amd64.deb' --pattern 'cainary_*_arm64.deb' \
+              --pattern 'cainary-*-1.x86_64.rpm' --pattern 'cainary-*-1.aarch64.rpm' ||
+              echo "${tag}: no Linux packages"
+          done
+          ls -l assets
+
+      - name: Install apt-ftparchive and createrepo_c
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends apt-utils createrepo-c
+
+      - name: Build the repositories
+        env:
+          REPO_SIGNING_KEY: ${{ secrets.REPO_SIGNING_KEY }}
+          PAGES_BASE_URL: ${{ vars.PAGES_BASE_URL }}
+        run: |
+          set -euo pipefail
+          export GNUPGHOME="${RUNNER_TEMP}/gnupg"
+          mkdir -m 700 "${GNUPGHOME}"
+          trap 'rm -rf "${GNUPGHOME}"' EXIT
+          if [ -n "${REPO_SIGNING_KEY}" ]; then
+            printf '%s\n' "${REPO_SIGNING_KEY}" | gpg --batch --quiet --import
+          else
+            echo "::notice::REPO_SIGNING_KEY is not set: the repositories are unsigned (docs/distribution.md#apt-and-dnf-repositories)"
+          fi
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          base="${PAGES_BASE_URL:-https://${owner}.github.io/${GITHUB_REPOSITORY#*/}}"
+          packaging/ci/pages-repo.sh assets site "${base}" "${VERSION}"
+
+      - name: Verify the repositories
+        run: |
+          set -euo pipefail
+          for f in deb/dists/stable/Release deb/cainary.list rpm/cainary.repo \
+            rpm/x86_64/repodata/repomd.xml rpm/aarch64/repodata/repomd.xml \
+            deb/dists/stable/main/binary-amd64/Packages.gz deb/dists/stable/main/binary-arm64/Packages.gz; do
+            test -s "site/${f}"
+          done
+          for arch in amd64 arm64; do
+            gzip -cd "site/deb/dists/stable/main/binary-${arch}/Packages.gz" |
+              grep -x "Version: ${VERSION}" > /dev/null
+          done
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
 
   # crates.io Trusted Publishing: a short-lived token from GitHub OIDC, no stored secret. On
   # unless the repository variable CRATES_IO_PUBLISH is "false". A crate that isn't on crates.io

@@ -11,7 +11,7 @@ fn tray_dir() -> PathBuf {
 
 fn manifest() -> Value {
     let text = fs::read_to_string(tray_dir().join("Cargo.toml")).unwrap();
-    text.parse().unwrap()
+    toml::from_str(&text).unwrap()
 }
 
 /// (source, dest, mode) of every asset in `metadata.<tool>.assets`, `dest` without a leading `/`.

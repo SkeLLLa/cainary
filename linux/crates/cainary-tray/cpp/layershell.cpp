@@ -38,6 +38,7 @@ void cainary_layer_shell_attach()
         layer_window->setActivateOnShow(true);
 #endif
         layer_window->setScope(QStringLiteral("cainary-popup"));
+#ifdef CAINARY_LSQ_HAS_DESIREDSIZE
         // The popup is as tall as its content, which a hidden window only lays out once shown:
         // the first show maps at a stale height. A layer surface keeps the size it was given,
         // so follow the window's.
@@ -47,6 +48,7 @@ void cainary_layer_shell_attach()
         };
         QObject::connect(window, &QWindow::widthChanged, window, follow_size);
         QObject::connect(window, &QWindow::heightChanged, window, follow_size);
+#endif
         return;
     }
     qWarning() << "cainary-tray: no QML window named popup";
@@ -88,7 +90,9 @@ void cainary_layer_shell_place(int x, int y)
         anchor_top ? qMax(8, point_y - area.top() - height / 2) : 0,
         anchor_left ? 0 : qMax(8, area.right() - point_x - width / 2),
         anchor_top ? 0 : qMax(8, area.bottom() - point_y - height / 2)));
+#ifdef CAINARY_LSQ_HAS_DESIREDSIZE
     layer_window->setDesiredSize(popup->size());
+#endif
 }
 
 } // namespace cainary

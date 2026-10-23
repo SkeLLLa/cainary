@@ -7,7 +7,7 @@ cAInary ships for macOS and Linux.
 (`LSUIElement`, no Dock icon) and requires macOS 14. For how the bundle is built, see
 [macos.md](macos.md) §4.
 
-**Linux:** a tarball, a .deb, an .rpm and an AUR package. Each holds the static `cainary` CLI and
+**Linux:** a tarball, a .deb, an .rpm, APT and DNF repositories, and an AUR package. Each holds the static `cainary` CLI and
 the Qt 6 tray app `cainary-tray` (see [linux.md](linux.md)). The tray app needs the distro's
 Qt ≥ 6.5; the CLI runs anywhere.
 
@@ -20,6 +20,8 @@ Qt ≥ 6.5; the CLI runs anywhere.
 | packslip (1.5.1+)                       | the `cainary` CLI        | `packslip install github.com/SkeLLLa/cainary`              |
 | cargo (Rust 1.99+, macOS or Linux)      | the `cainary` CLI        | `cargo install cainary --locked`                           |
 | From source (macOS)                     | the app (and its CLI)    | `mise run bundle-universal`, then copy `dist/cAInary.app`  |
+| APT repository (Debian 13+, Ubuntu 25.04+) | the tray app and CLI, with updates | see [APT and DNF repositories](#apt-and-dnf-repositories) |
+| DNF repository (Fedora 44+)             | the tray app and CLI, with updates | see [APT and DNF repositories](#apt-and-dnf-repositories) |
 | .deb (Debian 13+, Ubuntu 25.04+)        | the tray app and CLI     | `sudo apt install ./cainary_<version>_<amd64\|arm64>.deb`   |
 | .rpm (Fedora 44+)                       | the tray app and CLI     | `sudo dnf install ./cainary-<version>-1.<x86_64\|aarch64>.rpm` |
 | AUR (Arch)                              | the tray app and CLI     | `yay -S cainary-bin`                                       |
@@ -48,7 +50,7 @@ locally (`scripts/release-tree.sh`) and build; `verify-linux` installs the Linux
 `checksums` job hashes and attests every asset. Only when all of them have passed does the
 `publish` job commit the bump, tag it, and create the GitHub release with the assets. It is the
 only job that changes the repository, and it pushes without force, so it fails if `master` has
-moved since the built commit. `aur`, `crates` and the packslip jobs follow. If a run fails before
+moved since the built commit. `aur`, `pages`, `crates` and the packslip jobs follow. If a run fails before
 `publish`, nothing was released and a rerun starts clean. If `publish` fails after tagging, rerun
 the workflow: `prepare` sees the tag made from the same commit, the builds run again, and `publish`
 completes the release without bumping again. For version `<version>`, the release holds:
@@ -117,16 +119,71 @@ published unless every one passes. `ci.yml` runs the same package and install jo
 requests, plus the tray's checks (`make linux-check`) on Debian trixie and Fedora 44 and a
 build-only job on Arch.
 
-**AUR.** `packaging/aur/PKGBUILD` is `cainary-bin`, built from the release tarball. The `aur` job
-renders `pkgver` and the checksums from the tarballs this run built, runs
-`makepkg --printsrcinfo` and pushes to `aur.archlinux.org`. It runs only when the repository
-variable `AUR_PUBLISH` is `true`, in the `aur` environment, with the `AUR_SSH_KEY` secret (an SSH
-private key whose public half is on the maintainer's AUR account). The package must exist on the
-AUR first.
-
 **Not shipped.** Ubuntu 24.04 can't run the tray app (Qt 6.4, no Qt 6 LayerShellQt); its users
 have the CLI. An AppImage that bundles Qt, and a Flatpak, are deferred ([linux.md](linux.md) §5).
 `packaging/mise-registry/cainary.toml` is a staged registry entry; mise doesn't read it from here.
+
+## APT and DNF repositories
+
+The `pages` job in `release.yml` deploys package repositories to GitHub Pages
+(`https://skellla.github.io/cainary/`), in the same layout as
+[plasma-drop](https://skellla.github.io/plasma-drop/)'s. `packaging/ci/pages-repo.sh` writes the
+site: an APT repository under `deb/` (suite `stable`, component `main`, amd64 and arm64), a DNF
+repository per architecture under `rpm/x86_64/` and `rpm/aarch64/`, and an index page with these
+commands. Each deploy replaces the site, so the job rebuilds it from this release's packages,
+which `verify-linux` installed, plus those of the 9 releases before it, downloaded from the
+release page. Users can still pin or downgrade within those 10 versions.
+
+```sh
+# Fedora 44+
+sudo curl -fsSLo /etc/yum.repos.d/cainary.repo https://skellla.github.io/cainary/rpm/cainary.repo
+sudo dnf install cainary
+
+# Debian 13+, Ubuntu 25.04+
+echo 'deb [trusted=yes] https://skellla.github.io/cainary/deb stable main' | sudo tee /etc/apt/sources.list.d/cainary.list
+sudo apt update
+sudo apt install cainary
+```
+
+Like plasma-drop's, the repositories are unsigned by default (`[trusted=yes]`, `repo_gpgcheck=0`).
+Their integrity rests on HTTPS to GitHub Pages; the checksums and attestation on the release page
+cover the same files. If the `REPO_SIGNING_KEY` secret is set, the job signs the APT `InRelease`
+and each `repomd.xml`, publishes the public key as `cainary.asc`, and the index page, `cainary.list`
+and `cainary.repo` switch to checking it (`signed-by=/etc/apt/keyrings/cainary.asc`,
+`repo_gpgcheck=1`). The .rpm files are the release's and carry no package signature, so dnf
+prints "skipped OpenPGP checks" either way. Adding a key later changes the setup commands, and
+users who added the unsigned repository have to follow them again.
+
+The job runs after `publish` on every release, unless the repository variable `PAGES_PUBLISH` is
+`false`. `PAGES_BASE_URL` overrides the URL written into the repository files (for a custom
+domain). One-time setup:
+
+1. Settings → Pages: set the source to **GitHub Actions**. The `github-pages` environment it
+   creates deploys from `master` only.
+2. Optional, for signed metadata: make a key without a passphrase, kept only as the secret:
+   `GNUPGHOME=$(mktemp -d) gpg --batch --passphrase '' --quick-gen-key 'cAInary packages <you@example.com>' ed25519 sign never`,
+   then `gpg --armor --export-secret-keys` in the same `GNUPGHOME`. Add it as the secret
+   `REPO_SIGNING_KEY` (Settings → Secrets and variables → Actions), and back it up offline:
+   users who added the key would have to fetch a new one if it is lost.
+
+To check the site locally, run `packaging/ci/pages-repo.sh` on a directory of packages with a
+`file:///` base URL (it needs `apt-ftparchive` and `createrepo_c`); a test key in `GNUPGHOME`
+gives the signed variant.
+
+## AUR
+
+`packaging/aur/PKGBUILD` is `cainary-bin`, built from the release tarball. The `aur` job renders
+`pkgver` and the checksums from the tarballs this run built, runs `makepkg --printsrcinfo` and
+pushes to `aur.archlinux.org`, in the `aur` environment. It runs on every release unless the
+repository variable `AUR_PUBLISH` is `false`, and skips with a warning until the `AUR_SSH_KEY`
+secret is set. One-time setup:
+
+1. Make an SSH key for the release (`ssh-keygen -t ed25519 -N '' -f aur-cainary`) and add the
+   public half to the maintainer's AUR account (My Account → SSH Public Key).
+2. Create the GitHub environment `aur` (Settings → Environments), limited to `master`, and add
+   the private key as its secret `AUR_SSH_KEY`.
+
+The first push creates `cainary-bin` on the AUR; later releases update it.
 
 ## crates.io
 
@@ -177,7 +234,8 @@ packslip verify packslip.sigstore.json --artifact cainary-<version>-macos-univer
 
 - Homebrew cask (a `SkeLLLa/homebrew-tap` tap, bumped by the release workflow).
 - A Linux AppImage and a Flatpak, and a tray app for Ubuntu 24.04 ([linux.md](linux.md) §5).
-- Signed APT and RPM repositories: the .deb and .rpm are downloaded and installed by hand, and
-  carry no package signature. Their integrity comes from the checksums and attestation above.
+- Signed .rpm and .deb packages: the files carry no package signature. Their integrity comes
+  from the checksums and attestation above, and, with `REPO_SIGNING_KEY` set, the signed
+  repository metadata.
 - Developer ID signing and notarization: the workflow supports it once the secrets are set.
 - A mise registry listing, so `mise use cainary` works without the `packslip:` prefix.

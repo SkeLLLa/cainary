@@ -58,7 +58,7 @@ esac
 
 out="dist/container/$kind"
 cname="cainary-$kind-$$"
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329 # called by the trap (0.10 and 0.11 codes)
 cleanup() { "$engine" rm -f "$cname" > /dev/null 2>&1 || true; }
 trap cleanup EXIT INT TERM
 

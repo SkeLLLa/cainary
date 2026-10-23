@@ -102,6 +102,9 @@ fn main() {
                 if install.has_activate_on_show {
                     cc.define("CAINARY_LSQ_HAS_ACTIVATEONSHOW", None);
                 }
+                if install.has_desired_size {
+                    cc.define("CAINARY_LSQ_HAS_DESIREDSIZE", None);
+                }
             }
         })
     };
@@ -116,6 +119,9 @@ struct LayerShellInstallation {
     has_set_screen: bool,
     /// `LayerShellQt::Window::setActivateOnShow` exists.
     has_activate_on_show: bool,
+    /// `LayerShellQt::Window::setDesiredSize` exists (not in 6.3, Debian 13's); without it the
+    /// layer surface takes the window's size.
+    has_desired_size: bool,
 }
 
 fn layer_shell_installation() -> Option<LayerShellInstallation> {
@@ -175,11 +181,13 @@ fn layer_shell_installation() -> Option<LayerShellInstallation> {
 
     let has_set_screen = compiles(&include_dir, "w->setScreen(nullptr)");
     let has_activate_on_show = compiles(&include_dir, "w->setActivateOnShow(true)");
+    let has_desired_size = compiles(&include_dir, "w->setDesiredSize(w->desiredSize())");
     Some(LayerShellInstallation {
         include_dir,
         lib_dir,
         has_set_screen,
         has_activate_on_show,
+        has_desired_size,
     })
 }
 

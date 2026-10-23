@@ -220,7 +220,7 @@ smoke() {
     esac
     # shellcheck disable=SC2086 # the glob is meant to expand
     set -- "$dir"/$glob
-    [ "$#" -eq 1 ] && [ -f "$1" ] || die "expected exactly one $glob in $dir"
+    if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then die "expected exactly one $glob in $dir"; fi
     version="$(basename "$1" | sed -E 's/^cainary[_-]([0-9]+\.[0-9]+\.[0-9]+)[_-].*/\1/')"
     [ -n "$version" ] || die "no version in $1"
 
