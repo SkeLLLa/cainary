@@ -30,6 +30,7 @@ fn main() {
     ] {
         println!("cargo:rerun-if-env-changed={variable}");
     }
+    qmlcachegen_bytecode_only();
 
     let qml = QmlModule::new("ua.SkeLLLa.cAInary")
         .depends([
@@ -110,6 +111,80 @@ fn main() {
     };
 
     builder.build();
+}
+
+/// Make qt-build-utils run `qmlcachegen --only-bytecode`. Its default output also compiles QML
+/// to C++ that calls private Qt API (`QQmlPrivate::compositeMetaType`), which pins the package to
+/// the exact Qt it was built with: the Debian 13 deb would depend on
+/// `qt6-declarative-private-abi (= 6.8.2)` and not install on Ubuntu 26.04. Bytecode is checked
+/// at run time; a newer Qt discards it and compiles the QML source, which the qrc also holds.
+///
+/// qt-build-utils has no option for this. It finds qmlcachegen in `qmake -query QT_HOST_LIBEXECS`
+/// (the `QMAKE` variable names qmake), so `QMAKE` becomes a wrapper whose QT_HOST_LIBEXECS holds
+/// only a qmlcachegen wrapper; the other tools fall through to the real Qt's directories.
+fn qmlcachegen_bytecode_only() {
+    println!("cargo:rerun-if-env-changed=QMAKE");
+    let qmake = env::var_os("QMAKE")
+        .map(PathBuf::from)
+        .or_else(|| {
+            let path = env::var_os("PATH")?;
+            env::split_paths(&path)
+                .flat_map(|dir| [dir.join("qmake6"), dir.join("qmake")])
+                .find(|candidate| candidate.is_file())
+        })
+        .expect("qmake was not found: set QMAKE or put qmake6 on PATH");
+    let query = |variable: &str| {
+        let output = std::process::Command::new(&qmake)
+            .args(["-query", variable])
+            .output()
+            .unwrap_or_else(|err| panic!("{} -query {variable}: {err}", qmake.display()));
+        PathBuf::from(String::from_utf8_lossy(&output.stdout).trim())
+    };
+    let real = [
+        "QT_HOST_LIBEXECS",
+        "QT_HOST_BINS",
+        "QT_INSTALL_LIBEXECS",
+        "QT_INSTALL_BINS",
+    ]
+    .into_iter()
+    .map(|variable| query(variable).join("qmlcachegen"))
+    .find(|candidate| candidate.is_file())
+    .unwrap_or_else(|| panic!("{} knows no qmlcachegen", qmake.display()));
+
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
+    let libexec = out_dir.join("qt-bytecode-only");
+    fs::create_dir_all(&libexec).expect("create the qmlcachegen wrapper directory");
+    // The tools run with an empty environment: absolute paths only.
+    write_script(
+        &libexec.join("qmlcachegen"),
+        &format!("exec {} --only-bytecode \"$@\"", shell_quote(&real)),
+    );
+    let wrapper = out_dir.join("qmake");
+    write_script(
+        &wrapper,
+        &format!(
+            "case \"$1 ${{2:-}}\" in\n\
+             \"-query QT_HOST_LIBEXECS\" | \"-query QT_HOST_LIBEXECS/get\") echo {}; exit 0 ;;\n\
+             esac\n\
+             exec {} \"$@\"",
+            shell_quote(&libexec),
+            shell_quote(&qmake)
+        ),
+    );
+    // SAFETY: the build script is single-threaded; qt-build-utils reads QMAKE later, in this process.
+    unsafe { env::set_var("QMAKE", &wrapper) };
+}
+
+fn write_script(path: &Path, body: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::write(path, format!("#!/bin/sh\n{body}\n"))
+        .unwrap_or_else(|err| panic!("write {}: {err}", path.display()));
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+        .unwrap_or_else(|err| panic!("chmod {}: {err}", path.display()));
+}
+
+fn shell_quote(path: &Path) -> String {
+    format!("'{}'", path.display().to_string().replace('\'', r"'\''"))
 }
 
 struct LayerShellInstallation {

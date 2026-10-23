@@ -174,9 +174,14 @@ fi
 if [ "$DO_RPM" -eq 1 ]; then
     RPM="$OUT/cainary-$VERSION-1.$ARCH.rpm"
     # cargo-generate-rpm has no --manifest-path: -p is the crate directory, relative to the workspace.
+    # Requires come from rpm-build's find-requires, never the ldd fallback (see deps-lib.sh).
+    if [ ! -x /usr/lib/rpm/find-requires ]; then
+        echo "error: /usr/lib/rpm/find-requires is missing: install rpm-build" >&2
+        exit 1
+    fi
     (cd "$LINUX" && CARGO_TARGET_DIR="$CAINARY_STAGE/target" cargo generate-rpm \
         -p crates/cainary-tray --target "$TRIPLE" --target-dir "$CAINARY_STAGE/target" --arch "$ARCH" \
-        --output "$RPM" >&2)
+        --auto-req find-requires --output "$RPM" >&2)
     ARTIFACTS="$ARTIFACTS $RPM"
 fi
 

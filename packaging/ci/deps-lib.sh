@@ -4,19 +4,20 @@
 # Sourced, not run.
 #
 #   deps_pkgs PM KIND   print the packages, one per line.  PM: apt, dnf or pacman.
-#       rust      curl, git, certificates, python3 and the musl linker (the static CLI)
+#       rust      curl, git, certificates, python3, the host C compiler that build scripts link
+#                 with, and musl (the static CLI)
 #       build     the tray's compiler, Qt 6 development packages, D-Bus and validators
 #       tools     shellcheck and jq, which a workstation gets from mise instead
-#       package   what packaging/linux.sh needs on top of build (dpkg-shlibdeps; rpm tools)
+#       package   what packaging/linux.sh needs on top of build (dpkg-shlibdeps; find-requires)
 #   deps_qmake PM       the Qt 6 qmake path
 #   toml_get FILE KEY... print the value at the key path: a string, or the `version` of a table
 #                       (`toml_get mise.toml tools rust`). Needs python3 (the rust group installs it).
 
 deps_pkgs() {
     case "$1:$2" in
-        apt:rust) echo "ca-certificates curl git musl-tools python3" ;;
+        apt:rust) echo "ca-certificates curl gcc libc6-dev git musl-tools python3" ;;
         dnf:rust) echo "ca-certificates curl git-core musl-gcc python3" ;;
-        pacman:rust) echo "ca-certificates curl git musl python" ;;
+        pacman:rust) echo "ca-certificates curl gcc git musl python" ;;
         apt:build)
             echo "build-essential pkg-config musl-tools
 qt6-base-dev qt6-base-dev-tools qt6-declarative-dev qt6-wayland-dev qt6-svg-dev
@@ -41,8 +42,10 @@ wayland dbus file"
         pacman:tools) echo "shellcheck jq" ;;
         # cargo-deb expands $auto with dpkg-shlibdeps from dpkg-dev.
         apt:package) echo "dpkg-dev" ;;
-        # cargo-generate-rpm is pure Rust (from mise); the rpm CLI that inspect uses is in the base image.
-        dnf:package) ;;
+        # cargo-generate-rpm (from mise) takes Requires from rpm-build's find-requires; without it
+        # it falls back to ldd, which lists transitive libraries and glibc [WEAK] versions that no
+        # package provides. The rpm CLI that inspect uses is in the base image.
+        dnf:package) echo "rpm-build" ;;
         pacman:package) ;;
         *) echo "deps_pkgs: unknown '$1' '$2'" >&2; return 1 ;;
     esac
