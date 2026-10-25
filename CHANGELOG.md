@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/SkeLLLa/cainary/compare/v0.2.1...v0.3.0) - 2026-10-25
+
+### Added
+
+- ci lint & macos stable signing
+
+### Fixed
+
+- icons and logos
+- mac build & diff
+- macos bundler
+
 ## [0.2.1](https://github.com/SkeLLLa/cainary/compare/v0.2.0...v0.2.1) - 2026-10-23
 
 ### Fixed
