@@ -95,7 +95,7 @@ codesign --verify --strict "$APP"
 # Fail unless both the signature and the designated requirement pin this identifier and leaf
 # (catches a wrong key, or a requirement that fell back to the cdhash).
 check_pinned() { # <identifier> <path>
-    codesign --verify --strict -R="=identifier \"$1\" and certificate leaf = H\"$SIGN_ID\"" "$2"
+    codesign --verify --strict -R="identifier \"$1\" and certificate leaf = H\"$SIGN_ID\"" "$2"
     codesign -d -r- "$2" 2>&1 | grep -qi "identifier \"$1\" and certificate leaf = H\"$SIGN_ID\"" || {
         echo "error: the designated requirement of $2 does not pin leaf $SIGN_ID" >&2
         exit 1
