@@ -48,7 +48,9 @@ secret_fpr() {
 }
 
 import() {
-    [ -n "${GNUPGHOME:-}" ] && [ -d "$GNUPGHOME" ] || die "GNUPGHOME must name an existing directory"
+    if [ -z "${GNUPGHOME:-}" ] || [ ! -d "$GNUPGHOME" ]; then
+        die "GNUPGHOME must name an existing directory"
+    fi
     [ -z "$(ls -A "$GNUPGHOME")" ] || die "GNUPGHOME $GNUPGHOME is not empty"
     key="${REPO_SIGNING_KEY:-}"
     if [ ! -f "$PIN" ]; then
