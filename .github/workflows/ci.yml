@@ -12,8 +12,9 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# CI runs plain make: rustup's cargo (version read from mise.toml) and Xcode's swiftc and
-# `swift format`. mise is for local development only; it would route cargo through mbx.
+# CI runs plain make. On the runner jobs, jdx/mise-action installs the tools that mise.toml pins
+# (rust, shellcheck, jactionlint) and MISE_ENV=ci layers mise.ci.toml over it: plain cargo
+# instead of mbx, Xcode's swiftc. The container jobs bootstrap rustup in packaging/ci/linux-ci.sh.
 jobs:
   conventional-commits:
     name: Conventional commit messages
@@ -45,8 +46,9 @@ jobs:
       - name: Check action pins
         run: scripts/check-action-pins.sh .github/workflows/*.yml
 
-  actions-lint:
-    name: Workflow lint
+  # Static analysis of the workflows (injection, excessive permissions, unpinned actions...).
+  zizmor:
+    name: Workflow security (zizmor)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -55,27 +57,32 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # The release archive, checked against its checksum and against the build provenance of
-      # jdx/jactionlint's release workflow at the same tag. The runner image has shellcheck,
-      # which jactionlint runs on every `run:` script.
-      - name: Install jactionlint (version from mise.toml)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          v="$(sed -n 's/^jactionlint = "\([^"]*\)"$/\1/p' mise.toml)"
-          test -n "${v}"
-          dir="${RUNNER_TEMP}/jactionlint"
-          mkdir -p "${dir}/bin"
-          cd "${dir}"
-          tgz="jactionlint_${v}_linux_amd64.tar.gz"
-          gh release download "v${v}" -R jdx/jactionlint -p "${tgz}" -p "jactionlint_${v}_checksums.txt"
-          grep -E "^[0-9a-f]{64}  ${tgz}\$" "jactionlint_${v}_checksums.txt" | sha256sum -c -
-          gh attestation verify "${tgz}" -R jdx/jactionlint \
-            --signer-workflow jdx/jactionlint/.github/workflows/release.yaml \
-            --source-ref "refs/tags/v${v}"
-          tar -xzf "${tgz}" -C bin jactionlint
-          echo "${dir}/bin" >> "${GITHUB_PATH}"
+      - name: Run zizmor
+        uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
+        with:
+          advanced-security: false
+
+  actions-lint:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      MISE_ENV: ci
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # mise 2026.10.14, pinned by checksum. mise.lock pins the tools (the action adds --locked).
+      # No mise cache: the tools are small and rustup's toolchain is outside it.
+      - name: Install jactionlint, shellcheck (versions from mise.toml)
+        uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        with:
+          version: 2026.10.14
+          sha256: 50be7185bcf75929f01cc5630276bcb43ca367f7c5b176e2580903d28c611dc4
+          install_args: jactionlint shellcheck
+          cache: false
       - name: Show tools
         run: |
           jactionlint --version
@@ -87,38 +94,32 @@ jobs:
     name: Lint, test, ui-test (macOS)
     runs-on: macos-latest
     timeout-minutes: 20
+    env:
+      MISE_ENV: ci
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Independent: rustup and Homebrew install into separate prefixes.
-      - parallel:
-          - name: Install Rust (version from mise.toml)
-            run: |
-              set -eu
-              v="$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' mise.toml)"
-              test -n "${v}"
-              rustup toolchain install "${v}" --profile minimal --component rustfmt,clippy
-              rustup default "${v}"
-          - name: Install shellcheck
-            run: command -v shellcheck || brew install shellcheck
+      # mise 2026.10.14, pinned by checksum. mise.lock pins the tools (the action adds --locked).
+      # No mise cache: the tools are small and rustup's toolchain is outside it.
+      - name: Install rust, shellcheck (versions from mise.toml)
+        uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        with:
+          version: 2026.10.14
+          sha256: 005b32b9c22ca9cb63ff9d35c74b3abe69c433e9ca655fea288ba3dcbe7e4918
+          install_args: rust shellcheck
+          cache: false
       - name: Show toolchain
         run: |
           cargo --version
           swiftc --version
           swift format --version
       - name: Cache cargo
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('mise.toml', 'Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - name: make check (fmt, clippy, swift format, shellcheck, cargo test, ui-test)
         run: make check
       - name: Upload UI snapshots
@@ -134,29 +135,29 @@ jobs:
     name: Rust core and CLI (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      MISE_ENV: ci
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install Rust (version from mise.toml)
-        run: |
-          set -eu
-          v="$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' mise.toml)"
-          test -n "${v}"
-          rustup toolchain install "${v}" --profile minimal --component rustfmt,clippy
-          rustup default "${v}"
-      - name: Cache cargo
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # mise 2026.10.14, pinned by checksum. mise.lock pins the tools (the action adds --locked).
+      # No mise cache: the tools are small and rustup's toolchain is outside it.
+      - name: Install rust (versions from mise.toml)
+        uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('mise.toml', 'Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          version: 2026.10.14
+          sha256: 50be7185bcf75929f01cc5630276bcb43ca367f7c5b176e2580903d28c611dc4
+          install_args: rust
+          cache: false
+      - name: Show toolchain
+        run: cargo --version
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - name: make check-rust (fmt, clippy, cargo test)
         run: make check-rust
       - name: make publish-check (cargo publish --dry-run for both crates)
@@ -166,20 +167,23 @@ jobs:
     name: Bundle smoke test (universal)
     runs-on: macos-latest
     timeout-minutes: 15
+    env:
+      MISE_ENV: ci
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install Rust (version from mise.toml)
-        run: |
-          set -eu
-          v="$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' mise.toml)"
-          test -n "${v}"
-          rustup toolchain install "${v}" --profile minimal \
-            --target aarch64-apple-darwin,x86_64-apple-darwin
-          rustup default "${v}"
+      # mise 2026.10.14, pinned by checksum. mise.lock pins the tools (the action adds --locked).
+      # No mise cache: the tools are small and rustup's toolchain is outside it.
+      - name: Install rust (versions from mise.toml)
+        uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        with:
+          version: 2026.10.14
+          sha256: 005b32b9c22ca9cb63ff9d35c74b3abe69c433e9ca655fea288ba3dcbe7e4918
+          install_args: rust
+          cache: false
       - name: Build universal app bundle (ad-hoc signed)
         run: make bundle RELEASE=1
       - name: Verify bundle
@@ -246,16 +250,13 @@ jobs:
           persist-credentials: false
       - name: Install Rust and the tray's build dependencies
         run: packaging/ci/linux-ci.sh deps build
+      # CARGO_HOME (/usr/local/cargo) is read from the job env. rustc is on PATH from linux-ci.sh.
       - name: Cache cargo
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            /usr/local/cargo/registry
-            /usr/local/cargo/git
-            linux/target
-          key: linux-app-${{ matrix.name }}-${{ hashFiles('mise.toml', 'linux/Cargo.lock') }}
-          restore-keys: |
-            linux-app-${{ matrix.name }}-
+          workspaces: linux -> target
+          shared-key: linux-app-${{ matrix.name }}
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - name: make ${{ matrix.target }}
         run: make ${{ matrix.target }}
       - name: make linux-ui-test
@@ -303,16 +304,13 @@ jobs:
       - name: Install Rust, build dependencies, cargo-deb and cargo-generate-rpm
         run: packaging/ci/linux-ci.sh deps package
       - name: Cache cargo
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            /usr/local/cargo/registry
-            /usr/local/cargo/git
-            target
-            linux/target
-          key: linux-package-${{ matrix.name }}-${{ hashFiles('mise.toml', 'Cargo.lock', 'linux/Cargo.lock') }}
-          restore-keys: |
-            linux-package-${{ matrix.name }}-
+          workspaces: |
+            . -> target
+            linux -> target
+          shared-key: linux-package-${{ matrix.name }}
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - name: make linux
         run: make linux LINUX_FORMATS=${{ matrix.formats }}
       - name: Inspect the artifacts

@@ -103,7 +103,9 @@ This is the recommended method: `apt upgrade` then keeps cAInary up to date. APT
 or arm64 for you.
 
 ```sh
-echo 'deb [trusted=yes] https://skellla.github.io/cainary/deb stable main' | sudo tee /etc/apt/sources.list.d/cainary.list
+sudo install -d -m 0755 /etc/apt/keyrings
+sudo curl -fsSLo /etc/apt/keyrings/cainary.asc https://skellla.github.io/cainary/cainary.asc
+echo 'deb [signed-by=/etc/apt/keyrings/cainary.asc] https://skellla.github.io/cainary/deb stable main' | sudo tee /etc/apt/sources.list.d/cainary.list
 sudo apt update
 sudo apt install cainary
 ```
@@ -118,9 +120,12 @@ sudo curl -fsSLo /etc/yum.repos.d/cainary.repo https://skellla.github.io/cainary
 sudo dnf install cainary
 ```
 
-The repositories are unsigned (`trusted=yes`, `repo_gpgcheck=0`), so their integrity depends on
-HTTPS to GitHub Pages. They keep the 10 most recent releases, so you can also pin or downgrade a
-version. To check the files against the release checksums and attestations instead, see
+The packages and the repository metadata are signed with the cAInary packages key,
+[cainary.asc](https://skellla.github.io/cainary/cainary.asc) (the same as
+[packaging/signing/repo.asc](packaging/signing/repo.asc)); APT and DNF refuse anything it didn't
+sign. DNF asks you to confirm the key's fingerprint on the first install. The repositories keep
+the 10 most recent releases, so you can also pin or downgrade a version. To check the files
+against the release checksums and attestations as well, see
 [Verifying a download](docs/distribution.md#verifying-a-download).
 
 #### A single .deb or .rpm file
@@ -176,7 +181,7 @@ For popup placement, building from source and troubleshooting, see [docs/linux.m
 | Installed with | Remove with |
 | --- | --- |
 | macOS app | Quit cAInary, delete `/Applications/cAInary.app`, then optionally run `defaults delete ua.SkeLLLa.cAInary` |
-| APT | `sudo apt remove cainary`, then `sudo rm /etc/apt/sources.list.d/cainary.list` |
+| APT | `sudo apt remove cainary`, then `sudo rm /etc/apt/sources.list.d/cainary.list /etc/apt/keyrings/cainary.asc` |
 | DNF | `sudo dnf remove cainary`, then `sudo rm /etc/yum.repos.d/cainary.repo` |
 | Tarball | `./install-user.sh --uninstall` from the unpacked directory |
 | mise | `mise unuse -g packslip:github.com/SkeLLLa/cainary` |

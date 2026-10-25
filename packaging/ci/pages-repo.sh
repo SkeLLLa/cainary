@@ -12,9 +12,11 @@
 #       BASE_URL  where OUT is served, e.g. https://skellla.github.io/cainary
 #
 # Needs apt-ftparchive (apt-utils) and createrepo_c. When gpg holds a secret key (exactly one),
-# it signs the APT Release file and each repomd.xml and the repository files check them;
-# otherwise the repositories are unsigned, as plasma-drop's are ([trusted=yes], repo_gpgcheck=0).
-# The .rpm files themselves are the release's and carry no signature either way.
+# it signs the APT Release file, each .rpm and each repomd.xml, and the repository files check
+# them; otherwise the repositories are unsigned, as plasma-drop's are ([trusted=yes],
+# repo_gpgcheck=0). Signing the .rpm files needs rpmsign and rpmkeys: the release's own are
+# already signed and stay byte-identical, and those of releases from before the key are signed
+# here. release.yml checks the key against packaging/signing/repo.asc before this runs.
 set -eu
 
 die() {
@@ -47,6 +49,11 @@ fi
 sign() {
     gpg --batch --yes --pinentry-mode loopback --local-user "$key" "$@"
 }
+if [ -n "$key" ]; then
+    for tool in rpmsign rpmkeys; do
+        command -v "$tool" > /dev/null || die "$tool is not installed (needed to sign the .rpm files)"
+    done
+fi
 
 for f in "cainary_${version}_amd64.deb" "cainary_${version}_arm64.deb" \
     "cainary-${version}-1.x86_64.rpm" "cainary-${version}-1.aarch64.rpm"; do
@@ -96,21 +103,35 @@ for arch in x86_64 aarch64; do
     dir="$out/rpm/$arch"
     mkdir -p "$dir"
     cp "$assets"/cainary-*-1."$arch".rpm "$dir/"
+    if [ -n "$key" ]; then
+        # __gpg: Debian's rpm looks for gpg2. An identical signature is left as it is.
+        rpmsign --define "__gpg $(command -v gpg)" --define "_gpg_name $key" \
+            --define "_gpg_sign_cmd_extra_args --batch --pinentry-mode loopback" \
+            --addsign "$dir"/*.rpm > /dev/null
+        db="$(mktemp -d)"
+        rpmkeys --dbpath "$db" --import "$out/cainary.asc"
+        for f in "$dir"/*.rpm; do
+            rpmkeys --dbpath "$db" --define '_pkgverify_level signature' --checksig "$f" > /dev/null ||
+                die "$f did not verify after signing"
+        done
+        rm -rf "$db"
+    fi
     createrepo_c --quiet --compatibility "$dir"
     [ -z "$key" ] || sign --armor --detach-sign --output "$dir/repodata/repomd.xml.asc" "$dir/repodata/repomd.xml"
 done
 if [ -n "$key" ]; then
-    rpm_check="repo_gpgcheck=1
+    rpm_check="gpgcheck=1
+repo_gpgcheck=1
 gpgkey=$base_url/cainary.asc"
 else
-    rpm_check="repo_gpgcheck=0"
+    rpm_check="gpgcheck=0
+repo_gpgcheck=0"
 fi
 cat > "$out/rpm/cainary.repo" << EOF
 [cainary]
 name=cAInary
 baseurl=$base_url/rpm/\$basearch
 enabled=1
-gpgcheck=0
 $rpm_check
 EOF
 
@@ -119,7 +140,7 @@ if [ -n "$key" ]; then
     apt_setup="sudo install -d -m 0755 /etc/apt/keyrings
 sudo curl -fsSLo /etc/apt/keyrings/cainary.asc $base_url/cainary.asc
 "
-    trust="The repository metadata is signed with <a href=\"cainary.asc\">cainary.asc</a>
+    trust="The packages and the repository metadata are signed with <a href=\"cainary.asc\">cainary.asc</a>
 (fingerprint <code>$key</code>)."
 else
     apt_setup=

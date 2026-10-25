@@ -46,11 +46,12 @@ A release download through a browser is quarantined, and releases are not notari
 `release.yml` runs on pushes to `master` without `[skip ci]`. When there is something to release,
 the `prepare` job works out the version and the commit to build, and changes nothing. The `build`
 (macOS), `build-linux-cli` and `build-linux` jobs check out that commit, apply the version bump
-locally (`scripts/release-tree.sh`) and build; `verify-linux` installs the Linux packages and the
+locally (`scripts/release-tree.sh`) and build; `sign-linux` signs the .rpm files (see
+[Linux signing](#linux-signing)), `verify-linux` installs the Linux packages and the
 `checksums` job hashes and attests every asset. Only when all of them have passed does the
 `publish` job commit the bump, tag it, and create the GitHub release with the assets. It is the
 only job that changes the repository, and it pushes without force, so it fails if `master` has
-moved since the built commit. `aur`, `pages`, `crates` and the packslip jobs follow. If a run fails before
+moved since the built commit. `aur`, `repo` and `pages`, `crates` and the packslip jobs follow. If a run fails before
 `publish`, nothing was released and a rerun starts clean. If `publish` fails after tagging, rerun
 the workflow: `prepare` sees the tag made from the same commit, the builds run again, and `publish`
 completes the release without bumping again. For version `<version>`, the release holds:
@@ -126,8 +127,8 @@ have the CLI. An AppImage that bundles Qt, and a Flatpak, are deferred ([linux.m
 
 ## APT and DNF repositories
 
-The `pages` job in `release.yml` deploys package repositories to GitHub Pages
-(`https://skellla.github.io/cainary/`), in the same layout as
+The `repo` and `pages` jobs in `release.yml` build package repositories and deploy them to GitHub
+Pages (`https://skellla.github.io/cainary/`), in the same layout as
 [plasma-drop](https://skellla.github.io/plasma-drop/)'s. `packaging/ci/pages-repo.sh` writes the
 site: an APT repository under `deb/` (suite `stable`, component `main`, amd64 and arm64), a DNF
 repository per architecture under `rpm/x86_64/` and `rpm/aarch64/`, and an index page with these
@@ -146,14 +147,15 @@ sudo apt update
 sudo apt install cainary
 ```
 
-Like plasma-drop's, the repositories are unsigned by default (`[trusted=yes]`, `repo_gpgcheck=0`).
-Their integrity rests on HTTPS to GitHub Pages; the checksums and attestation on the release page
-cover the same files. If the `REPO_SIGNING_KEY` secret is set, the job signs the APT `InRelease`
-and each `repomd.xml`, publishes the public key as `cainary.asc`, and the index page, `cainary.list`
-and `cainary.repo` switch to checking it (`signed-by=/etc/apt/keyrings/cainary.asc`,
-`repo_gpgcheck=1`). The .rpm files are the release's and carry no package signature, so dnf
-prints "skipped OpenPGP checks" either way. Adding a key later changes the setup commands, and
-users who added the unsigned repository have to follow them again.
+Like plasma-drop's, the repositories are unsigned until a signing key is pinned (`[trusted=yes]`,
+`gpgcheck=0`, `repo_gpgcheck=0`). Their integrity then rests on HTTPS to GitHub Pages; the
+checksums and attestation on the release page cover the same files. Once
+`packaging/signing/repo.asc` is committed ([Linux signing](#linux-signing)), `repo` signs the APT
+`InRelease`, every .rpm and each `repomd.xml`, publishes the public key as `cainary.asc`, and the
+index page, `cainary.list` and `cainary.repo` switch to checking it
+(`signed-by=/etc/apt/keyrings/cainary.asc`, `gpgcheck=1`, `repo_gpgcheck=1`). Adding the key
+changes the setup commands, and users who added the unsigned repository have to follow them
+again.
 
 The job runs after `publish` on every release, unless the repository variable `PAGES_PUBLISH` is
 `false`. `PAGES_BASE_URL` overrides the URL written into the repository files (for a custom
@@ -161,11 +163,7 @@ domain). One-time setup:
 
 1. Settings → Pages: set the source to **GitHub Actions**. The `github-pages` environment it
    creates deploys from `master` only.
-2. Optional, for signed metadata: make a key without a passphrase, kept only as the secret:
-   `GNUPGHOME=$(mktemp -d) gpg --batch --passphrase '' --quick-gen-key 'cAInary packages <you@example.com>' ed25519 sign never`,
-   then `gpg --armor --export-secret-keys` in the same `GNUPGHOME`. Add it as the secret
-   `REPO_SIGNING_KEY` (Settings → Secrets and variables → Actions), and back it up offline:
-   users who added the key would have to fetch a new one if it is lost.
+2. Optional, for signed packages and metadata: see [Linux signing](#linux-signing).
 
 To check the site locally, run `packaging/ci/pages-repo.sh` on a directory of packages with a
 `file:///` base URL (it needs `apt-ftparchive` and `createrepo_c`); a test key in `GNUPGHOME`
@@ -290,6 +288,97 @@ CODESIGN_IDENTITY="$(cat ~/.local/share/macos-signing/ua.SkeLLLa.cAInary.dev/*.s
 codesign -d -r- dist/cAInary.app
 ```
 
+## Linux signing
+
+The .rpm files and the APT and DNF repository metadata are signed with an OpenPGP key on the
+same terms as the macOS certificate: a committed pin, a key that lives only in a `master`-only
+environment, and a release that fails rather than ship unsigned or with another key once the
+pin exists. The key's primary part, which users trust, stays offline with a passphrase; CI holds
+only a signing subkey, without the primary's secret.
+
+| Signed                                   | Checked by                                                  |
+| ---------------------------------------- | ----------------------------------------------------------- |
+| each .rpm (release page and DNF repo)    | dnf (`gpgcheck=1`), `rpm -K`                                |
+| `rpm/<arch>/repodata/repomd.xml`         | dnf (`repo_gpgcheck=1`)                                     |
+| APT `InRelease` and `Release.gpg`        | apt (`signed-by`); `InRelease` lists every .deb's SHA-256   |
+
+The .deb files carry no signature of their own: APT never checks one (`dpkg-sig` and `debsigs`
+are off by default), so the signed `InRelease` is what covers them. A .deb downloaded from the
+release page is covered by the checksums, attestation and packslip manifest instead.
+
+**Pin.** `packaging/signing/repo.asc` holds the public key (the primary, its subkeys and their
+revocations), armored, and only it. While it is absent, `sign-linux` passes the packages through
+unsigned and `repo` builds unsigned repositories, with a notice. Once it is committed,
+`packaging/ci/linux-signing.sh import` fails the release when the `REPO_SIGNING_KEY` secret is
+missing, belongs to another primary key, or can't sign (passphrase, expiry, or a subkey the pin
+revokes); setting the secret without committing the pin fails too. `import` also merges the pin
+into CI's keyring, so the published `cainary.asc` is the committed certificate. `verify-linux`
+checks each .rpm against the pin before installing it, and `repo` checks every .rpm it publishes.
+
+**Where it signs.** `sign-linux` runs after `build-linux`, in the Fedora 44 container with
+`rpm-sign`, and replaces the `release-linux-rpm-*` artifacts with the signed files, so
+`verify-linux`, `checksums` and the release page see only those. No build runs in a job that
+holds the key. `repo` (in the Debian trixie container: the runner's rpm 4.18 can't read a pin
+with a revoked subkey) signs the metadata and also signs the .rpm files of the earlier releases
+it republishes. The release's own are already signed and stay byte-identical, while those from
+before the key, or signed by a since-revoked subkey, differ from their release page copies (and
+checksums) by the signature. `pages` only deploys the site, so the key and the Pages deploy token
+never share a job.
+
+**Secret.** The subkey lives only in the `linux-signing` GitHub environment, used by
+`sign-linux` and `repo`:
+
+| Secret             | Value                                                  |
+| ------------------ | ------------------------------------------------------ |
+| `REPO_SIGNING_KEY` | one signing subkey, armored, without a passphrase (`linux-signing.sh ci-key`) |
+
+Set it up like `macos-signing` (Settings → Environments → New environment `linux-signing`,
+deployment branches: only `master`, optional required reviewers). Don't keep it as a repository
+secret.
+
+**Making the key.** On the maintainer's machine, not in CI, in a keyring kept for it (`gpg`
+asks for the passphrase). RSA 4096 is what every supported rpm, dnf and apt (sqv) accepts. The
+primary can only certify; the subkey can only sign:
+
+```sh
+export GNUPGHOME=~/.local/share/package-signing/gnupg   # any private directory
+install -d -m 700 "$GNUPGHOME"
+gpg --quick-gen-key 'cAInary packages <you@example.com>' rsa4096 cert never
+FPR=<the primary's fingerprint, from gpg -K>
+gpg --quick-add-key "$FPR" rsa4096 sign 3y
+SUB=<the new subkey's fingerprint, from gpg -K --with-subkey-fingerprints>
+gpg --armor --export "$FPR" > packaging/signing/repo.asc
+packaging/ci/linux-signing.sh ci-key "$SUB" | gh secret set REPO_SIGNING_KEY --env linux-signing
+```
+
+`ci-key` exports that one subkey with the primary's secret left out and the passphrase removed.
+Keep offline, apart from each other: the keyring (the primary's secret is passphrase-protected;
+back up the whole `GNUPGHOME`) and the revocation certificate gpg wrote to
+`$GNUPGHOME/openpgp-revocs.d/<fingerprint>.rev`, which revokes the whole key even if the keyring
+is lost. Commit `repo.asc` in the same change that updates the README's install commands to the
+signed ones (the index page shows them); the next release is the first signed one.
+
+**Rotating or revoking the subkey.** Users trust the primary, so a subkey change needs no action
+from them beyond the `cainary.asc` they fetch. Before the subkey expires, or if the secret leaks:
+with the offline keyring, revoke the old subkey if it leaked (`gpg --edit-key "$FPR"`, `key N`,
+`revkey`, `save`), add a new one with `--quick-add-key`, export `repo.asc` again and set the
+secret from `ci-key` for the new one. Commit `repo.asc`: until then, `import` refuses a subkey the
+pin doesn't know, and once a revocation is committed it refuses the revoked one. Users then get
+the revocation with the next `cainary.asc` they fetch; dnf refuses packages signed by the
+revoked subkey, and `repo` re-signs the earlier releases' with the new one. If the primary itself
+leaks, import the revocation certificate (remove the `:` before `-----BEGIN` first), commit the
+revoked `repo.asc` (every release fails from then on), and start over with a new key; users have
+to fetch it again.
+
+**Other projects.** One primary key can sign the packages of several projects, with a subkey of
+its own in each project's CI and the same `repo.asc` committed in each. Users of all of them
+trust one fingerprint, and there is one offline key and one revocation certificate to keep; a
+project's leaked subkey is revoked without touching the others. The cost: each project's pin
+accepts every project's subkeys, so a subkey leaked from one project can sign packages that the
+others' users accept, until it is revoked (rpm trusts imported keys system-wide anyway; APT's
+`signed-by` would otherwise keep them apart). Use a primary key per project instead if a
+project may change hands, or if that isolation matters more than one fingerprint.
+
 ## Verifying a download
 
 ```sh
@@ -300,13 +389,15 @@ gh attestation verify cainary-<version>-linux-x86_64.tar.gz --repo SkeLLLa/caina
 packslip verify packslip.sigstore.json --artifact cainary-<version>-macos-universal.tar.gz \
   --identity-prefix https://github.com/SkeLLLa/cainary/ \
   --issuer https://token.actions.githubusercontent.com
+# Once the .rpm files are signed (see Linux signing):
+sudo rpm --import https://raw.githubusercontent.com/SkeLLLa/cainary/master/packaging/signing/repo.asc
+rpm -K cainary-<version>-1.x86_64.rpm   # "digests signatures OK"
 ```
 
 ## Not available yet
 
 - Homebrew cask (a `SkeLLLa/homebrew-tap` tap, bumped by the release workflow).
 - A Linux AppImage and a Flatpak, and a tray app for Ubuntu 24.04 ([linux.md](linux.md) §5).
-- Signed .rpm and .deb packages: the files carry no package signature. Their integrity comes
-  from the checksums and attestation above, and, with `REPO_SIGNING_KEY` set, the signed
-  repository metadata.
+- Signed .deb files: APT checks the signed `InRelease` instead ([Linux signing](#linux-signing)),
+  and a downloaded .deb relies on the checksums and attestation above.
 - A mise registry listing, so `mise use cainary` works without the `packslip:` prefix.

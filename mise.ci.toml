@@ -1,0 +1,6 @@
+# Layered over mise.toml by MISE_ENV=ci (GitHub runners). CI builds with plain cargo: mbx is not
+# installed there, and under mbx rust-objcopy (strip = true) crashes on macOS.
+[env]
+CARGO_BIN = "cargo"
+# swift is not installed by mise in CI (Xcode's is used), so skip the mise.toml tool path.
+SWIFTC = "swiftc"
