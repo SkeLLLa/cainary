@@ -28,11 +28,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # Fetch every workflow, and the checker, as committed at the triggering SHA; no
-          # checkout, no third-party action. Fails closed: no files, no listing or any failed
-          # fetch fails the gate, and so does an unpinned action in ci.yml.
+          # Fetch every workflow, the checker and its image list, as committed at the
+          # triggering SHA; no checkout, no third-party action. Fails closed: no files, no
+          # listing or any failed fetch fails the gate, and so does an unpinned action in ci.yml.
           dir="${RUNNER_TEMP}/workflows"
-          mkdir -p "${dir}"
+          mkdir -p "${dir}" "${RUNNER_TEMP}/scripts" "${RUNNER_TEMP}/packaging/ci"
           fetch() {
             gh api -H "Accept: application/vnd.github.raw" \
               "repos/${GITHUB_REPOSITORY}/contents/$1?ref=${GITHUB_SHA}"
@@ -51,8 +51,9 @@ jobs:
             fetch ".github/workflows/${name}" > "${dir}/${name}"
             files+=("${dir}/${name}")
           done <<< "${names}"
-          fetch scripts/check-action-pins.sh > "${RUNNER_TEMP}/check-action-pins.sh"
-          sh "${RUNNER_TEMP}/check-action-pins.sh" "${files[@]}"
+          fetch scripts/check-action-pins.sh > "${RUNNER_TEMP}/scripts/check-action-pins.sh"
+          fetch packaging/ci/images.env > "${RUNNER_TEMP}/packaging/ci/images.env"
+          sh "${RUNNER_TEMP}/scripts/check-action-pins.sh" "${files[@]}"
 
   quality:
     name: Quality gate

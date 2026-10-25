@@ -128,6 +128,10 @@ the 10 most recent releases, so you can also pin or downgrade a version. To chec
 against the release checksums and attestations as well, see
 [Verifying a download](docs/distribution.md#verifying-a-download).
 
+The signing key changed after v0.4.1. If you added the APT repository earlier, download
+`cainary.asc` again (the `curl` line above); `apt update` fails until you do. DNF asks you to
+accept the new key on your next upgrade.
+
 #### A single .deb or .rpm file
 
 You get no automatic updates with this method. Download the file for your system from the

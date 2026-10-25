@@ -370,14 +370,7 @@ leaks, import the revocation certificate (remove the `:` before `-----BEGIN` fir
 revoked `repo.asc` (every release fails from then on), and start over with a new key; users have
 to fetch it again.
 
-**Other projects.** One primary key can sign the packages of several projects, with a subkey of
-its own in each project's CI and the same `repo.asc` committed in each. Users of all of them
-trust one fingerprint, and there is one offline key and one revocation certificate to keep; a
-project's leaked subkey is revoked without touching the others. The cost: each project's pin
-accepts every project's subkeys, so a subkey leaked from one project can sign packages that the
-others' users accept, until it is revoked (rpm trusts imported keys system-wide anyway; APT's
-`signed-by` would otherwise keep them apart). Use a primary key per project instead if a
-project may change hands, or if that isolation matters more than one fingerprint.
+**Other projects.** The key is cAInary's own and signs no other project's packages.
 
 ## Verifying a download
 
