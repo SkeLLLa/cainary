@@ -4,20 +4,20 @@
 # Sourced, not run.
 #
 #   deps_pkgs PM KIND   print the packages, one per line.  PM: apt, dnf or pacman.
-#       rust      curl, git, certificates, python3, the host C compiler that build scripts link
+#       rust      curl, git, certificates, the host C compiler that build scripts link
 #                 with, and musl (the static CLI)
 #       build     the tray's compiler, Qt 6 development packages, D-Bus and validators
 #       tools     shellcheck and jq, which a workstation gets from mise instead
 #       package   what packaging/linux.sh needs on top of build (dpkg-shlibdeps; find-requires)
 #   deps_qmake PM       the Qt 6 qmake path
 #   toml_get FILE KEY... print the value at the key path: a string, or the `version` of a table
-#                       (`toml_get mise.toml tools rust`). Needs python3 (the rust group installs it).
+#                       (`toml_get mise.toml tools rust`).
 
 deps_pkgs() {
     case "$1:$2" in
-        apt:rust) echo "ca-certificates curl gcc libc6-dev git musl-tools python3" ;;
-        dnf:rust) echo "ca-certificates curl git-core musl-gcc python3" ;;
-        pacman:rust) echo "ca-certificates curl gcc git musl python" ;;
+        apt:rust) echo "ca-certificates curl gcc libc6-dev git musl-tools" ;;
+        dnf:rust) echo "ca-certificates curl git-core musl-gcc" ;;
+        pacman:rust) echo "ca-certificates curl gcc git musl" ;;
         apt:build)
             echo "build-essential pkg-config musl-tools
 qt6-base-dev qt6-base-dev-tools qt6-declarative-dev qt6-wayland-dev qt6-svg-dev
@@ -59,15 +59,42 @@ deps_qmake() {
     esac
 }
 
+# Just enough TOML for the callers: one-line `key = "string"` or `key = { version = "..." }`.
 toml_get() {
-    python3 -I -c '
-import sys, tomllib
-with open(sys.argv[1], "rb") as f:
-    value = tomllib.load(f)
-for key in sys.argv[2:]:
-    value = value[key]
-if isinstance(value, dict):
-    value = value["version"]
-print(value)
-' "$@"
+    awk '
+        BEGIN {
+            for (i = 2; i < ARGC - 1; i++) table = table (i > 2 ? "." : "") ARGV[i]
+            key = ARGV[ARGC - 1]
+            ARGC = 2
+        }
+        /^[ \t]*\[/ {
+            name = $0
+            sub(/^[ \t]*\[[ \t]*/, "", name)
+            sub(/[ \t]*\].*$/, "", name)
+            in_table = (name == table)
+            next
+        }
+        in_table {
+            line = $0
+            sub(/^[ \t]*/, "", line)
+            k = line
+            sub(/[ \t]*=.*$/, "", k)
+            gsub(/"/, "", k)
+            if (k != key || index(line, "=") == 0) next
+            value = substr(line, index(line, "=") + 1)
+            # An inline table: its version.
+            if (value ~ /^[ \t]*\{/) {
+                if (!match(value, /version[ \t]*=[ \t]*"[^"]*"/)) exit 1
+                value = substr(value, RSTART, RLENGTH)
+                sub(/^version[ \t]*=[ \t]*/, "", value)
+            }
+            sub(/^[ \t]*/, "", value)
+            sub(/[ \t]*(#.*)?$/, "", value)
+            gsub(/"/, "", value)
+            print value
+            found = 1
+            exit
+        }
+        END { exit !found }
+    ' "$@"
 }

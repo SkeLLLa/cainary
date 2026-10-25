@@ -569,10 +569,11 @@ fn xml_attr<'a>(line: &'a str, attr: &str) -> Option<&'a str> {
 }
 
 fn cargo_hit(ctx: &mut ScanCtx) -> Option<Hit> {
-    let base = match ctx.h().env("CARGO_HOME") {
-        Some(p) if p.starts_with('/') && !p.contains("..") => ctx.h().sys(p),
-        _ => ctx.h().home(".cargo"),
-    };
+    let base = ctx
+        .h()
+        .env("CARGO_HOME")
+        .and_then(|p| ctx.h().usable_dir(p))
+        .unwrap_or_else(|| ctx.h().home(".cargo"));
     for name in ["config.toml", "config"] {
         let loc = base.join(name);
         let Some(doc) = read_present(ctx, &loc, Format::Toml) else {

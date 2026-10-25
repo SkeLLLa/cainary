@@ -218,7 +218,7 @@ smoke() {
         aarch64) deb_arch=arm64 ;;
         *) die "unknown arch '$ARCH'" ;;
     esac
-    # The smoke containers have no python3 for toml_get, so read the version off the artifact.
+    # The version comes off the artifact, so the smoke installs exactly what was built.
     case "$kind" in
         deb) glob="cainary_*_$deb_arch.deb" ;;
         rpm) glob="cainary-*-1.$ARCH.rpm" ;;

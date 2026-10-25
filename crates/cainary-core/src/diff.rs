@@ -5,7 +5,7 @@ use crate::model::{
     ScannedSource, Since, SourceState, Tool,
 };
 use crate::redact;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Diff `new` against the baseline `old`: notifying changes first, then report entry order,
 /// then scope (entry, finding, source, report).
@@ -218,9 +218,21 @@ fn findings_change(o: &Entry, n: &Entry, new: &Report, out: &mut Vec<(usize, Cha
         ));
     };
 
+    // A finding whose key moved (a path spelled another way, say) but whose title didn't is the
+    // same finding: pair it with an old one that lost its match, not "Gone" plus "New".
+    let mut paired: HashSet<&str> = HashSet::new();
     for f in &n.findings {
         let to = f.level();
-        match old.get(f.key.as_str()) {
+        let prev = old.get(f.key.as_str()).copied().or_else(|| {
+            let p = o.findings.iter().find(|p| {
+                p.title == f.title
+                    && !cur.contains_key(p.key.as_str())
+                    && !paired.contains(p.key.as_str())
+            })?;
+            paired.insert(p.key.as_str());
+            Some(p)
+        });
+        match prev {
             None => push(
                 f,
                 ChangeKind::Added,
@@ -271,7 +283,10 @@ fn findings_change(o: &Entry, n: &Entry, new: &Report, out: &mut Vec<(usize, Cha
         }
     }
     for f in &o.findings {
-        if cur.contains_key(f.key.as_str()) || unreadable(new, &f.source.path) {
+        if cur.contains_key(f.key.as_str())
+            || paired.contains(f.key.as_str())
+            || unreadable(new, &f.source.path)
+        {
             continue;
         }
         push(
@@ -430,6 +445,30 @@ mod tests {
     fn identical_reports_have_no_changes() {
         let r = report(vec![usage("x")], &[Tool::ClaudeCode], vec![]);
         assert!(diff(&r, &r).is_empty());
+    }
+
+    #[test]
+    fn a_moved_key_with_the_same_title_is_not_gone_and_new() {
+        let at = |path: &str, value: &str| {
+            crate::model::FindingBuilder::new("x")
+                .signals(&[Signal::Usage])
+                .source(Source::new(path, Origin::User, SourceKind::File))
+                .evidence([format!("x = {value}")])
+                .build(Tool::ClaudeCode)
+        };
+        let tilde = report(vec![at("~/a.json", "1")], &[Tool::ClaudeCode], vec![]);
+        let abs = report(
+            vec![at("/Users/alice/a.json", "1")],
+            &[Tool::ClaudeCode],
+            vec![],
+        );
+        assert!(diff(&tilde, &abs).is_empty());
+        let edited = report(
+            vec![at("/Users/alice/a.json", "2")],
+            &[Tool::ClaudeCode],
+            vec![],
+        );
+        assert_eq!(kinds(&diff(&tilde, &edited)), [(F, Changed, false)]);
     }
 
     #[test]

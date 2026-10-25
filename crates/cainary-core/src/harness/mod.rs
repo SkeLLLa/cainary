@@ -222,8 +222,9 @@ impl Harness {
         h
     }
 
-    /// The location a usable absolute or `~/` value names, or `None`.
-    fn usable_dir(&self, value: &str) -> Option<Loc> {
+    /// The location a usable absolute or `~/` value names, or `None`. Shown as `~/…` under the
+    /// home either way, so a variable naming the default location doesn't change the path.
+    pub fn usable_dir(&self, value: &str) -> Option<Loc> {
         if let Some(rel) = tilde_rel(value) {
             return Some(Loc {
                 shown: value.to_string(),

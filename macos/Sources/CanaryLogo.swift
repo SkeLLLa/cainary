@@ -128,12 +128,17 @@ enum CanaryLogo {
         [[p(x, 104), p(x - 6, 108)], [p(x, 104), p(x, 110)], [p(x, 104), p(x + 6, 108)]]
     }
 
-    private static let plate = gradient([(rgb(0xffd84d), 0), (rgb(0xe8b100), 1)])
-    private static let steel = gradient([(rgb(0xcfd8dc), 0), (rgb(0x78909c), 1)])
-    private static let glow = gradient([
+    // CGGradient isn't Sendable, but it is immutable once made.
+    nonisolated(unsafe) private static let plate = gradient([
+        (rgb(0xffd84d), 0), (rgb(0xe8b100), 1),
+    ])
+    nonisolated(unsafe) private static let steel = gradient([
+        (rgb(0xcfd8dc), 0), (rgb(0x78909c), 1),
+    ])
+    nonisolated(unsafe) private static let glow = gradient([
         (rgb(0xff1744, 0.75), 0), (rgb(0xff1744, 0.3), 0.45), (rgb(0xff1744, 0), 1),
     ])
-    private static let eye = gradient([
+    nonisolated(unsafe) private static let eye = gradient([
         (rgb(0xff8a80), 0), (rgb(0xff1744), 0.35), (rgb(0xb0001e), 1),
     ])
 
