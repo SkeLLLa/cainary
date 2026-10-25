@@ -488,8 +488,16 @@ jobs:
           - name: Install cargo-deb and cargo-generate-rpm
             run: packaging/ci/linux-ci.sh deps tools
 
+          # The About window's commit and build date are compiled in, derived as the Makefile
+          # does; packaging/linux.sh exports them too, but only gets the built binary.
           - name: Build the tray app
-            run: cargo build --manifest-path linux/Cargo.toml --release --locked -p cainary-tray
+            run: |
+              set -eu
+              SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+              CAINARY_GIT_SHA="$(git rev-parse --short HEAD)"
+              CAINARY_BUILD_DATE="$(date -u -d "@${SOURCE_DATE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ)"
+              export SOURCE_DATE_EPOCH CAINARY_GIT_SHA CAINARY_BUILD_DATE
+              cargo build --manifest-path linux/Cargo.toml --release --locked -p cainary-tray
 
       - name: Fetch the CLI
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

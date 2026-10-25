@@ -72,14 +72,14 @@ counts. Each confirmed change is one `org.freedesktop.Notifications` notificatio
 `desktop-entry=ua.SkeLLLa.cAInary`); clicking it opens Details at that entry.
 
 **Tray.** A StatusNotifierItem through ksni, id `ua.SkeLLLa.cAInary`. The status is always `Active`:
-Plasma animates `NeedsAttention`, and the icon already shows the level. The icon is the macOS one, a
-bird with a badge: dimmed when no tool is installed, a count of tools to review (1–9) for
+Plasma animates `NeedsAttention`, and the icon already shows the level. The icon is the macOS one, the
+app's robo-canary with a badge in its top-left corner: dimmed when no tool is installed, a count of tools to review (1–9) for
 low/medium/high, and `?` when the scan failed or can't be trusted. The app draws it at run time into
 `$XDG_RUNTIME_DIR/cainary/icons` (the icon theme path handed to the host), one SVG per picture, with
 a Qt-rendered pixmap of the same SVG as a fallback. The "Tray icon" setting picks the style:
-"Monochrome, colored badge" (the default: the bird follows the panel's text color, the count badge
-is yellow, orange or red), "Monochrome" (everything follows the panel) or "Color" (the bird is
-tinted by level as well). Panel-colored icons are named `…-symbolic` and use `ColorScheme-Text`, so
+"Monochrome, colored badge" (the default: the app icon's symbolic silhouette follows the panel's
+text color, the count badge is yellow, orange or red), "Monochrome" (everything follows the panel)
+or "Color" (the colored app icon once a scan has a level; before that, the silhouette). Panel-colored icons are named `…-symbolic` and use `ColorScheme-Text`, so
 Plasma and GTK-based hosts recolor them. The menu lists one disabled row per tool with its level, then
 Refresh now, Open details…, Settings… and Quit. Primary activation toggles the popup at the click
 point; secondary activation refreshes.

@@ -140,7 +140,7 @@ fn icon_names_follow_the_theme_convention() {
     );
     assert_eq!(
         medium.name(IconStyle::Color),
-        "ua.SkeLLLa.cAInary.tray-orange-orange3"
+        "ua.SkeLLLa.cAInary.tray-color-orange3"
     );
     assert_eq!(
         UNKNOWN.name(IconStyle::Color),

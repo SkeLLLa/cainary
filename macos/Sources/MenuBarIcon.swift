@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Draws a `MenuState` as one image: a bird tinted by the level, with a count badge (§2.1).
+/// Draws a `MenuState` as one image: the robo-canary, with a level-tinted count badge (§2.1).
 struct MenuBarLabel: View {
     let state: MenuState
     var style: IconStyle = .color
@@ -14,11 +14,10 @@ struct MenuBarLabel: View {
 }
 
 enum MenuBarIcon {
-    private static let symbolName = "bird.fill"
     private static let badgeDiameter: CGFloat = 9
-    /// How far the badge sticks out past the bird's top-right corner.
+    /// How far the badge sticks out past the logo's top-left corner, which is empty.
     private static let overhang: CGFloat = 3
-    private static let height: CGFloat = 18
+    private static let logoSize: CGFloat = 18
     /// Template alpha for "nothing installed".
     private static let dimmedAlpha: CGFloat = 0.45
 
@@ -26,6 +25,7 @@ enum MenuBarIcon {
         let mono = style == .monochrome
         var tint: NSColor
         var badge: (text: String, color: NSColor, darkText: Bool)?
+        // Template looks (no level yet) draw the silhouette in either style.
         var template = false
         var alpha: CGFloat = 1
         switch state.look {
@@ -36,7 +36,7 @@ enum MenuBarIcon {
             tint = .labelColor
             template = true
             alpha = dimmedAlpha
-        case .green: tint = NSColor.systemGreen.withAlphaComponent(0.6)
+        case .green: tint = .systemGreen
         case .blue: tint = .systemBlue
         case .yellow: tint = .systemYellow
         case .orange: tint = .systemOrange
@@ -48,33 +48,24 @@ enum MenuBarIcon {
         case .count(let n): badge = ("\(min(n, 9))", tint, state.look == .yellow)
         }
         if mono {
-            // Template: only alpha matters. Nothing alerting means a bare bird.
+            // Template: only alpha matters. Nothing alerting means a bare silhouette.
             tint = .black
             template = true
             if let current = badge { badge = (current.text, .black, false) }
         }
-        let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
-            .applying(
-                template
-                    ? .init(
-                        hierarchicalColor: (mono ? NSColor.black : NSColor.labelColor)
-                            .withAlphaComponent(alpha))
-                    : .init(paletteColors: [tint]))
-        let symbol = NSImage(systemSymbolName: symbolName, accessibilityDescription: state.label)?
-            .withSymbolConfiguration(config)
-        let birdSize = symbol?.size ?? NSSize(width: 16, height: 14)
         let overhang = badge == nil ? 0 : overhang
-        let size = NSSize(width: ceil(birdSize.width + overhang), height: height)
+        let size = NSSize(width: logoSize + overhang, height: logoSize)
         let isTemplate = template
+        let logoAlpha = alpha
         let image = NSImage(size: size, flipped: false) { rect in
-            let birdOrigin = NSPoint(x: 0, y: (rect.height - birdSize.height) / 2 - 1)
-            symbol?.draw(in: NSRect(origin: birdOrigin, size: birdSize))
+            CanaryLogo.draw(
+                in: NSRect(x: rect.width - logoSize, y: 0, width: logoSize, height: logoSize),
+                silhouette: isTemplate ? .black : nil, alpha: logoAlpha)
             if let badge {
-                // Centered on the bird's top-right corner, clamped inside the canvas.
+                // In the logo's empty top-left corner.
                 let d = badgeDiameter
-                let top = min(birdOrigin.y + birdSize.height - d / 2, rect.height - d)
-                let circle = NSRect(x: rect.width - d, y: top, width: d, height: d)
-                // Knock the bird out around the badge so the two never merge.
+                let circle = NSRect(x: 0, y: rect.height - d, width: d, height: d)
+                // Knock the logo out around the badge so the two never merge.
                 if let context = NSGraphicsContext.current {
                     context.saveGraphicsState()
                     context.compositingOperation = .clear
@@ -119,6 +110,7 @@ enum MenuBarIcon {
             return true
         }
         image.isTemplate = template
+        image.accessibilityDescription = state.label
         return image
     }
 }

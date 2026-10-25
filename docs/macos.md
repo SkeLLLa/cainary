@@ -59,17 +59,18 @@ scan at 16:30".
 
 ### 2.1 Menu bar icon (`MenuBarIcon.swift`)
 
-`bird.fill`, tinted by the overall level, with a count badge (a knock-out ring), plus a monochrome
-template variant. `MenuState(state:)` is a pure
-function in `AppState.swift`:
+The app's robo-canary (`CanaryLogo.swift`, drawn from `resources/icons/cainary-macos.svg` and
+`cainary-mono.svg`): colored once there is a level, the template silhouette before that, with a
+count badge (a knock-out ring) in its empty top-left corner, plus a monochrome template variant.
+`MenuState(state:)` is a pure function in `AppState.swift`:
 
-| state | bird | badge |
+| state | logo | badge |
 | --- | --- | --- |
 | first scan running | template | — |
 | `.failed`, unknown level, or `!complete && level < low` (the `status` incomplete rule) | template | `?` |
 | `not-installed` | template, dimmed | — |
-| `ok` / `opted-out` | green (0.6 alpha) / blue | — |
-| `low` / `medium` / `high` | yellow / orange / red | entries (apps + others) at `low`+, capped at 9 |
+| `ok` / `opted-out` | colored | — |
+| `low` / `medium` / `high` | colored | yellow / orange / red: entries (apps + others) at `low`+, capped at 9 |
 
 The tooltip and accessibility label read `cAInary · HIGH · <status.summary>`, or
 `cAInary · Couldn't scan: <reason>`.

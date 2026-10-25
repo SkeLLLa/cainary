@@ -25,6 +25,9 @@ MANIFEST := --manifest-path "$(CURDIR)/Cargo.toml"
 endif
 CARGO := $(CARGO_BIN)
 CARGO_CMD := $(CARGO_CD) $(CARGO)
+# make exports a command-line `CARGO=mbx` to every recipe, and mbx runs $CARGO as the real cargo:
+# it then starts itself recursively until memory runs out. Cargo sets CARGO for its own children.
+unexport CARGO
 
 SWIFT_FORMAT_PATHS = macos/Sources macos/Tests
 APPLE_TARGETS = aarch64-apple-darwin x86_64-apple-darwin
