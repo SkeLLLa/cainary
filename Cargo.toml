@@ -4,7 +4,7 @@ members = ["crates/cainary-core", "crates/cainary-cli"]
 exclude = ["linux"]
 
 [workspace.package]
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.99"
 license = "GPL-3.0-or-later"
@@ -19,7 +19,7 @@ publish = ["crates-io"]
 # change; tests/guards.rs checks Cargo.lock against an allowlist.
 [workspace.dependencies]
 # Exact: the two crates are released together at one version (scripts/set-version.sh).
-cainary-core = { path = "crates/cainary-core", version = "=0.4.1" }
+cainary-core = { path = "crates/cainary-core", version = "=0.5.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 toml = "1.1"
