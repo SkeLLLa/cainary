@@ -6,7 +6,8 @@
 #   APP_BIN  SwiftUI app binary (default: target/macos/cAInary)
 #   CORE     cainary helper binary (default: target/debug/cainary)
 #   OUT      output directory (default: dist)
-#   CODESIGN_IDENTITY  Developer ID identity for releases (default: empty, ad-hoc signature)
+#   CODESIGN_IDENTITY  SHA-1 of a self-signed code-signing certificate in the keychain search
+#                      list (default: empty, ad-hoc signature). See docs/distribution.md#signing.
 set -eu
 
 cd "$(dirname "$0")/.."
@@ -61,15 +62,49 @@ sed -e "s/__VERSION__/$VERSION/g" -e "s/__COMMIT__/$COMMIT/g" -e "s/__BUILD_DATE
 plutil -lint "$APP/Contents/Info.plist"
 
 # --- 4. Sign inside out (ad hoc unless CODESIGN_IDENTITY is set), then verify -
-if [ -n "${CODESIGN_IDENTITY:-}" ]; then
-    # Notarization needs a secure timestamp.
-    set -- --sign "$CODESIGN_IDENTITY" --timestamp
+# A certificate signature makes the designated requirement `identifier … and certificate leaf =
+# H"<sha1>"`, which stays the same across builds, so TCC and login-item grants survive updates.
+# An ad-hoc one pins the cdhash and changes with every build.
+BUNDLE_ID="ua.SkeLLLa.cAInary"
+HELPER_ID="$BUNDLE_ID.helper"
+SIGN_ID="${CODESIGN_IDENTITY:-}"
+if [ -n "$SIGN_ID" ]; then
+    case "$SIGN_ID" in
+        *[!0-9A-Fa-f]*) SIGN_ID="" ;;
+    esac
+    if [ "${#SIGN_ID}" -ne 40 ]; then
+        echo "error: CODESIGN_IDENTITY must be the certificate's 40-digit SHA-1" >&2
+        exit 1
+    fi
+    SIGN_ID="$(printf %s "$SIGN_ID" | tr '[:lower:]' '[:upper:]')"
 else
-    set -- --sign -
+    SIGN_ID="-"
 fi
-codesign --force --options runtime "$@" "$APP/Contents/Helpers/cainary"
-codesign --force --options runtime "$@" "$APP"
+sign() { # <identifier> <path>
+    if [ "$SIGN_ID" = "-" ]; then
+        codesign --force --options runtime --timestamp=none --sign - -i "$1" "$2"
+    else
+        # The requirement is spelled out rather than left to codesign's default, so it can't drift.
+        codesign --force --options runtime --timestamp=none --sign "$SIGN_ID" -i "$1" \
+            -r="designated => identifier \"$1\" and certificate leaf = H\"$SIGN_ID\"" "$2"
+    fi
+}
+sign "$HELPER_ID" "$APP/Contents/Helpers/cainary"
+sign "$BUNDLE_ID" "$APP"
 codesign --verify --strict "$APP"
+# Fail unless both the signature and the designated requirement pin this identifier and leaf
+# (catches a wrong key, or a requirement that fell back to the cdhash).
+check_pinned() { # <identifier> <path>
+    codesign --verify --strict -R="=identifier \"$1\" and certificate leaf = H\"$SIGN_ID\"" "$2"
+    codesign -d -r- "$2" 2>&1 | grep -qi "identifier \"$1\" and certificate leaf = H\"$SIGN_ID\"" || {
+        echo "error: the designated requirement of $2 does not pin leaf $SIGN_ID" >&2
+        exit 1
+    }
+}
+if [ "$SIGN_ID" != "-" ]; then
+    check_pinned "$BUNDLE_ID" "$APP"
+    check_pinned "$HELPER_ID" "$APP/Contents/Helpers/cainary"
+fi
 
 # --- 5. Zip (--norsrc/--noextattr keep AppleDouble ._ files out) -------------
 ditto -c -k --norsrc --noextattr --keepParent "$APP" "$ZIP"

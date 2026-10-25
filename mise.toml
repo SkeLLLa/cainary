@@ -2,12 +2,12 @@
 # In a sandbox where ~/.cargo is read-only, the Makefile points CARGO_HOME at $TMPDIR itself.
 
 [tools]
-rust = { version = "1.99.0", targets = "aarch64-apple-darwin,x86_64-apple-darwin,x86_64-unknown-linux-musl,aarch64-unknown-linux-musl", components = "rustfmt,clippy" }
+rust = { version = "1.99.1", targets = "aarch64-apple-darwin,x86_64-apple-darwin,x86_64-unknown-linux-musl,aarch64-unknown-linux-musl", components = "rustfmt,clippy" }
 # The SwiftUI app is macOS-only; on Linux there is nothing for swiftc to build.
-swift = { version = "6.4.0", os = ["macos"] }
-jactionlint = "1.8.2"
+swift = { version = "6.4.1", os = ["macos"] }
+jactionlint = "2.3.0"
 shellcheck = "0.11.0"
-mr-boxington = "1.16.0"
+mr-boxington = { version = "1.27.0", workflow = "release.yml@refs/heads/main" }
 # The install smoke test (packaging/ci/linux-ci.sh) and the release notes (release.yml).
 jq = "1.8.2"
 git-cliff = "2.14.2"
@@ -41,8 +41,13 @@ run = "make lint"
 description = "fmt --check, clippy -D warnings, cargo test"
 run = "make check-rust"
 
+[tasks."lint:actions"]
+description = "jactionlint (with shellcheck) on the GitHub workflows and dependabot.yml"
+run = "make lint-actions"
+
 [tasks.check]
 description = "Everything CI checks"
+depends = ["lint:actions"]
 run = "make check"
 
 [tasks.ui-test]

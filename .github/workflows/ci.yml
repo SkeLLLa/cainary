@@ -19,6 +19,7 @@ jobs:
     name: Conventional commit messages
     if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
@@ -32,6 +33,7 @@ jobs:
   pin-check:
     name: Action pins
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
@@ -43,9 +45,48 @@ jobs:
       - name: Check action pins
         run: scripts/check-action-pins.sh .github/workflows/*.yml
 
+  actions-lint:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The release archive, checked against its checksum and against the build provenance of
+      # jdx/jactionlint's release workflow at the same tag. The runner image has shellcheck,
+      # which jactionlint runs on every `run:` script.
+      - name: Install jactionlint (version from mise.toml)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          v="$(sed -n 's/^jactionlint = "\([^"]*\)"$/\1/p' mise.toml)"
+          test -n "${v}"
+          dir="${RUNNER_TEMP}/jactionlint"
+          mkdir -p "${dir}/bin"
+          cd "${dir}"
+          tgz="jactionlint_${v}_linux_amd64.tar.gz"
+          gh release download "v${v}" -R jdx/jactionlint -p "${tgz}" -p "jactionlint_${v}_checksums.txt"
+          grep -E "^[0-9a-f]{64}  ${tgz}\$" "jactionlint_${v}_checksums.txt" | sha256sum -c -
+          gh attestation verify "${tgz}" -R jdx/jactionlint \
+            --signer-workflow jdx/jactionlint/.github/workflows/release.yaml \
+            --source-ref "refs/tags/v${v}"
+          tar -xzf "${tgz}" -C bin jactionlint
+          echo "${dir}/bin" >> "${GITHUB_PATH}"
+      - name: Show tools
+        run: |
+          jactionlint --version
+          shellcheck --version
+      - name: make lint-actions
+        run: make lint-actions
+
   macos:
     name: Lint, test, ui-test (macOS)
     runs-on: macos-latest
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -92,6 +133,7 @@ jobs:
   linux:
     name: Rust core and CLI (Linux)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -123,6 +165,7 @@ jobs:
   bundle:
     name: Bundle smoke test (universal)
     runs-on: macos-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -168,6 +211,7 @@ jobs:
   linux-app:
     name: Tray app (${{ matrix.name }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     container: ${{ matrix.image }}
     permissions:
       contents: read
@@ -230,6 +274,7 @@ jobs:
   linux-package:
     name: Package (${{ matrix.name }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     container: ${{ matrix.image }}
     permissions:
       contents: read
@@ -291,6 +336,7 @@ jobs:
     name: Install smoke test (${{ matrix.name }})
     needs: linux-package
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     container: ${{ matrix.image }}
     permissions:
       contents: read

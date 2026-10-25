@@ -1,7 +1,7 @@
 # The only build entry point for cAInary (mise tasks wrap these targets).
 
 .DEFAULT_GOAL := help
-.PHONY: help build test fmt lint check-rust check core-universal app bundle ui-test scan publish-check clean \
+.PHONY: help build test fmt lint lint-actions check-rust check core-universal app bundle ui-test scan publish-check clean \
 	linux linux-cli linux-build linux-test linux-fmt linux-lint linux-check linux-ui-test linux-run
 
 # cargo needs a writable CARGO_HOME. Normally that is the existing CARGO_HOME or ~/.cargo and
@@ -48,6 +48,7 @@ help:
 	@echo "  test            cargo test"
 	@echo "  fmt             cargo fmt (in place)"
 	@echo "  lint            cargo fmt --check, clippy -D warnings, swift format, shellcheck"
+	@echo "  lint-actions    jactionlint on workflows and dependabot.yml (version in mise.toml)"
 	@echo "  check-rust      fmt --check, clippy -D warnings, cargo test"
 	@echo "  check           lint + test + ui-test (CI)"
 	@echo "  core-universal  release cainary for both Apple targets, lipo -> target/universal/cainary"
@@ -89,6 +90,11 @@ lint:
 	@if ls packaging/*.sh >/dev/null 2>&1; then shellcheck packaging/*.sh packaging/dist/*.sh packaging/ci/*.sh scripts/*.sh macos/Tests/run.sh macos/Tests/stubs/*.sh; fi
 
 check: lint test ui-test
+
+# GitHub workflows and dependabot.yml. jactionlint also runs shellcheck on `run:` scripts when
+# shellcheck is on PATH. Not part of `check`: CI runs it in its own job (ci.yml, actions-lint).
+lint-actions:
+	jactionlint
 
 core-universal:
 	@for t in $(APPLE_TARGETS); do $(CARGO_CMD) build $(MANIFEST) --release --target $$t -p cainary || exit 1; done

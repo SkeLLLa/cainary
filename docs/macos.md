@@ -299,10 +299,12 @@ Steps:
    and `Contents/Resources/COPYING` (from the repo root).
 3. Stamp the plist: `sed` replaces `__VERSION__`, `__COMMIT__` (`git rev-parse`, or `unknown`;
    `-dirty` when there are local changes) and `__BUILD_DATE__`. Then run `plutil -lint`.
-4. Sign ad hoc, inside out: `codesign --force --options runtime --sign -` on the helper, then on
-   the app, then `codesign --verify --strict`. The signature plus a stable bundle id is what makes
-   notifications and `SMAppService` work locally. Developer ID signing and notarization are
-   optional steps in the release workflow.
+4. Sign inside out: `codesign --force --options runtime` on the helper (identifier
+   `ua.SkeLLLa.cAInary.helper`), then on the app, then `codesign --verify --strict`. The signature
+   plus a stable bundle id is what makes notifications and `SMAppService` work locally. Ad hoc by
+   default; with `CODESIGN_IDENTITY` (a certificate SHA-1) it writes and checks the designated
+   requirement `identifier … and certificate leaf = H"<sha1>"`, which releases use so grants
+   survive updates ([distribution.md](distribution.md#signing)). Releases are not notarized.
 5. Zip with `ditto -c -k --norsrc --noextattr --keepParent` → `dist/cAInary-<ver>-macos.zip`.
 
 **`macos/Info.plist`**: bundle id `ua.SkeLLLa.cAInary`, executable and display name `cAInary`,
@@ -410,7 +412,8 @@ make build ui-test bundle && open dist/cAInary.app
 - An alert-mode picker or a separate "Can't be seen locally" tab. Entry notes cover what
   can't be seen.
 - Opening the popover programmatically. Notification clicks go to Details.
-- App icon artwork, auto-update, Developer ID signing and notarization (a later release step).
+- App icon artwork and auto-update. Developer ID signing and notarization are not planned (see
+  [distribution.md](distribution.md#signing)).
 - XCTest, Swift Testing and SwiftPM, which are unavailable or blocked in the sandbox.
 - Per-finding mute, change history beyond one baseline, Markdown copy and localization.
 - Recomputing levels, summaries or diffs in Swift.

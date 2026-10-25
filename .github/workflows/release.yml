@@ -6,6 +6,11 @@ on:
     branches:
       - master
 
+# One release at a time: a push during a release waits for it instead of cancelling it.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 # Nothing is granted by default; each job asks for what it needs.
 permissions: {}
 
@@ -14,6 +19,7 @@ jobs:
     name: Action pin gate
     if: ${{ github.repository_owner == 'SkeLLLa' && !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
@@ -53,6 +59,7 @@ jobs:
     needs: pin-gate
     if: ${{ github.repository_owner == 'SkeLLLa' && !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: macos-latest
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
@@ -83,6 +90,7 @@ jobs:
     needs: pin-gate
     if: ${{ github.repository_owner == 'SkeLLLa' && !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -108,6 +116,7 @@ jobs:
     needs: pin-gate
     if: ${{ github.repository_owner == 'SkeLLLa' && !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     container: debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
     permissions:
       contents: read
@@ -139,6 +148,7 @@ jobs:
     needs: pin-gate
     if: ${{ github.repository_owner == 'SkeLLLa' && !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       released: ${{ steps.prepare.outputs.released }}
       resumed: ${{ steps.prepare.outputs.resumed }}
@@ -147,6 +157,9 @@ jobs:
       base_sha: ${{ steps.prepare.outputs.base_sha }}
       release_date: ${{ steps.prepare.outputs.release_date }}
       version_hash: ${{ steps.prepare.outputs.version_hash }}
+      git_sha: ${{ steps.prepare.outputs.git_sha }}
+      source_date_epoch: ${{ steps.prepare.outputs.source_date_epoch }}
+      build_date: ${{ steps.prepare.outputs.build_date }}
     permissions:
       contents: read
     steps:
@@ -177,6 +190,11 @@ jobs:
           fi
           VERSION="${TAG_NAME#v}"
           BASE_SHA="$(git rev-parse HEAD)"
+          # The About window's commit and build date, as the Makefile derives them. Computed here
+          # because the Linux builds run in containers, where git refuses the runner-owned checkout.
+          GIT_SHA="$(git rev-parse --short HEAD)"
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct HEAD)"
+          BUILD_DATE="$(date -u -d "@${SOURCE_DATE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ)"
           RESUMED=false
           if git rev-parse -q --verify "refs/tags/${TAG_NAME}" > /dev/null; then
             # A tag on the bump commit made from this very commit means an earlier run of this
@@ -206,6 +224,9 @@ jobs:
             echo "base_sha=${BASE_SHA}"
             echo "release_date=${RELEASE_DATE}"
             echo "version_hash=${HASH}"
+            echo "git_sha=${GIT_SHA}"
+            echo "source_date_epoch=${SOURCE_DATE_EPOCH}"
+            echo "build_date=${BUILD_DATE}"
           } >> "${GITHUB_OUTPUT}"
 
       - name: Keep the notes and changelog
@@ -224,16 +245,23 @@ jobs:
     needs: prepare
     if: ${{ needs.prepare.outputs.released == 'true' }}
     runs-on: macos-latest
+    timeout-minutes: 20
     # Checksums and provenance come from the checksums job, the release from publish.
     permissions:
       contents: read
+    # The signing key lives only in this environment's secrets. Its deployment-branch rule
+    # (master only) keeps it out of reach of workflows run from any other branch, tag or PR;
+    # see docs/distribution.md#signing.
+    environment: macos-signing
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
-      # Optional Developer ID signing + notarization; skipped when secrets are absent. Only
-      # these presence flags are job-wide (booleans, never secret values); each secret itself
-      # is set in the env of the one step that needs it.
-      SIGNING_CONFIGURED: ${{ secrets.MACOS_CERTIFICATE_P12 != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' && secrets.MACOS_SIGNING_IDENTITY != '' }}
-      NOTARIZE_CONFIGURED: ${{ secrets.MACOS_CERTIFICATE_P12 != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' && secrets.MACOS_SIGNING_IDENTITY != '' && secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_PASSWORD != '' }}
+      # Read by the Makefile and packaging/linux.sh instead of asking git.
+      CAINARY_GIT_SHA: ${{ needs.prepare.outputs.git_sha }}
+      CAINARY_BUILD_DATE: ${{ needs.prepare.outputs.build_date }}
+      SOURCE_DATE_EPOCH: ${{ needs.prepare.outputs.source_date_epoch }}
+      # A presence flag only (a boolean, never a secret value); each secret itself is set in the
+      # env of the one step that needs it.
+      SIGNING_CONFIGURED: ${{ secrets.MACOS_CERTIFICATE_P12 != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' }}
     steps:
       - name: Checkout the base commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -248,50 +276,81 @@ jobs:
           EXPECTED_HASH: ${{ needs.prepare.outputs.version_hash }}
         run: scripts/release-tree.sh "${VERSION}"
 
-      # Independent: the toolchain and the signing keychain share nothing.
-      - parallel:
-          - name: Install Rust (version from mise.toml)
-            run: |
-              set -eu
-              v="$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' mise.toml)"
-              test -n "${v}"
-              rustup toolchain install "${v}" --profile minimal \
-                --target aarch64-apple-darwin,x86_64-apple-darwin
-              rustup default "${v}"
+      # The committed pin is the signing identity. Once it exists every release must be signed
+      # with it: an ad-hoc or differently signed release would reset every user's grants.
+      - name: Resolve the signing identity
+        run: |
+          set -euo pipefail
+          PIN_FILE="packaging/signing/release.sha1"
+          if [ -f "${PIN_FILE}" ]; then
+            PIN="$(tr -d '[:space:]' < "${PIN_FILE}" | tr '[:lower:]' '[:upper:]')"
+            if ! printf '%s' "${PIN}" | grep -Eq '^[0-9A-F]{40}$'; then
+              echo "::error::${PIN_FILE} must hold one 40-digit SHA-1"
+              exit 1
+            fi
+            if [ "${SIGNING_CONFIGURED}" != "true" ]; then
+              echo "::error::${PIN_FILE} is committed but the macos-signing environment has no MACOS_CERTIFICATE_P12 / MACOS_CERTIFICATE_PASSWORD"
+              exit 1
+            fi
+            echo "CODESIGN_IDENTITY=${PIN}" >> "${GITHUB_ENV}"
+          elif [ "${SIGNING_CONFIGURED}" = "true" ]; then
+            echo "::error::signing secrets are set but ${PIN_FILE} is missing; commit the certificate's SHA-1"
+            exit 1
+          fi
 
-          - name: Import Developer ID certificate
-            if: ${{ env.SIGNING_CONFIGURED == 'true' }}
-            env:
-              MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
-              MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-            run: |
-              set -euo pipefail
-              umask 077
-              KEYCHAIN="${RUNNER_TEMP}/build.keychain-db"
-              KEYCHAIN_PASSWORD="$(uuidgen)"
-              echo "::add-mask::${KEYCHAIN_PASSWORD}"
-              echo "${MACOS_CERTIFICATE_P12}" | base64 --decode > "${RUNNER_TEMP}/certificate.p12"
-              security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
-              security set-keychain-settings -lut 21600 "${KEYCHAIN}"
-              security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
-              security import "${RUNNER_TEMP}/certificate.p12" -P "${MACOS_CERTIFICATE_PASSWORD}" \
-                -t agg -f pkcs12 -k "${KEYCHAIN}" -T /usr/bin/codesign
-              security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
-                -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
-              security list-keychains -d user -s "${KEYCHAIN}" login.keychain-db
-              rm -f "${RUNNER_TEMP}/certificate.p12"
+      - name: Install Rust (version from mise.toml)
+        run: |
+          set -eu
+          v="$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' mise.toml)"
+          test -n "${v}"
+          rustup toolchain install "${v}" --profile minimal \
+            --target aarch64-apple-darwin,x86_64-apple-darwin
+          rustup default "${v}"
 
       - name: Show toolchain
         run: |
           cargo --version
           swiftc --version
 
-      - name: Build universal app bundle
+      # Compiled before the key is imported, so no dependency build script or proc macro runs
+      # while it is in a keychain. RELEASE=1 builds both Apple targets and lipos them.
+      - name: Build universal binaries
+        run: make app core-universal RELEASE=1
+
+      - name: Import the signing certificate
+        if: ${{ env.SIGNING_CONFIGURED == 'true' }}
         env:
-          # Empty when signing is not configured; bundle.sh then signs ad hoc.
-          CODESIGN_IDENTITY: ${{ env.SIGNING_CONFIGURED == 'true' && secrets.MACOS_SIGNING_IDENTITY || '' }}
-        # RELEASE=1 builds both Apple targets and lipos them into universal binaries.
-        run: make bundle RELEASE=1
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          KEYCHAIN="${RUNNER_TEMP}/build.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "::add-mask::${KEYCHAIN_PASSWORD}"
+          echo "${MACOS_CERTIFICATE_P12}" | base64 --decode > "${RUNNER_TEMP}/certificate.p12"
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
+          security set-keychain-settings -lut 900 "${KEYCHAIN}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
+          # -x: the private key can't be exported again; -T: only codesign may use it.
+          security import "${RUNNER_TEMP}/certificate.p12" -P "${MACOS_CERTIFICATE_PASSWORD}" \
+            -x -t agg -f pkcs12 -k "${KEYCHAIN}" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+            -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}" > /dev/null
+          security list-keychains -d user -s "${KEYCHAIN}" login.keychain-db
+          rm -f "${RUNNER_TEMP}/certificate.p12"
+          # The secret must hold the pinned certificate, not just any identity.
+          if ! security find-identity -p codesigning "${KEYCHAIN}" | grep -q " ${CODESIGN_IDENTITY} "; then
+            echo "::error::MACOS_CERTIFICATE_P12 does not hold the identity pinned in packaging/signing/release.sha1"
+            exit 1
+          fi
+
+      # Assembles and signs only. CODESIGN_IDENTITY is the pin when signing (set above), unset
+      # otherwise: bundle.sh then signs ad hoc. With a pin it also verifies the requirement.
+      - name: Bundle and sign the app
+        env:
+          CORE: target/universal/cainary
+        run: packaging/bundle.sh
 
       - name: Remove signing keychain and certificate
         if: ${{ env.SIGNING_CONFIGURED == 'true' }}
@@ -304,43 +363,22 @@ jobs:
           set -euo pipefail
           mkdir -p release-assets
           NOTES="release-assets/NOTES.md"
-          if [ "${SIGNING_CONFIGURED}" != "true" ]; then
-            echo "::warning::Release is ad-hoc signed (signing secrets not configured)"
+          APP="/Applications/cAInary.app"
+          if [ -z "${CODESIGN_IDENTITY:-}" ]; then
+            echo "::warning::Release is ad-hoc signed (packaging/signing/release.sha1 is not committed)"
             {
-              echo "> **Note:** this build is unsigned (ad-hoc signed) and not notarized."
-              echo "> After installing, run \`xattr -dr com.apple.quarantine /Applications/cAInary.app\`."
-            } > "${NOTES}"
-          elif [ "${NOTARIZE_CONFIGURED}" != "true" ]; then
-            echo "::warning::Release is signed but not notarized"
-            {
-              echo "> **Note:** this build is signed with a Developer ID but not notarized."
-              echo "> macOS Gatekeeper may warn on first launch; you may need to approve it in System Settings."
+              echo "> **Note:** this build is ad-hoc signed and not notarized by Apple, and macOS"
+              echo "> asks for its permissions again after each update."
+              echo "> After installing, run \`xattr -dr com.apple.quarantine ${APP}\`."
             } > "${NOTES}"
           else
-            : > "${NOTES}"
+            {
+              echo "> **Note:** this build is signed with cAInary's own certificate, not notarized by Apple."
+              echo "> After installing, run \`xattr -dr com.apple.quarantine ${APP}\`."
+              echo "> To check it, \`codesign -dr - ${APP}\` must print"
+              echo "> \`certificate leaf = H\"$(printf %s "${CODESIGN_IDENTITY}" | tr A-F a-f)\"\`."
+            } > "${NOTES}"
           fi
-
-      - name: Notarize and staple
-        if: ${{ env.NOTARIZE_CONFIGURED == 'true' }}
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-        run: |
-          set -euo pipefail
-          NOTARY_ZIP="${RUNNER_TEMP}/notarize.zip"
-          ditto -c -k --norsrc --noextattr --keepParent dist/cAInary.app "${NOTARY_ZIP}"
-          xcrun notarytool submit "${NOTARY_ZIP}" \
-            --apple-id "${APPLE_ID}" \
-            --team-id "${APPLE_TEAM_ID}" \
-            --password "${APPLE_APP_PASSWORD}" \
-            --wait
-          xcrun stapler staple dist/cAInary.app
-          xcrun stapler validate dist/cAInary.app
-          spctl -a -vv -t exec dist/cAInary.app
-          # Re-zip so the published archive contains the stapled ticket.
-          rm -f "dist/cAInary-${VERSION}-macos.zip"
-          ditto -c -k --norsrc --noextattr --keepParent dist/cAInary.app "dist/cAInary-${VERSION}-macos.zip"
 
       - name: Assemble release assets
         run: |
@@ -384,6 +422,7 @@ jobs:
     needs: prepare
     if: ${{ needs.prepare.outputs.released == 'true' }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
     container: debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
     permissions:
       contents: read
@@ -398,6 +437,10 @@ jobs:
       CARGO_HOME: /usr/local/cargo
       RUSTUP_HOME: /usr/local/rustup
       VERSION: ${{ needs.prepare.outputs.version }}
+      # Read by the Makefile and packaging/linux.sh instead of asking git.
+      CAINARY_GIT_SHA: ${{ needs.prepare.outputs.git_sha }}
+      CAINARY_BUILD_DATE: ${{ needs.prepare.outputs.build_date }}
+      SOURCE_DATE_EPOCH: ${{ needs.prepare.outputs.source_date_epoch }}
     steps:
       - name: Install git
         run: apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates git make file
@@ -441,6 +484,7 @@ jobs:
     name: Build Linux ${{ matrix.formats }} (${{ matrix.arch }})
     needs: [prepare, build-linux-cli]
     runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 30
     container: ${{ matrix.image }}
     permissions:
       contents: read
@@ -460,6 +504,10 @@ jobs:
       CARGO_HOME: /usr/local/cargo
       RUSTUP_HOME: /usr/local/rustup
       VERSION: ${{ needs.prepare.outputs.version }}
+      # Read by the Makefile and packaging/linux.sh instead of asking git.
+      CAINARY_GIT_SHA: ${{ needs.prepare.outputs.git_sha }}
+      CAINARY_BUILD_DATE: ${{ needs.prepare.outputs.build_date }}
+      SOURCE_DATE_EPOCH: ${{ needs.prepare.outputs.source_date_epoch }}
     steps:
       - name: Install git
         run: |
@@ -488,16 +536,9 @@ jobs:
           - name: Install cargo-deb and cargo-generate-rpm
             run: packaging/ci/linux-ci.sh deps tools
 
-          # The About window's commit and build date are compiled in, derived as the Makefile
-          # does; packaging/linux.sh exports them too, but only gets the built binary.
+          # The About window's commit and build date are compiled in from the job env.
           - name: Build the tray app
-            run: |
-              set -eu
-              SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
-              CAINARY_GIT_SHA="$(git rev-parse --short HEAD)"
-              CAINARY_BUILD_DATE="$(date -u -d "@${SOURCE_DATE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ)"
-              export SOURCE_DATE_EPOCH CAINARY_GIT_SHA CAINARY_BUILD_DATE
-              cargo build --manifest-path linux/Cargo.toml --release --locked -p cainary-tray
+            run: cargo build --manifest-path linux/Cargo.toml --release --locked -p cainary-tray
 
       - name: Fetch the CLI
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -535,6 +576,7 @@ jobs:
     name: Verify Linux ${{ matrix.kind }} (${{ matrix.name }})
     needs: [prepare, build-linux]
     runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 15
     container: ${{ matrix.image }}
     permissions:
       contents: read
@@ -574,6 +616,7 @@ jobs:
     name: Checksums and provenance
     needs: [quality, quality-rust-linux, quality-linux, prepare, build, build-linux, verify-linux]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       id-token: write
@@ -644,6 +687,7 @@ jobs:
     name: Publish release
     needs: [quality, quality-rust-linux, quality-linux, prepare, build, build-linux, verify-linux, checksums]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     concurrency:
       group: release-publish-${{ github.ref }}
       cancel-in-progress: false
@@ -736,25 +780,37 @@ jobs:
           set -euo pipefail
           cat notes/prepared-notes/NOTES.md notes/notes-macos/NOTES.md > release-assets-notes.md
 
-      # Creates the release, or on a rerun updates it and replaces the assets.
+      # Creates the release, or on a rerun updates its notes and replaces the assets. gh, not a
+      # release action: the job already holds the token, and failglob fails on a missing file.
       - name: Create the release and upload the assets
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        with:
-          tag_name: ${{ env.TAG_NAME }}
-          name: ${{ env.TAG_NAME }}
-          body_path: release-assets-notes.md
-          fail_on_unmatched_files: true
-          files: |
-            release-assets/cainary-${{ env.VERSION }}-macos-universal.zip
-            release-assets/cainary-${{ env.VERSION }}-macos-universal.tar.gz
-            release-assets/cainary-${{ env.VERSION }}-linux-x86_64.tar.gz
-            release-assets/cainary-${{ env.VERSION }}-linux-aarch64.tar.gz
-            release-assets/cainary_${{ env.VERSION }}_amd64.deb
-            release-assets/cainary_${{ env.VERSION }}_arm64.deb
-            release-assets/cainary-${{ env.VERSION }}-1.x86_64.rpm
-            release-assets/cainary-${{ env.VERSION }}-1.aarch64.rpm
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          shopt -s failglob
+          assets=(
+            "release-assets/cainary-${VERSION}-macos-universal.zip"
+            "release-assets/cainary-${VERSION}-macos-universal.tar.gz"
+            "release-assets/cainary-${VERSION}-linux-x86_64.tar.gz"
+            "release-assets/cainary-${VERSION}-linux-aarch64.tar.gz"
+            "release-assets/cainary_${VERSION}_amd64.deb"
+            "release-assets/cainary_${VERSION}_arm64.deb"
+            "release-assets/cainary-${VERSION}-1.x86_64.rpm"
+            "release-assets/cainary-${VERSION}-1.aarch64.rpm"
             release-assets/*.sha256
             release-assets/SHA256SUMS
+          )
+          for asset in "${assets[@]}"; do
+            test -f "${asset}" || { echo "::error::missing asset ${asset}"; exit 1; }
+          done
+          if gh release view "${TAG_NAME}" > /dev/null 2>&1; then
+            gh release edit "${TAG_NAME}" --title "${TAG_NAME}" --notes-file release-assets-notes.md
+            gh release upload "${TAG_NAME}" "${assets[@]}" --clobber
+          else
+            gh release create "${TAG_NAME}" "${assets[@]}" --verify-tag \
+              --title "${TAG_NAME}" --notes-file release-assets-notes.md
+          fi
 
   # The AUR package cainary-bin, from the published tarballs. On unless the repository variable
   # AUR_PUBLISH is "false"; skipped with a warning until the AUR_SSH_KEY secret (in the aur
@@ -765,6 +821,7 @@ jobs:
     needs: [prepare, publish]
     if: ${{ needs.prepare.outputs.released == 'true' && vars.AUR_PUBLISH != 'false' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     container: archlinux:latest@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
     environment: aur
     permissions:
@@ -878,6 +935,7 @@ jobs:
     needs: [prepare, publish]
     if: ${{ needs.prepare.outputs.released == 'true' && vars.PAGES_PUBLISH != 'false' }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     concurrency:
       group: release-pages
       cancel-in-progress: false
@@ -982,6 +1040,7 @@ jobs:
     needs: [prepare, publish]
     if: ${{ needs.prepare.outputs.released == 'true' && vars.CRATES_IO_PUBLISH != 'false' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: crates-io
     permissions:
       contents: read
@@ -1061,6 +1120,7 @@ jobs:
     needs: [prepare, publish]
     if: ${{ needs.prepare.outputs.released == 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Signing never holds release-write access; publish-packslip uploads the bundle.
     permissions:
       contents: read
@@ -1126,6 +1186,7 @@ jobs:
     name: Publish packslip manifest
     needs: [prepare, packslip]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
@@ -1148,6 +1209,7 @@ jobs:
     name: Verify published packslip manifest
     needs: [prepare, publish-packslip]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     env:

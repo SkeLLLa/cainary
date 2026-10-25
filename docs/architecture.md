@@ -854,8 +854,9 @@ state.
   `bundle.sh` stamps it into the app's `Info.plist` and refuses a helper that reports a
   different version.
 - **Makefile targets:** `build`, `test`, `fmt`, `lint` (`cargo fmt --check`, clippy
-  `-D warnings`, `swift format lint --strict`, shellcheck), `check-rust`, `check` (lint + test +
-  ui-test), `core-universal` (release builds for both Apple targets, `lipo` →
+  `-D warnings`, `swift format lint --strict`, shellcheck), `lint-actions` (jactionlint, with
+  shellcheck on `run:` scripts; CI's `actions-lint` job, and a dependency of `mise run check`),
+  `check-rust`, `check` (lint + test + ui-test), `core-universal` (release builds for both Apple targets, `lipo` →
   `target/universal/cainary`), `app`, `bundle` (`RELEASE=1` for the universal release app),
   `ui-test`, `scan`, `publish-check` (`cargo publish --workspace --dry-run`), `clean` (also
   `linux/target`). The app and bundle steps are in macos.md §4. The Linux targets use the
@@ -880,6 +881,7 @@ state.
   builds apply it locally to the same commit for the universal macOS bundle and the Linux
   tarballs, .deb and .rpm, and one `checksums` job hashes and attests every asset. Only then does
   `publish` commit the bump and `CHANGELOG.md`, tag, and create the release with all assets. The crates `cainary-core` and `cainary` (the CLI
-  package; its directory is `crates/cainary-cli`) are then published to crates.io. Developer ID
-  signing and notarization are optional steps there; local bundles are signed ad hoc. The jobs
+  package; its directory is `crates/cainary-cli`) are then published to crates.io. The macOS
+  bundle is signed there with the project's pinned self-signed certificate (no notarization);
+  local bundles are signed ad hoc. The jobs
   are in [distribution.md](distribution.md).

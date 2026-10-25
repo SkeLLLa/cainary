@@ -46,7 +46,9 @@ The app includes the `cainary` CLI.
    xattr -dr com.apple.quarantine /Applications/cAInary.app
    ```
 
-   You need this because Apple doesn't notarize the releases yet.
+   You need this because the releases aren't notarized by Apple. They are signed with
+   cAInary's own certificate, so macOS keeps the app's permissions across updates
+   ([details](docs/distribution.md#signing)).
 4. Optional: to use the CLI from a shell, link it onto your `PATH`:
 
    ```sh
@@ -311,7 +313,9 @@ mise run app:open           # build and launch it
 mise run bundle-universal   # universal arm64 + x86_64 release app (= make bundle RELEASE=1)
 ```
 
-The bundle is signed ad hoc. To install it, see [macOS: from source](#macos-from-source).
+The bundle is signed ad hoc unless `CODESIGN_IDENTITY` names a certificate
+([docs/distribution.md#signing](docs/distribution.md#signing)). To install it, see
+[macOS: from source](#macos-from-source).
 
 ### Linux tray app
 

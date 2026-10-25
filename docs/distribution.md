@@ -38,8 +38,8 @@ After the first release, the signer pin (`ps1_…`) is printed in the `verify-pa
 Add it to the README install commands as `--pin <pin>`, and set it as the `PACKSLIP_PIN` repository
 variable.
 
-A release download through a browser is quarantined. Until releases are notarized, run
-`xattr -dr com.apple.quarantine /Applications/cAInary.app` once.
+A release download through a browser is quarantined, and releases are not notarized (see
+[Signing](#signing)), so run `xattr -dr com.apple.quarantine /Applications/cAInary.app` once.
 
 ## Release artifacts
 
@@ -73,8 +73,9 @@ records the macOS tar.gz as os `darwin` with no architecture (universal), the co
 `cAInary.app/Contents/Helpers/cainary`, and a resource `app` as `cAInary.app`. The two Linux
 tarballs list the commands `cainary` and `cainary-tray` under `bin/` in their top-level directory.
 
-Developer ID signing and notarization run only when the signing secrets are configured. An
-unsigned or un-notarized release emits a CI warning and adds a line to the release notes.
+The `build` job signs with the pinned certificate (see [Signing](#signing)). Until the pin is
+committed it signs ad hoc, emits a CI warning and says so in the release notes; the notes always
+carry the `xattr` step.
 
 ## Linux
 
@@ -218,6 +219,77 @@ One-time setup:
    environment `crates-io`.
 5. Turn on "trusted publishing only" for both crates, and revoke the API token from step 2.
 
+## Signing
+
+The macOS app is signed with cAInary's own self-signed code-signing certificate. There is no
+Apple Developer ID: the project is open source and non-profit, so releases are not notarized and
+a browser download still needs the `xattr` step above. What the certificate buys is a stable
+designated requirement:
+
+```text
+designated => identifier "ua.SkeLLLa.cAInary" and certificate leaf = H"<sha1>"
+```
+
+(the helper's is the same with `ua.SkeLLLa.cAInary.helper`). macOS keys notification
+permission, the launch-at-login item and any other TCC grant to this requirement, so they survive
+updates. An ad-hoc signature pins the cdhash instead, and every build looks like a new app.
+
+The certificate is cAInary's alone. quartz-drop and local dev builds each use their own, and the
+requirement pins the exact leaf, so a key leaked from one can't sign as another.
+
+**Pin.** `packaging/signing/release.sha1` holds the certificate's SHA-1. It is the `codesign`
+identity and the pin `bundle.sh` checks: with `CODESIGN_IDENTITY` set, the bundle fails unless
+both the signature and the designated requirement carry that leaf. Once the pin is committed, the
+release fails rather than ship ad hoc or with another key; changing the pin makes every user
+grant the permissions again, so do it only when the certificate expires (it is valid for 20
+years) or leaks.
+
+**Secrets.** The key lives only in the `macos-signing` GitHub environment, used by the `build`
+job of `release.yml`:
+
+| Secret                       | Value                                         |
+| ---------------------------- | --------------------------------------------- |
+| `MACOS_CERTIFICATE_P12`      | the .p12 (key and certificate), base64 on one line |
+| `MACOS_CERTIFICATE_PASSWORD` | its password                                  |
+
+Set up the environment in **Settings → Environments → New environment** `macos-signing`:
+
+- **Deployment branches and tags:** *Selected branches and tags*, with only `master`. A
+  workflow on any other branch or tag that names the environment is refused before it runs.
+  Repository secrets have no such rule, so don't keep these as repository secrets.
+- **Required reviewers** (optional): yourself, if every release should wait for approval.
+- No environment variables are needed; the identity comes from the committed pin.
+
+`ci.yml` never names the environment, and pull requests (including from forks) build ad hoc.
+The import step puts the .p12 into a temporary keychain that only `/usr/bin/codesign` may use,
+checks that it holds the pinned identity, and removes it after the build.
+
+**Making the certificate.** On the maintainer's Mac (not in CI), with the
+`macos-signing-cert` script from the maintainer's dotfiles, or the same steps by hand: an RSA
+3072 self-signed certificate named `ua.SkeLLLa.cAInary release`, organization
+`github.com/SkeLLLa/cainary`, with critical `keyUsage = digitalSignature` and
+`extendedKeyUsage = codeSigning`, exported with `/usr/bin/openssl` (LibreSSL; the PKCS#12 that
+OpenSSL 3 writes by default doesn't import).
+
+```sh
+macos-signing-cert -g SkeLLLa/cainary ua.SkeLLLa.cAInary
+cp ~/.local/share/macos-signing/ua.SkeLLLa.cAInary.release/ua.SkeLLLa.cAInary.release.sha1 \
+  packaging/signing/release.sha1
+```
+
+`-g` sets both secrets in the `macos-signing` environment through `gh`. Then back up the .p12
+and its password outside the machine and delete the directory.
+
+**Local builds.** Make a separate dev certificate (`ua.SkeLLLa.cAInary dev`) and import it into
+the login keychain, so dev builds keep their grants across rebuilds without ever matching the
+release requirement:
+
+```sh
+macos-signing-cert -d -i ua.SkeLLLa.cAInary
+CODESIGN_IDENTITY="$(cat ~/.local/share/macos-signing/ua.SkeLLLa.cAInary.dev/*.sha1)" make bundle
+codesign -d -r- dist/cAInary.app
+```
+
 ## Verifying a download
 
 ```sh
@@ -237,5 +309,4 @@ packslip verify packslip.sigstore.json --artifact cainary-<version>-macos-univer
 - Signed .rpm and .deb packages: the files carry no package signature. Their integrity comes
   from the checksums and attestation above, and, with `REPO_SIGNING_KEY` set, the signed
   repository metadata.
-- Developer ID signing and notarization: the workflow supports it once the secrets are set.
 - A mise registry listing, so `mise use cainary` works without the `packslip:` prefix.
