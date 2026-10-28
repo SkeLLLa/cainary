@@ -20,6 +20,10 @@ pub const SUPPORT_LINKS: [(&str, &str); 3] = [
     ),
 ];
 
+/// A referral link, shown only in Settings and About, never next to scan results.
+pub const PROTON_NOTE: &str = "Private email, VPN, passwords and storage. This is a referral link: signing up through it gives the author a credit, at no cost to you.";
+pub const PROTON_LINK: (&str, &str) = ("Proton", "https://pr.tn/ref/28M5WB8J");
+
 pub const LEGEND: [(&str, &str, &str); 6] = [
     (
         "high",
@@ -126,6 +130,10 @@ pub fn static_json(version: &str, commit: &str, built: &str) -> Value {
         "support": {
             "note": SUPPORT_NOTE,
             "links": SUPPORT_LINKS.iter().map(|(title, url)| json!({"title": title, "url": url})).collect::<Vec<_>>()
+        },
+        "privacy": {
+            "note": PROTON_NOTE,
+            "links": [{"title": PROTON_LINK.0, "url": PROTON_LINK.1}]
         },
         "about": {
             "description": ABOUT_DESCRIPTION,

@@ -18,4 +18,10 @@ enum SupportLinks {
             title: "Prytula Foundation",
             url: URL(string: "https://prytulafoundation.org/en/donation")!),
     ]
+
+    /// A referral link, shown only in Settings and About, never next to scan results.
+    static let proton = Link(title: "Proton", url: URL(string: "https://pr.tn/ref/28M5WB8J")!)
+
+    static let protonNote =
+        "Private email, VPN, passwords and storage. This is a referral link: signing up through it gives the author a credit, at no cost to you."
 }

@@ -178,33 +178,46 @@ fn app_entry(
     )
 }
 
-/// Device findings grouped by `Finding::agent`; those with none share the "This device" entry,
-/// which exists when it has findings or device notes. Ordered by level descending, then name.
+/// Device findings grouped by the id of `Finding::agent`; those with none share the "This
+/// device" entry, which exists when it has findings or device notes. Names that slug alike
+/// ("Jamf", "jamf") are one entry under the least name, and a monitor whose slug is an app's
+/// (`com.openai.chat` → "Openai" → `openai`) gets a `-monitor` suffix, so entry ids stay unique
+/// for `diff` and the app. Ordered by level descending, then name.
 fn monitor_entries(findings: &[Finding], notes: &[(Tool, String)]) -> Vec<Entry> {
-    let mut groups: BTreeMap<&str, Vec<Finding>> = BTreeMap::new();
+    let id_of = |name: &str| {
+        if name == DEVICE_NAME {
+            return App::Device.slug().to_string();
+        }
+        let slug = slugify(name);
+        if App::ALL.iter().any(|a| a.slug() == slug) {
+            format!("{slug}-monitor")
+        } else {
+            slug
+        }
+    };
+    let mut groups: BTreeMap<String, (&str, Vec<Finding>)> = BTreeMap::new();
     for f in findings.iter().filter(|f| f.tool == Tool::Device) {
         let name = f.agent.as_deref().unwrap_or(DEVICE_NAME);
-        groups.entry(name).or_default().push(f.clone());
+        let group = groups.entry(id_of(name)).or_insert((name, Vec::new()));
+        group.0 = group.0.min(name);
+        group.1.push(f.clone());
     }
     // Device notes (root certificates, TCC) keep the "This device" entry alive without findings,
     // but only next to other monitors, so a clean machine has no device row.
     if !groups.is_empty() && notes.iter().any(|(t, _)| *t == Tool::Device) {
-        groups.entry(DEVICE_NAME).or_default();
+        groups
+            .entry(id_of(DEVICE_NAME))
+            .or_insert((DEVICE_NAME, Vec::new()));
     }
     let mut entries: Vec<Entry> = groups
         .into_iter()
-        .map(|(name, mine)| {
+        .map(|(id, (name, mine))| {
             let device = name == DEVICE_NAME;
             let notes = notes
                 .iter()
                 .filter(|(t, _)| device && *t == Tool::Device)
                 .map(|(_, n)| n.clone())
                 .collect();
-            let id = if device {
-                "device".to_string()
-            } else {
-                slugify(name)
-            };
             entry(id, name, EntryKind::Monitor, true, mine, Vec::new(), notes)
         })
         .collect();
@@ -527,6 +540,47 @@ mod tests {
         assert!(a.others.iter().all(|e| e.id != "device"));
         // Monitors take part in the overall status; apps win ties.
         assert_eq!(a.status.level, Level::Medium);
+    }
+
+    #[test]
+    fn names_that_slug_alike_are_one_monitor() {
+        let a = run(
+            vec![
+                agent("jamf", &[Signal::DeviceAccess]),
+                agent("Jamf", &[Signal::Traffic]),
+            ],
+            &[],
+            AlertMode::Org,
+        );
+        assert_eq!(a.others.len(), 1);
+        let jamf = entry_of(&a, "jamf");
+        assert_eq!(jamf.name, "Jamf");
+        assert_eq!(jamf.findings.len(), 2);
+    }
+
+    #[test]
+    fn monitor_ids_never_clash_with_app_ids() {
+        let a = run(
+            vec![
+                agent("Openai", &[Signal::DeviceAccess]),
+                agent("Cursor", &[Signal::DeviceAccess]),
+                agent("Device", &[Signal::DeviceAccess]),
+                finding(Tool::Device, Origin::Mdm, &[Signal::Usage]),
+            ],
+            &[],
+            AlertMode::Org,
+        );
+        let ids: Vec<&str> = a
+            .apps
+            .iter()
+            .chain(&a.others)
+            .map(|e| e.id.as_str())
+            .collect();
+        let unique: BTreeSet<&str> = ids.iter().copied().collect();
+        assert_eq!(ids.len(), unique.len(), "{ids:?}");
+        assert_eq!(entry_of(&a, "openai-monitor").name, "Openai");
+        assert_eq!(entry_of(&a, "device-monitor").name, "Device");
+        assert_eq!(entry_of(&a, "device").name, "This device");
     }
 
     #[test]

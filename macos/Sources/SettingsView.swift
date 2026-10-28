@@ -96,6 +96,11 @@ struct SettingsView: View {
                     }
                 }
             }
+            Section("Privacy tools") {
+                Text(SupportLinks.protonNote)
+                    .foregroundStyle(.secondary)
+                Link(SupportLinks.proton.title, destination: SupportLinks.proton.url)
+            }
             Section {
                 LabeledContent("Version", value: About.versionLine)
                 if let buildDate = About.buildDate {

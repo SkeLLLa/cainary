@@ -106,6 +106,10 @@ enum About {
             if index > 0 { append(" · ") }
             link(support.title, support.url)
         }
+
+        append("\n\nPrivacy tools\n", heading)
+        append(SupportLinks.protonNote + "\n")
+        link(SupportLinks.proton.title, SupportLinks.proton.url)
         return text
     }
 }

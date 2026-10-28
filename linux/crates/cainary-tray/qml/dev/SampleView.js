@@ -2676,6 +2676,15 @@ var staticData = {
       }
     ]
   },
+  "privacy": {
+    "note": "Private email, VPN, passwords and storage. This is a referral link: signing up through it gives the author a credit, at no cost to you.",
+    "links": [
+      {
+        "title": "Proton",
+        "url": "https://pr.tn/ref/28M5WB8J"
+      }
+    ]
+  },
   "about": {
     "description": "Shows what your AI tools and the device monitoring around them track and send, and where it goes. It only reads files and never uses the network.",
     "license": "cAInary is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License, version 3 or (at your option) any later version. It comes with ABSOLUTELY NO WARRANTY.",

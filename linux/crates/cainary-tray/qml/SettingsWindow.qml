@@ -187,6 +187,14 @@ ApplicationWindow {
             }
 
             Section {
+                title: qsTr("Privacy tools")
+                SupportLinks {
+                    anchors.fill: parent
+                    support: win.st ? win.st.privacy : null
+                }
+            }
+
+            Section {
                 title: qsTr("Version")
                 Layout.bottomMargin: 20
                 ColumnLayout {

@@ -127,6 +127,15 @@ ApplicationWindow {
                 support: win.st ? win.st.support : null
                 Layout.fillWidth: true
             }
+            Label {
+                text: qsTr("Privacy tools")
+                font.weight: Font.DemiBold
+                Layout.topMargin: 6
+            }
+            SupportLinks {
+                support: win.st ? win.st.privacy : null
+                Layout.fillWidth: true
+            }
 
             Button {
                 text: qsTr("Copy diagnostics")

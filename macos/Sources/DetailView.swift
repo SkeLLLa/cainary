@@ -102,18 +102,21 @@ struct DetailView: View {
         .tag(DetailSelection.entry(entry.id))
     }
 
-    @ViewBuilder
+    /// Every text in the pane can be selected and copied.
     private func pane(_ report: Report) -> some View {
-        switch current(report) {
-        case .entry(let id):
-            if let entry = report.entries.first(where: { $0.id == id }) {
-                EntryDetailView(entry: entry, expanded: $navigation.expanded)
+        Group {
+            switch current(report) {
+            case .entry(let id):
+                if let entry = report.entries.first(where: { $0.id == id }) {
+                    EntryDetailView(entry: entry, expanded: $navigation.expanded)
+                }
+            case .changes:
+                ChangesPaneView(report: report)
+            default:
+                CheckedLocationsView(sources: report.sources)
             }
-        case .changes:
-            ChangesPaneView(report: report)
-        default:
-            CheckedLocationsView(sources: report.sources)
         }
+        .textSelection(.enabled)
     }
 }
 
@@ -142,6 +145,7 @@ struct DetailFailedView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+                .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             Button("Retry", action: onRetry)
         }
@@ -321,12 +325,10 @@ private struct FindingRow: View {
             Text(finding.config.path)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             if !finding.config.evidence.isEmpty {
                 Text(finding.config.evidence.joined(separator: "\n"))
                     .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(6)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -444,7 +446,6 @@ struct CheckedLocationsView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(record.source.path)
                     .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(status(record))
                     .font(.caption2)

@@ -5,7 +5,7 @@ import QtQuick.Window
 import ua.SkeLLLa.cAInary
 import "style.js" as Style
 
-// "Support Ukraine": a note and three links.
+// A note and its links: "Support Ukraine", and the "Privacy tools" referral.
 ColumnLayout {
     id: root
 

@@ -104,6 +104,9 @@ fn linux_strings_track_the_macos_sources() {
         "https://www.sternenkofund.org/en/donate",
         "Prytula Foundation",
         "https://prytulafoundation.org/en/donation",
+        "Private email, VPN, passwords and storage. This is a referral link: signing up through it gives the author a credit, at no cost to you.",
+        "\"Proton\"",
+        "https://pr.tn/ref/28M5WB8J",
     ];
     for value in support_strings {
         assert!(

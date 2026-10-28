@@ -55,7 +55,23 @@ const VENDORS: &[(&str, &str)] = &[
     ("com.kandji", "Kandji"),
 ];
 
-/// The monitor entry a bundle id or binary path belongs to: the vendor table, else the
+/// The same vendors by path component prefix (lower case), so a profile granting both the
+/// bundle id and the binary path (`/usr/local/jamf/bin/jamf`) gives one monitor entry.
+const VENDOR_PATHS: &[(&str, &str)] = &[
+    ("crowdstrike", "CrowdStrike Falcon"),
+    ("falcon.app", "CrowdStrike Falcon"),
+    ("globalprotect", "Palo Alto GlobalProtect"),
+    ("paloalto", "Palo Alto GlobalProtect"),
+    ("zscaler", "Zscaler"),
+    ("netskope", "Netskope"),
+    ("sentinelone", "SentinelOne"),
+    ("sentinel-agent", "SentinelOne"),
+    ("microsoft defender", "Microsoft Defender"),
+    ("jamf", "Jamf"),
+    ("kandji", "Kandji"),
+];
+
+/// The monitor entry a bundle id or binary path belongs to: the vendor tables, else the
 /// containing `.app` or `Application Support` directory name for a path, else the binary's
 /// parent directory name (`/tmp/AcmeCollector/collector` → "AcmeCollector"), else the vendor
 /// component of the bundle id (`com.acme.agent` → "Acme").
@@ -66,6 +82,15 @@ fn agent_name(id: &str) -> String {
     }
     if id.contains('/') {
         let parts: Vec<&str> = id.split('/').filter(|p| !p.is_empty()).collect();
+        let vendor = lower.split('/').find_map(|p| {
+            VENDOR_PATHS
+                .iter()
+                .find(|(prefix, _)| p.starts_with(prefix))
+                .map(|(_, name)| *name)
+        });
+        if let Some(name) = vendor {
+            return name.to_string();
+        }
         let app = parts.iter().find_map(|p| p.strip_suffix(".app"));
         let support = parts
             .iter()
@@ -908,7 +933,30 @@ mod tests {
             ("com.sentinelone.sentineld", "SentinelOne"),
             ("com.microsoft.wdav.epsext", "Microsoft Defender"),
             ("com.jamfsoftware.jamf.daemon", "Jamf"),
+            ("com.jamf.management.Jamf", "Jamf"),
+            ("/usr/local/jamf/bin/jamf", "Jamf"),
+            (
+                "/Library/Application Support/JAMF/Jamf.app/Contents/MacOS/Jamf",
+                "Jamf",
+            ),
             ("com.kandji.profile", "Kandji"),
+            (
+                "/Applications/Falcon.app/Contents/MacOS/Falcon",
+                "CrowdStrike Falcon",
+            ),
+            ("/Library/CS/../CrowdStrike/falcond", "CrowdStrike Falcon"),
+            ("/Applications/GlobalProtect.app", "Palo Alto GlobalProtect"),
+            ("/Applications/Zscaler/Zscaler.app", "Zscaler"),
+            (
+                "/Library/Application Support/Netskope/STAgent/Netskope Client.app",
+                "Netskope",
+            ),
+            (
+                "/Library/Sentinel/sentinel-agent.bundle/Contents/MacOS/sentineld",
+                "SentinelOne",
+            ),
+            ("/Applications/Microsoft Defender.app", "Microsoft Defender"),
+            ("/Library/Kandji/Kandji Agent.app", "Kandji"),
             ("COM.CrowdStrike.Falcon", "CrowdStrike Falcon"),
         ] {
             assert_eq!(agent_name(id), want, "{id}");
