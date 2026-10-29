@@ -74,7 +74,7 @@ jobs:
       # mise 2026.10.14, pinned by checksum. mise.lock pins the tools (the action adds --locked).
       # Release workflows do not use a cache; mise exports the ci environment for later steps.
       - name: Install Rust and shellcheck (versions from mise.toml)
-        uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         env:
           MISE_ENV: ci
         with:
@@ -107,7 +107,7 @@ jobs:
       # mise 2026.10.14, pinned by checksum. mise.lock pins the tools (the action adds --locked).
       # Release workflows do not use a cache; mise exports the ci environment for later steps.
       - name: Install Rust (version from mise.toml)
-        uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         env:
           MISE_ENV: ci
         with:
@@ -1273,7 +1273,7 @@ jobs:
 
       - name: Sign packslip manifest
         id: packslip
-        uses: jdx/packslip@7d397618045bd98b76cd5cb8177767b2f52789b8 # v1.10.1
+        uses: jdx/packslip@ddcddd9c8c33977d2d08d5db91caec579da59aab # v1.11.0
         with:
           artifacts: release-assets/*.tar.gz
           manifest: ${{ runner.temp }}/packslip.toml
