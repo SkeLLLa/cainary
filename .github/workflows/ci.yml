@@ -77,7 +77,7 @@ jobs:
       # mise 2026.10.14, pinned by checksum. mise.lock pins the tools (the action adds --locked).
       # No mise cache: the tools are small and rustup's toolchain is outside it.
       - name: Install jactionlint, shellcheck (versions from mise.toml)
-        uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
           version: 2026.10.14
           sha256: 50be7185bcf75929f01cc5630276bcb43ca367f7c5b176e2580903d28c611dc4
@@ -105,7 +105,7 @@ jobs:
       # mise 2026.10.14, pinned by checksum. mise.lock pins the tools (the action adds --locked).
       # No mise cache: the tools are small and rustup's toolchain is outside it.
       - name: Install rust, shellcheck (versions from mise.toml)
-        uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
           version: 2026.10.14
           sha256: 005b32b9c22ca9cb63ff9d35c74b3abe69c433e9ca655fea288ba3dcbe7e4918
@@ -117,7 +117,7 @@ jobs:
           swiftc --version
           swift format --version
       - name: Cache cargo
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
       - name: make check (fmt, clippy, swift format, shellcheck, cargo test, ui-test)
@@ -146,7 +146,7 @@ jobs:
       # mise 2026.10.14, pinned by checksum. mise.lock pins the tools (the action adds --locked).
       # No mise cache: the tools are small and rustup's toolchain is outside it.
       - name: Install rust (versions from mise.toml)
-        uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
           version: 2026.10.14
           sha256: 50be7185bcf75929f01cc5630276bcb43ca367f7c5b176e2580903d28c611dc4
@@ -155,7 +155,7 @@ jobs:
       - name: Show toolchain
         run: cargo --version
       - name: Cache cargo
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
       - name: make check-rust (fmt, clippy, cargo test)
@@ -178,7 +178,7 @@ jobs:
       # mise 2026.10.14, pinned by checksum. mise.lock pins the tools (the action adds --locked).
       # No mise cache: the tools are small and rustup's toolchain is outside it.
       - name: Install rust (versions from mise.toml)
-        uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
           version: 2026.10.14
           sha256: 005b32b9c22ca9cb63ff9d35c74b3abe69c433e9ca655fea288ba3dcbe7e4918
@@ -252,7 +252,7 @@ jobs:
         run: packaging/ci/linux-ci.sh deps build
       # CARGO_HOME (/usr/local/cargo) is read from the job env. rustc is on PATH from linux-ci.sh.
       - name: Cache cargo
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: linux -> target
           shared-key: linux-app-${{ matrix.name }}
@@ -304,7 +304,7 @@ jobs:
       - name: Install Rust, build dependencies, cargo-deb and cargo-generate-rpm
         run: packaging/ci/linux-ci.sh deps package
       - name: Cache cargo
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: |
             . -> target
