@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2](https://github.com/SkeLLLa/cainary/compare/v0.5.1...v0.5.2) - 2026-10-30
+
+### Other
+
+- *(deps)* bump the all-actions group with 3 updates
+
 ## [0.5.1](https://github.com/SkeLLLa/cainary/compare/v0.5.0...v0.5.1) - 2026-10-28
 
 ### Fixed
