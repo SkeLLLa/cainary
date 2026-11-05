@@ -74,7 +74,7 @@ jobs:
       # mise 2026.10.14, pinned by checksum. mise.lock pins the tools (the action adds --locked).
       # Release workflows do not use a cache; mise exports the ci environment for later steps.
       - name: Install Rust and shellcheck (versions from mise.toml)
-        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         env:
           MISE_ENV: ci
         with:
@@ -107,7 +107,7 @@ jobs:
       # mise 2026.10.14, pinned by checksum. mise.lock pins the tools (the action adds --locked).
       # Release workflows do not use a cache; mise exports the ci environment for later steps.
       - name: Install Rust (version from mise.toml)
-        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         env:
           MISE_ENV: ci
         with:
@@ -182,7 +182,7 @@ jobs:
           persist-credentials: false
 
       - name: Install git-cliff
-        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: git-cliff@2.14.2
 
@@ -1273,7 +1273,7 @@ jobs:
 
       - name: Sign packslip manifest
         id: packslip
-        uses: jdx/packslip@ddcddd9c8c33977d2d08d5db91caec579da59aab # v1.11.0
+        uses: jdx/packslip@b934a22ba187f1d3928441170b9413c5119360bf # v1.11.2
         with:
           artifacts: release-assets/*.tar.gz
           manifest: ${{ runner.temp }}/packslip.toml
@@ -1327,7 +1327,7 @@ jobs:
       PACKSLIP_PIN: ${{ vars.PACKSLIP_PIN }}
     steps:
       - name: Install packslip
-        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: packslip@1.6.0
 
