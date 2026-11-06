@@ -37,6 +37,10 @@ enum PrefKey {
     /// JSON `[{name, kind, pattern, caseSensitive}]`.
     static let otelCollectorPatterns = "otelCollectorPatterns"
     static let otelCollectorNotify = "otelCollectorNotify"
+    // The HTTPS takeover (design §17.4).
+    static let otelCollectorTls = "otelCollectorTls"
+    static let otelCollectorTlsHosts = "otelCollectorTlsHosts"
+    static let otelCollectorTlsPort = "otelCollectorTlsPort"
 }
 
 enum Prefs {

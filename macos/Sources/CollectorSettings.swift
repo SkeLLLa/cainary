@@ -76,6 +76,41 @@ struct CollectorSettings: Equatable, Sendable {
     var presets = CollectorPreset.defaultOnNames
     var patterns: [CollectorPattern] = []
     var notify = true
+    /// The HTTPS takeover (design §16, §17.4): `--tls`, with the host names to answer for.
+    var takeover = false
+    var takeoverHosts: [String] = []
+    var takeoverPort = defaultTakeoverPort
+
+    static let defaultTakeoverPort = 8443
+    static let takeoverPortRange = 1...65535
+    static let maxHosts = 32
+
+    /// A DNS name the collector accepts for `--tls-host`: two or more labels, no wildcard, no IP.
+    static func validHost(_ host: String) -> Bool {
+        let h = host.lowercased()
+        guard h.utf8.count <= 253 else { return false }
+        if h.split(separator: ".").last?.allSatisfy(\.isNumber) == true { return false }
+        let label = "[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
+        let pattern = "^" + label + "(\\." + label + ")+$"
+        return h.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    /// The names that will be passed: valid ones, lowercased, once each, at most 32.
+    var validHosts: [String] {
+        var seen: Set<String> = []
+        var out: [String] = []
+        for raw in takeoverHosts {
+            let h = raw.trimmingCharacters(in: .whitespaces).lowercased()
+            if Self.validHost(h), seen.insert(h).inserted, out.count < Self.maxHosts { out.append(h) }
+        }
+        return out
+    }
+
+    /// Why the takeover can't start, or nil.
+    var takeoverProblem: String? {
+        takeover && validHosts.isEmpty
+            ? "Add at least one host name for the HTTPS takeover." : nil
+    }
 
     /// Where "Also save to" starts: `~/Library/Logs/cAInary/otel-debug.jsonl`.
     static var defaultLogPath: String {
@@ -92,7 +127,11 @@ struct CollectorSettings: Equatable, Sendable {
 
     /// argv: only things that aren't secret.
     var arguments: [String] {
-        var args = ["--json", "--config-stdin", "--port", String(port)]
+        var args = ["--json", "--config-stdin", "--port", String(takeover ? takeoverPort : port)]
+        if takeover {
+            args.append("--tls")
+            for host in validHosts { args += ["--tls-host", host] }
+        }
         if let path = effectiveLogPath { args += ["--log-file", path] }
         return args
     }
@@ -179,6 +218,13 @@ extension KeyValueStore {
             s.notify =
                 object(forKey: PrefKey.otelCollectorNotify) == nil
                 ? true : bool(forKey: PrefKey.otelCollectorNotify)
+            s.takeover = bool(forKey: PrefKey.otelCollectorTls)
+            s.takeoverHosts = stringArray(forKey: PrefKey.otelCollectorTlsHosts) ?? []
+            let tlsPort = integer(forKey: PrefKey.otelCollectorTlsPort)
+            if tlsPort != 0 {
+                let range = CollectorSettings.takeoverPortRange
+                s.takeoverPort = min(max(tlsPort, range.lowerBound), range.upperBound)
+            }
             return s
         }
         set {
@@ -189,6 +235,9 @@ extension KeyValueStore {
             set(newValue.presets, forKey: PrefKey.otelCollectorPresets)
             set(try? JSONEncoder().encode(newValue.patterns), forKey: PrefKey.otelCollectorPatterns)
             set(newValue.notify, forKey: PrefKey.otelCollectorNotify)
+            set(newValue.takeover, forKey: PrefKey.otelCollectorTls)
+            set(newValue.takeoverHosts, forKey: PrefKey.otelCollectorTlsHosts)
+            set(newValue.takeoverPort, forKey: PrefKey.otelCollectorTlsPort)
         }
     }
 }

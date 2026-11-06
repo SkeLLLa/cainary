@@ -41,7 +41,10 @@ struct CollectorPaneView: View {
             if let lastError {
                 Text("Last error: \(lastError)").font(.caption).foregroundStyle(.secondary)
             }
-            if case .listening(let hello) = state, let setup = hello.setup { setupBlocks(setup) }
+            if case .listening(let hello) = state {
+                if hello.mode == "tls-receiver" { takeoverInfo(hello) }
+                if let setup = hello.setup { setupBlocks(setup) }
+            }
             if !alerts.isEmpty { alertList }
             if !batches.isEmpty { batchList }
         }
@@ -85,6 +88,29 @@ struct CollectorPaneView: View {
     }
 
     // MARK: Setup
+
+    /// The HTTPS takeover: which names it answers for, its CA, and the steps the collector gave.
+    private func takeoverInfo(_ hello: CollectorHello) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("HTTPS takeover").font(.headline)
+            Text(
+                "Answering for \((hello.tls?.hosts ?? []).joined(separator: ", ")). Nothing is forwarded: your organization's collector receives nothing for these names while this runs."
+            )
+            .font(.callout)
+            .foregroundStyle(.orange)
+            .fixedSize(horizontal: false, vertical: true)
+            if let ca = hello.tls?.ca, let path = ca.path {
+                Text("CA certificate: \(path)" + (ca.sha256.map { " (SHA-256 \($0))" } ?? ""))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let lines = hello.setup?.takeover, !lines.isEmpty {
+                CopyBlock(text: lines.joined(separator: "\n"))
+            }
+        }
+    }
 
     private func setupBlocks(_ setup: CollectorHello.Setup) -> some View {
         VStack(alignment: .leading, spacing: 8) {

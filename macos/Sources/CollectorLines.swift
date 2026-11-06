@@ -15,8 +15,21 @@ struct CollectorHello: Codable, Equatable, Sendable {
         var claudeCode: [String]?
         var codex: [String]?
         var notes: [String]?
+        /// The takeover steps, in TLS mode.
+        var takeover: [String]?
+    }
+    struct TLS: Codable, Equatable, Sendable {
+        struct CA: Codable, Equatable, Sendable {
+            var path: String?
+            var sha256: String?
+        }
+        var hosts: [String]?
+        var ca: CA?
     }
     var generator: String?
+    /// `receiver`, or `tls-receiver` in takeover mode.
+    var mode: String?
+    var tls: TLS?
     var listen: [String]?
     var endpoint: String?
     var showValues: Bool?
@@ -147,6 +160,13 @@ extension CollectorBatch {
 }
 
 extension String {
+    /// Like `plainText`, but keeps line breaks and tabs: for a multi-line note such as stderr.
+    var plainMultilineText: String {
+        split(separator: "\n", omittingEmptySubsequences: false)
+            .map { String($0).replacingOccurrences(of: "\t", with: "    ").plainText }
+            .joined(separator: "\n")
+    }
+
     /// Text safe to show or notify: control, bidi and escape characters become `\u{…}`. The child
     /// already escapes what it prints (§14.8); this covers stderr and anything it missed.
     var plainText: String {

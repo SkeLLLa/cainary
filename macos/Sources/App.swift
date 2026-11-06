@@ -8,6 +8,7 @@ struct CainaryApp: App {
     @StateObject private var store: ReportStore
     @StateObject private var navigation = Navigation()
     @StateObject private var collector: CollectorStore
+    @StateObject private var trust = TrustStore()
 
     init() {
         let client = CoreClient()
@@ -32,7 +33,11 @@ struct CainaryApp: App {
         .commandsRemoved()
 
         Settings {
-            SettingsView(onRefreshChanged: { store.restartTimer() }, collector: collector)
+            SettingsView(
+                onRefreshChanged: { store.restartTimer() }, collector: collector, trust: trust,
+                hostSuggestions: store.state.lastGood.map {
+                    TelemetryHosts.suggestions(in: $0.report)
+                } ?? [])
         }
     }
 }

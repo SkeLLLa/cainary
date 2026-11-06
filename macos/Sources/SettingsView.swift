@@ -7,6 +7,9 @@ import UserNotifications
 struct SettingsView: View {
     var onRefreshChanged: () -> Void
     @ObservedObject var collector: CollectorStore
+    @ObservedObject var trust: TrustStore
+    /// Endpoint host names the last scan found, offered for the takeover.
+    var hostSuggestions: [String]
 
     @ObservedObject private var loginItem = LoginItem.shared
     @AppStorage(PrefKey.notifyChanges, store: Prefs.defaults) private var notify = true
@@ -15,9 +18,14 @@ struct SettingsView: View {
     @AppStorage(PrefKey.refreshMinutes, store: Prefs.defaults) private var storedRefresh = 0
     @StateObject private var authorization = NotificationAuthorization()
 
-    init(onRefreshChanged: @escaping () -> Void = {}, collector: CollectorStore) {
+    init(
+        onRefreshChanged: @escaping () -> Void = {}, collector: CollectorStore, trust: TrustStore,
+        hostSuggestions: [String] = []
+    ) {
         self.onRefreshChanged = onRefreshChanged
         _collector = ObservedObject(wrappedValue: collector)
+        _trust = ObservedObject(wrappedValue: trust)
+        self.hostSuggestions = hostSuggestions
     }
 
     private static let intervals = [5, 10, 30, 60, 1440]
@@ -94,6 +102,8 @@ struct SettingsView: View {
                 }
             }
             CollectorSettingsSection(collector: collector)
+            TakeoverSettingsSection(
+                collector: collector, trust: trust, suggestions: hostSuggestions)
             Section("Support Ukraine") {
                 Text(SupportLinks.note)
                     .foregroundStyle(.secondary)
@@ -324,5 +334,208 @@ private struct CollectorSettingsSection: View {
             new.logToFile = true
             collector.apply(new)
         }
+    }
+}
+
+/// The "HTTPS takeover" section (design §16, §17.4). The takeover makes the collector answer for
+/// the host names you list, so you must also point those names at this Mac yourself; the
+/// collector prints the steps once it runs. The trust buttons run one-shot collector commands.
+private struct TakeoverSettingsSection: View {
+    @ObservedObject var collector: CollectorStore
+    @ObservedObject var trust: TrustStore
+    let suggestions: [String]
+
+    private func update(_ edit: (inout CollectorSettings) -> Void) {
+        var new = collector.settings
+        edit(&new)
+        collector.apply(new)
+    }
+
+    private var settings: CollectorSettings { collector.settings }
+
+    var body: some View {
+        Section("HTTPS takeover") {
+            Toggle(
+                "Use HTTPS takeover",
+                isOn: Binding(get: { settings.takeover }, set: { on in update { $0.takeover = on } }))
+            Text(
+                "For an agent whose managed settings pin its telemetry to an HTTPS host. The collector answers for the names below and forwards nothing: while it is on, your organization's collector receives nothing from this Mac for those names."
+            )
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            hostRows
+            TextField(
+                "Port",
+                value: Binding(
+                    get: { settings.takeoverPort },
+                    set: { value in
+                        update {
+                            let r = CollectorSettings.takeoverPortRange
+                            $0.takeoverPort = min(max(value, r.lowerBound), r.upperBound)
+                        }
+                    }),
+                format: .number.grouping(.never))
+            if let problem = settings.takeoverProblem {
+                Text(problem).font(.caption).foregroundStyle(.orange)
+            }
+            if collector.failureNote != nil, case .failed = collector.state {
+                failureBox
+            }
+            trustButtons
+            if let line = trust.claudeCodeLine {
+                Text(line).font(.caption).foregroundStyle(.secondary)
+            }
+            if let message = trust.message {
+                Text(message)
+                    .font(.callout)
+                    .foregroundStyle(trust.failed ? Color.orange : .secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let command = trust.codexCommand {
+                CopyBlock(text: command)
+            }
+            if let command = trust.noWriteCommand {
+                Text("Without changing any file, start Claude Code like this:").font(.caption)
+                CopyBlock(text: command)
+            }
+        }
+        .task { await trust.refresh() }
+        .sheet(
+            isPresented: Binding(
+                get: { trust.pending != nil }, set: { if !$0 { trust.cancel() } })
+        ) {
+            if let report = trust.pending {
+                TrustConfirmView(
+                    report: report, onConfirm: { Task { await trust.confirm() } },
+                    onCancel: { trust.cancel() })
+            }
+        }
+    }
+
+    private var hostRows: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Host names").font(.headline)
+            ForEach(settings.takeoverHosts.indices, id: \.self) { i in
+                HStack {
+                    TextField(
+                        "host.example.com",
+                        text: Binding(
+                            get: { i < settings.takeoverHosts.count ? settings.takeoverHosts[i] : "" },
+                            set: { value in
+                                update { if i < $0.takeoverHosts.count { $0.takeoverHosts[i] = value } }
+                            }))
+                    Button("Remove") {
+                        update { if i < $0.takeoverHosts.count { $0.takeoverHosts.remove(at: i) } }
+                    }
+                }
+                let host = settings.takeoverHosts[i].trimmingCharacters(in: .whitespaces)
+                if !host.isEmpty && !CollectorSettings.validHost(host) {
+                    Text("Not a host name the collector accepts (no wildcard, no IP address).")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+            }
+            HStack {
+                Button("Add host name") { update { $0.takeoverHosts.append("") } }
+                    .disabled(settings.takeoverHosts.count >= CollectorSettings.maxHosts)
+                Spacer()
+            }
+            let open = suggestions.filter { !settings.validHosts.contains($0) }
+            if !open.isEmpty {
+                Text("Found in your telemetry settings:").font(.caption).foregroundStyle(.secondary)
+                ForEach(open, id: \.self) { host in
+                    Button("Add \(host)") {
+                        update {
+                            $0.takeoverHosts.removeAll { $0.isEmpty }
+                            $0.takeoverHosts.append(host)
+                        }
+                    }
+                    .buttonStyle(.plain).foregroundStyle(Color.accentColor)
+                }
+            }
+        }
+    }
+
+    /// The collector's note on getting a privileged port, in a selectable box.
+    private var failureBox: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("The collector couldn't listen on that port").font(.caption.weight(.semibold))
+            Text(collector.failureNote ?? "")
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
+        }
+    }
+
+    private var trustButtons: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Button("Let Claude Code trust the collector…") {
+                    Task { await trust.requestClaudeCodeTrust() }
+                }
+                Button("Undo Claude Code trust") { Task { await trust.undoClaudeCode() } }
+                    .disabled(!trust.claudeCodeApplied)
+            }
+            HStack {
+                Button("Prepare Codex bundle") { Task { await trust.prepareCodex() } }
+                if trust.codexCommand != nil {
+                    Button("Remove") { Task { await trust.removeCodex() } }
+                }
+            }
+            if trust.busy { ProgressView().controlSize(.small) }
+        }
+        .disabled(trust.busy)
+    }
+}
+
+/// The sheet before the one file edit: exactly what changes, where the backup goes, and what it
+/// costs. Nothing is written until Confirm.
+struct TrustConfirmView: View {
+    let report: TrustReport
+    let onConfirm: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Let Claude Code trust the collector?").font(.headline)
+            if let message = report.message {
+                Text(message).fixedSize(horizontal: false, vertical: true)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                if let path = report.settingsPath { Text("File: \(path)") }
+                Text(changeLine)
+                Text(backupLine)
+            }
+            .font(.system(.caption, design: .monospaced))
+            .textSelection(.enabled)
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
+            Text("Restart Claude Code afterwards: sessions already running keep the old setting.")
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Your org's collector receives nothing while the takeover is active.")
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
+                Button("Confirm", action: onConfirm).keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding()
+        .frame(width: 460)
+    }
+
+    var changeLine: String {
+        let key = report.key ?? "NODE_EXTRA_CA_CERTS"
+        return "Change: env.\(key): \(report.from ?? "(not set)") → \(report.to ?? "?")"
+    }
+
+    var backupLine: String {
+        report.backupPath.map { "Backup: \($0)" } ?? "Backup: none (the file doesn't exist yet)"
     }
 }

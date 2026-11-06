@@ -49,6 +49,9 @@ final class CollectorStore: ObservableObject {
     @Published private(set) var alertTotal = 0
     @Published private(set) var batchTotal = 0
     @Published private(set) var lastError: String?
+    /// The child's stderr when it stopped after a `listen` error: the privileged-port note, for a
+    /// selectable box. Rare on macOS, where low ports are normally allowed.
+    @Published private(set) var failureNote: String?
     @Published private(set) var settings: CollectorSettings
 
     private let defaults: KeyValueStore
@@ -65,6 +68,7 @@ final class CollectorStore: ObservableObject {
     private var nextId = 0
     private var retainedBytes = 0
     private var lastNotified: [String: Date] = [:]
+    private var sawListenError = false
     private var stopping: Task<Void, Never>?
     private var restartTask: Task<Void, Never>?
 
@@ -138,7 +142,13 @@ final class CollectorStore: ObservableObject {
         batchTotal = 0
         retainedBytes = 0
         lastError = nil
+        failureNote = nil
+        sawListenError = false
         lastNotified = [:]
+        if let problem = settings.takeoverProblem {
+            state = .failed(problem)
+            return
+        }
         guard let config = settings.configLine else {
             state = .failed("Too many red-flag patterns.")
             return
@@ -211,6 +221,7 @@ final class CollectorStore: ObservableObject {
         case .exited(let code, let stderr):
             guard case .failed = state else {
                 let first = stderr.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+                if sawListenError, !stderr.isEmpty { failureNote = stderr.plainMultilineText }
                 return fail(
                     first.isEmpty ? "Stopped: exited with code \(code)." : "Stopped: \(first.plainText)")
             }
@@ -230,7 +241,9 @@ final class CollectorStore: ObservableObject {
             alerts.append(StoredAlert(id: newId(), alert: alert, lineBytes: line.count))
             retain(line.count)
             notify(alert)
-        case .error(let error): lastError = error.message?.plainText
+        case .error(let error):
+            lastError = error.message?.plainText
+            if error.source == "listen" { sawListenError = true }
         case .unsupported:
             fail("Update cAInary: this collector speaks a newer format.")
         case .ignored: break
