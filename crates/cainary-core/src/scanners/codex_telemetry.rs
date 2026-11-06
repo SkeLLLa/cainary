@@ -2,8 +2,10 @@
 
 use super::codex::{self, CxConfig, layer_source};
 use crate::harness::ScanCtx;
-use crate::model::{FindingBuilder, Signal, Tool};
+use crate::model::{FindingBuilder, Payload, Signal, Tool};
 use crate::redact;
+use crate::rules::otel_catalog::{self, Export, Vendor};
+use crate::rules::otel_preview::{self, FlagInput};
 use crate::rules::vendor;
 use crate::value::{self, Value};
 
@@ -94,8 +96,48 @@ fn otlp_evidence(setting: &Value, endpoint: &Option<String>) -> Vec<String> {
     ev
 }
 
+/// A config key as a preview flag: the TOML scalar as text, and the layer that set it.
+fn flag_input(cfg: &CxConfig, name: &str) -> FlagInput {
+    let Some(s) = cfg.cfg.get(name) else {
+        return FlagInput::default();
+    };
+    let source = layer_source(cfg, s.layer);
+    FlagInput {
+        value: Some(match &s.value {
+            Value::String(t) => t.clone(),
+            other => other.to_string(),
+        }),
+        set_by: Some(source.origin),
+        path: Some(source.path),
+    }
+}
+
+fn payload_of(cfg: &CxConfig, export: Export) -> Payload {
+    otel_preview::build(
+        otel_catalog::catalog(Vendor::Codex),
+        export,
+        &|n| flag_input(cfg, n),
+        &[],
+    )
+}
+
+fn on(cfg: &CxConfig, key: &str) -> bool {
+    cfg.cfg.get(key).is_some_and(|s| value::truthy(&s.value))
+}
+
+fn join(list: &[&str]) -> String {
+    match list {
+        [] => String::new(),
+        [a] => a.to_string(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+const LOG_DETAIL: &str = "Codex's log export is on. Each tool result carries the command's arguments and up to 2 KiB of its output (`otel.tool_result.max_bytes`), and events carry your account email and the conversation ID.";
+const TRACE_DETAIL: &str = "Codex's trace export is on. Codex doesn't document span names or fields, so what they carry may differ from the log events.";
+
 /// `otel.exporter` or `otel.trace_exporter`. Returns true when it sends over OTLP.
-fn sink(ctx: &mut ScanCtx, cfg: &CxConfig, key: &str, prompts: bool) -> bool {
+fn sink(ctx: &mut ScanCtx, cfg: &CxConfig, key: &str, prompts: bool, responses: bool) -> bool {
     let Some(s) = cfg.cfg.get(key) else {
         return false;
     };
@@ -103,30 +145,44 @@ fn sink(ctx: &mut ScanCtx, cfg: &CxConfig, key: &str, prompts: bool) -> bool {
     let e = exporter(&s.value);
     if let Some(ep) = endpoint(&e) {
         let host = host(ep);
-        let (title, mut signals) = if key == "otel.exporter" {
-            let what = if prompts {
-                "tool results, session data and your prompts"
-            } else {
-                "tool results and session data"
-            };
+        let logs = key == "otel.exporter";
+        let mut signals = vec![Signal::ToolDetails, Signal::Usage, Signal::Identity];
+        let (title, detail, export) = if logs {
+            signals.push(Signal::FileContents);
+            let mut parts = Vec::new();
+            if prompts {
+                parts.push("your prompts");
+            }
+            if responses {
+                parts.push("its replies");
+            }
+            parts.extend(["your commands", "their output", "your account email"]);
             (
-                format!("Codex sends {what} to {host}"),
-                vec![Signal::ToolDetails, Signal::Usage, Signal::Identity],
+                format!("Codex sends {} to {host}", join(&parts)),
+                LOG_DETAIL,
+                Export::Logs,
             )
         } else {
             (
-                format!("Codex sends traces to {host}"),
-                vec![Signal::ToolDetails, Signal::Usage, Signal::Identity],
+                format!("Codex sends traces of your session to {host}"),
+                TRACE_DETAIL,
+                Export::Traces,
             )
         };
         if prompts {
             signals.push(Signal::Prompts);
         }
+        if responses {
+            signals.push(Signal::Responses);
+        }
         ctx.emit(
             FindingBuilder::new(title)
                 .signals(&signals)
+                .detail(detail)
                 .evidence(otlp_evidence(&s.value, ep))
                 .source(source)
+                .best_effort(!logs)
+                .payload(payload_of(cfg, export))
                 .reference(REF),
         );
         return true;
@@ -146,29 +202,38 @@ fn sink(ctx: &mut ScanCtx, cfg: &CxConfig, key: &str, prompts: bool) -> bool {
 }
 
 pub fn scan(ctx: &mut ScanCtx, cfg: &CxConfig) {
-    let log_prompt = cfg
-        .cfg
-        .get("otel.log_user_prompt")
-        .is_some_and(|s| value::truthy(&s.value));
+    let log_prompt = on(cfg, "otel.log_user_prompt");
+    let log_replies = on(cfg, "otel.log_agent_responses");
+    let logs_otlp = has_otlp(cfg, "otel.exporter");
     let log_sent = sink(
         ctx,
         cfg,
         "otel.exporter",
-        log_prompt && has_otlp(cfg, "otel.exporter"),
+        log_prompt && logs_otlp,
+        log_replies && logs_otlp,
     );
-    let trace_sent = sink(ctx, cfg, "otel.trace_exporter", false);
-    if log_prompt
-        && !log_sent
-        && trace_sent
-        && let Some(s) = cfg.cfg.get("otel.log_user_prompt")
-    {
-        ctx.emit(
-            FindingBuilder::new(
+    let trace_sent = sink(ctx, cfg, "otel.trace_exporter", false, false);
+    if !log_sent && trace_sent {
+        for (key, title, on) in [
+            (
+                "otel.log_user_prompt",
                 "Codex would log prompts only through `otel.exporter`, which is off",
-            )
-            .source(layer_source(cfg, s.layer))
-            .reference(REF),
-        );
+                log_prompt,
+            ),
+            (
+                "otel.log_agent_responses",
+                "Codex would log its replies only through `otel.exporter`, which is off",
+                log_replies,
+            ),
+        ] {
+            if let Some(s) = cfg.cfg.get(key).filter(|_| on) {
+                ctx.emit(
+                    FindingBuilder::new(title)
+                        .source(layer_source(cfg, s.layer))
+                        .reference(REF),
+                );
+            }
+        }
     }
     metrics(ctx, cfg);
 }
@@ -222,6 +287,7 @@ fn metrics(ctx: &mut ScanCtx, cfg: &CxConfig) {
                     .signals(&[Signal::Usage])
                     .evidence(otlp_evidence(&s.value, &endpoint))
                     .source(layer_source(cfg, s.layer))
+                    .payload(payload_of(cfg, Export::Metrics))
                     .reference(REF),
                 );
             }
@@ -235,7 +301,7 @@ mod tests {
     use crate::harness::Harness;
     use crate::harness::Loc;
     use crate::harness::platform::Os;
-    use crate::model::{Finding, Origin};
+    use crate::model::{Finding, Origin, Sent};
     use crate::scanners::codex::{CxLayer, CxLayerId, CxSetting};
     use serde_json::json;
 
@@ -309,12 +375,27 @@ mod tests {
             "otel.exporter",
             otlp("https://otel.example-corp.com/v1/logs"),
         )]);
-        let log = f.iter().find(|x| x.title.contains("tool results")).unwrap();
+        assert_eq!(f.len(), 1);
+        let log = &f[0];
         assert_eq!(
-            log.signals,
-            [Signal::ToolDetails, Signal::Usage, Signal::Identity]
+            log.title,
+            "Codex sends your commands, their output and your account email to otel.example-corp.com"
         );
-        assert!(log.title.contains("otel.example-corp.com"));
+        for s in [
+            Signal::ToolDetails,
+            Signal::FileContents,
+            Signal::Usage,
+            Signal::Identity,
+        ] {
+            assert!(log.signals.contains(&s), "{s:?}");
+        }
+        assert_eq!(log.signals.len(), 4);
+        assert!(log.detail.contains("up to 2 KiB of its output"));
+        assert!(!log.best_effort);
+        let p = log.payload.as_ref().unwrap();
+        assert_eq!(p.export, Export::Logs);
+        assert_eq!(p.catalog, "codex 0.166.0");
+        assert!(!p.maybe);
         let ev = log.evidence.join("\n");
         assert!(ev.contains("header Authorization") && !ev.contains("sk-test-EXAMPLE"));
     }
@@ -323,11 +404,15 @@ mod tests {
     fn trace_exporter_and_missing_endpoint() {
         let f = run(&[("otel.trace_exporter", json!("otlp-grpc"))]);
         let t = f.iter().find(|x| x.title.contains("traces")).unwrap();
-        assert!(t.title.contains("a collector"));
+        assert_eq!(t.title, "Codex sends traces of your session to a collector");
         assert_eq!(
             t.signals,
             [Signal::ToolDetails, Signal::Usage, Signal::Identity]
         );
+        assert!(t.best_effort && t.detail.contains("doesn't document span names"));
+        let p = t.payload.as_ref().unwrap();
+        assert_eq!(p.export, Export::Traces);
+        assert!(p.maybe);
     }
 
     #[test]
@@ -352,6 +437,49 @@ mod tests {
             .find(|x| x.title.contains("only through"))
             .unwrap();
         assert!(info.signals.is_empty());
+    }
+
+    #[test]
+    fn prompts_and_replies_extend_the_title() {
+        let f = run(&[
+            ("otel.exporter", otlp("https://otel.example-corp.com")),
+            ("otel.log_user_prompt", json!(true)),
+            ("otel.log_agent_responses", json!(true)),
+        ]);
+        assert_eq!(f.len(), 1);
+        assert_eq!(
+            f[0].title,
+            "Codex sends your prompts, its replies, your commands, their output and your account email to otel.example-corp.com"
+        );
+        assert!(f[0].signals.contains(&Signal::Responses));
+        let p = f[0].payload.as_ref().unwrap();
+        let gate = |name: &str| p.gates.iter().find(|g| g.flag == name).unwrap();
+        assert!(gate("otel.log_user_prompt").on);
+        assert_eq!(gate("otel.log_agent_responses").sent, Sent::Yes);
+        assert_eq!(gate("otel.log_guardian_assessments").sent, Sent::No);
+        assert_eq!(
+            gate("otel.log_user_prompt").text,
+            "Prompt text: sent, because otel.log_user_prompt = true (set by you)"
+        );
+        assert_eq!(
+            gate("otel.log_user_prompt").path.as_deref(),
+            Some("~/.codex/config.toml")
+        );
+    }
+
+    #[test]
+    fn replies_with_only_traces_is_info() {
+        let f = run(&[
+            ("otel.trace_exporter", otlp("https://otel.example-corp.com")),
+            ("otel.log_agent_responses", json!(true)),
+        ]);
+        let info = f.iter().find(|x| x.title.contains("its replies")).unwrap();
+        assert_eq!(
+            info.title,
+            "Codex would log its replies only through `otel.exporter`, which is off"
+        );
+        assert!(info.signals.is_empty() && info.payload.is_none());
+        assert!(f.iter().all(|x| !x.signals.contains(&Signal::Responses)));
     }
 
     #[test]
@@ -391,6 +519,7 @@ mod tests {
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].signals, [Signal::Usage]);
         assert!(f[0].title.contains("m.example-corp.com"));
+        assert_eq!(f[0].payload.as_ref().unwrap().export, Export::Metrics);
     }
 
     #[test]

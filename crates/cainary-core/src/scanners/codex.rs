@@ -70,6 +70,8 @@ pub const CX_KEYS: &[&str] = &[
     "otel.trace_exporter",
     "otel.metrics_exporter",
     "otel.log_user_prompt",
+    "otel.log_agent_responses",
+    "otel.log_guardian_assessments",
     "analytics.enabled",
     "profile",
     "profiles",

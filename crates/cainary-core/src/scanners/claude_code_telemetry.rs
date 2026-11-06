@@ -2,9 +2,11 @@
 
 use super::claude_code::{self, CcConfig, CcEnvVar, CcFrom, doc, from_finding, is_unit};
 use crate::harness::ScanCtx;
-use crate::model::{FindingBuilder, Signal};
+use crate::model::{FindingBuilder, Origin, Signal};
 use crate::redact;
 use crate::rules::otel::{self, Kind, OtelSignal};
+use crate::rules::otel_catalog::{self, Export, Vendor};
+use crate::rules::otel_preview::{self, FlagInput};
 use crate::value::{self, Value};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +92,10 @@ struct Contrib {
     var: String,
     signals: Vec<Signal>,
     evidence: Vec<String>,
+    /// `OTEL_LOG_TOOL_DETAILS` is on in this group, so it sends every command in full.
+    tool_flag: bool,
+    /// One sentence per content flag.
+    notes: Vec<&'static str>,
 }
 
 fn group<'a>(all: &'a mut Vec<Contrib>, v: &CcEnvVar) -> &'a mut Contrib {
@@ -102,6 +108,8 @@ fn group<'a>(all: &'a mut Vec<Contrib>, v: &CcEnvVar) -> &'a mut Contrib {
                 var: v.name.clone(),
                 signals: Vec::new(),
                 evidence: Vec::new(),
+                tool_flag: false,
+                notes: Vec::new(),
             });
             all.len() - 1
         });
@@ -114,22 +122,51 @@ fn push_line(c: &mut Contrib, l: String) {
     }
 }
 
-fn phrases(signals: &[Signal]) -> Vec<&'static str> {
-    let mut out = Vec::new();
-    if signals.contains(&Signal::Usage) {
-        out.push("usage data");
-    }
-    for (s, p) in [
+fn phrases(signals: &[Signal], tool_flag: bool) -> Vec<&'static str> {
+    let tools = if tool_flag {
+        "every shell command in full"
+    } else {
+        "tool details"
+    };
+    [
+        (Signal::Usage, "usage data"),
+        (Signal::Identity, "your identity"),
         (Signal::Prompts, "your prompts"),
         (Signal::Responses, "Claude's responses"),
-        (Signal::ToolDetails, "tool details"),
+        (Signal::ToolDetails, tools),
         (Signal::FileContents, "file contents"),
-    ] {
-        if signals.contains(&s) {
-            out.push(p);
+    ]
+    .into_iter()
+    .filter(|(s, _)| signals.contains(s))
+    .map(|(_, p)| p)
+    .collect()
+}
+
+/// The sentence a content flag adds to the detail.
+fn note(name: &str, d: Dest, value: &str) -> Option<&'static str> {
+    Some(match name {
+        "OTEL_LOG_TOOL_DETAILS" => {
+            "With OTEL_LOG_TOOL_DETAILS on, tool events carry each tool's full input: every Bash command as typed (with any paths, host names or secrets in it), MCP server and tool names, and skill and plugin names."
         }
-    }
-    out
+        "OTEL_LOG_USER_PROMPTS" if d == Dest::Logs => {
+            "With OTEL_LOG_USER_PROMPTS on, the text of every prompt you type is sent, and Claude's responses too unless OTEL_LOG_ASSISTANT_RESPONSES=0."
+        }
+        "OTEL_LOG_USER_PROMPTS" => {
+            "With OTEL_LOG_USER_PROMPTS on, the text of every prompt you type is sent."
+        }
+        "OTEL_LOG_ASSISTANT_RESPONSES" => {
+            "With OTEL_LOG_ASSISTANT_RESPONSES on, the text of Claude's responses is sent."
+        }
+        "OTEL_LOG_TOOL_CONTENT" => {
+            "With OTEL_LOG_TOOL_CONTENT on, tool output such as file contents and command output is attached to trace spans (up to 60 KB each)."
+        }
+        "OTEL_LOG_RAW_API_BODIES"
+            if matches!(value.to_ascii_lowercase().as_str(), "1" | "true") =>
+        {
+            "With OTEL_LOG_RAW_API_BODIES on, the full request and response of every model call is sent, including the whole conversation."
+        }
+        _ => return None,
+    })
 }
 
 fn join(list: &[&str]) -> String {
@@ -151,13 +188,62 @@ fn signal_of(d: Dest) -> Option<(OtelSignal, &'static str, &'static str)> {
 
 fn dest_detail(d: Dest) -> &'static str {
     match d {
-        Dest::Metrics => "Claude Code's metrics export is on",
-        Dest::Logs => "Claude Code's log export is on",
-        Dest::Traces => "Claude Code's trace export (beta) is on",
+        Dest::Metrics => {
+            "Claude Code's metrics export is on. Every data point is tagged with your account email (when you sign in with a Claude account), your account and organization IDs and the session ID."
+        }
+        Dest::Logs => {
+            "Claude Code's log export is on. Every event is tagged with your account email (when you sign in with a Claude account), your account and organization IDs and the session ID."
+        }
+        Dest::Traces => {
+            "Claude Code's trace export (beta) is on. Every span is tagged with your identity."
+        }
         Dest::Beta => {
-            "Claude Code's detailed trace export is on. Anthropic allowlists it, so it may not apply"
+            "Claude Code's detailed trace export is on. Anthropic allowlists it, so it may not apply."
         }
     }
+}
+
+const NO_ENDPOINT: &str = "No endpoint is set for these, so they go to the OpenTelemetry default on this machine (port 4318, or 4317 for gRPC), where nothing may be listening.";
+
+/// An in-effect variable as a preview flag.
+fn flag_input(ctx: &ScanCtx, cfg: &CcConfig, name: &str) -> FlagInput {
+    let Some(v) = claude_code::env(cfg, name) else {
+        return FlagInput::default();
+    };
+    let (set_by, path) = match &v.from {
+        CcFrom::Tier(id) => match claude_code::tier(cfg, id) {
+            Some(t) => (t.origin, t.loc.shown.clone()),
+            None => (Origin::Environment, format!("env:{name}")),
+        },
+        CcFrom::User => match &cfg.user {
+            Some((loc, _)) => (claude_code::user_origin(ctx, loc), loc.shown.clone()),
+            None => (Origin::Environment, format!("env:{name}")),
+        },
+        CcFrom::Process => (Origin::Environment, format!("env:{name}")),
+    };
+    FlagInput {
+        value: Some(v.value.clone()),
+        set_by: Some(set_by),
+        path: Some(path),
+    }
+}
+
+fn payload_of(ctx: &ScanCtx, cfg: &CcConfig, d: Dest) -> crate::model::Payload {
+    let export = match d {
+        Dest::Metrics => Export::Metrics,
+        Dest::Logs => Export::Logs,
+        Dest::Traces => Export::Traces,
+        Dest::Beta => Export::Beta,
+    };
+    let names = val(cfg, "OTEL_RESOURCE_ATTRIBUTES")
+        .map(otel::header_names)
+        .unwrap_or_default();
+    otel_preview::build(
+        otel_catalog::catalog(Vendor::ClaudeCode),
+        export,
+        &|n| flag_input(ctx, cfg, n),
+        &names,
+    )
 }
 
 /// The host, and the variables that name it.
@@ -220,15 +306,10 @@ pub fn scan(ctx: &mut ScanCtx, cfg: &CcConfig) {
         };
         let Some(base) = base else { continue };
         let mut all: Vec<Contrib> = Vec::new();
-        let account_uuid_off = val(cfg, "OTEL_METRICS_INCLUDE_ACCOUNT_UUID")
-            .is_some_and(|v| v.eq_ignore_ascii_case("false"));
         let resource = claude_code::env(cfg, "OTEL_RESOURCE_ATTRIBUTES");
-        let identity = d != Dest::Metrics || resource.is_some() || !account_uuid_off;
         let c = group(&mut all, base);
         c.signals.push(Signal::Usage);
-        if identity {
-            c.signals.push(Signal::Identity);
-        }
+        c.signals.push(Signal::Identity);
         for v in [
             claude_code::env(cfg, "CLAUDE_CODE_ENABLE_TELEMETRY"),
             Some(base),
@@ -257,15 +338,31 @@ pub fn scan(ctx: &mut ScanCtx, cfg: &CcConfig) {
             used.push(&v.name);
             let c = group(&mut all, v);
             c.signals.extend(signals);
+            c.tool_flag |= v.name == "OTEL_LOG_TOOL_DETAILS";
+            c.notes.extend(note(&v.name, d, &v.value));
             push_line(c, line(v));
         }
+        let no_endpoint = d != Dest::Beta
+            && otel::endpoint_host(
+                &|n| val(cfg, n).map(str::to_string),
+                signal_of(d).map_or(OtelSignal::Logs, |s| s.0),
+            )
+            .is_none();
         for c in all {
-            let list = phrases(&c.signals);
+            let list = phrases(&c.signals, c.tool_flag);
             let local = !matches!(c.from, CcFrom::Tier(_));
-            let b = FindingBuilder::new(format!("Claude Code sends {} to {host}", join(&list)))
+            let mut detail = vec![dest_detail(d)];
+            if no_endpoint {
+                detail.push(NO_ENDPOINT);
+            }
+            detail.extend(&c.notes);
+            let mut b = FindingBuilder::new(format!("Claude Code sends {} to {host}", join(&list)))
                 .signals(&c.signals)
-                .detail(format!("{}.", dest_detail(d)))
+                .detail(detail.join(" "))
                 .reference(doc("monitoring-usage"));
+            if c.from == base.from {
+                b = b.payload(payload_of(ctx, cfg, d));
+            }
             ctx.emit(from_finding(
                 ctx,
                 cfg,
@@ -491,7 +588,8 @@ mod tests {
     use super::*;
     use crate::harness::Harness;
     use crate::harness::platform::Os;
-    use crate::model::{Finding, Origin, Tool};
+    use crate::model::{Finding, Origin, Sent, Tool};
+    use crate::rules::otel_catalog::Export;
     use crate::scanners::claude_code::{CcSetting, CcTier, CcTierId, effective_env, is_policy_doc};
     use serde_json::{Map, json};
 
@@ -540,14 +638,98 @@ mod tests {
         let ev = f[0].evidence.join("\n");
         assert!(ev.contains("OTEL_EXPORTER_OTLP_HEADERS = Authorization"));
         assert!(!ev.contains("sk-test"));
-        // account uuid off and no resource attributes: usage only
+        // the account IDs off removes only those two keys, never the identity
         let f = run(&proc_cfg(&[
             ON,
             ("OTEL_METRICS_EXPORTER", "otlp"),
             ("OTEL_METRICS_INCLUDE_ACCOUNT_UUID", "false"),
         ]));
-        assert_eq!(f[0].signals, [Signal::Usage]);
+        assert_eq!(f[0].signals, [Signal::Usage, Signal::Identity]);
         assert!(f[0].title.contains("a local collector"));
+        assert!(f[0].detail.contains("No endpoint is set for these"));
+        let p = f[0].payload.as_ref().unwrap();
+        let uuid = p.identity.iter().find(|a| a.key == "user.account_uuid");
+        assert_eq!(uuid.unwrap().sent, Some(Sent::No));
+        let email = p.identity.iter().find(|a| a.key == "user.email");
+        assert_eq!(email.unwrap().sent, None);
+    }
+
+    #[test]
+    fn sharpened_titles_and_details() {
+        let f = run(&proc_cfg(&[
+            ON,
+            ("OTEL_LOGS_EXPORTER", "otlp"),
+            (
+                "OTEL_EXPORTER_OTLP_ENDPOINT",
+                "https://otel.example-corp.com",
+            ),
+            ("OTEL_LOG_TOOL_DETAILS", "1"),
+        ]));
+        assert_eq!(f.len(), 1);
+        assert_eq!(
+            f[0].title,
+            "Claude Code sends usage data, your identity and every shell command in full to otel.example-corp.com"
+        );
+        assert!(
+            f[0].detail
+                .starts_with("Claude Code's log export is on. Every event is tagged")
+        );
+        assert!(f[0].detail.contains("every Bash command as typed"));
+        assert!(!f[0].detail.contains("No endpoint is set"));
+        // raw bodies are "tool details", not "every shell command"
+        let f = run(&proc_cfg(&[
+            ON,
+            ("OTEL_LOGS_EXPORTER", "otlp"),
+            ("OTEL_LOG_RAW_API_BODIES", "1"),
+        ]));
+        assert_eq!(
+            f[0].title,
+            "Claude Code sends usage data, your identity, your prompts, Claude's responses, tool details and file contents to a local collector"
+        );
+        assert!(f[0].detail.contains("including the whole conversation"));
+        assert!(f[0].detail.contains("port 4318"));
+        let f = run(&proc_cfg(&[
+            ON,
+            ("OTEL_METRICS_EXPORTER", "otlp"),
+            (
+                "OTEL_EXPORTER_OTLP_ENDPOINT",
+                "https://otel.example-corp.com",
+            ),
+        ]));
+        assert_eq!(
+            f[0].title,
+            "Claude Code sends usage data and your identity to otel.example-corp.com"
+        );
+    }
+
+    #[test]
+    fn payload_carries_gates_and_resource_attribute_names() {
+        let f = run(&proc_cfg(&[
+            ON,
+            ("OTEL_LOGS_EXPORTER", "otlp"),
+            ("OTEL_LOG_TOOL_DETAILS", "1"),
+            ("OTEL_RESOURCE_ATTRIBUTES", "team=blue,secret=hunter2"),
+        ]));
+        let p = f[0].payload.as_ref().unwrap();
+        assert_eq!(p.export, Export::Logs);
+        assert_eq!(p.catalog, "claude-code 2.1.316");
+        let gate = |n: &str| p.gates.iter().find(|g| g.flag == n).unwrap();
+        assert_eq!(
+            gate("OTEL_LOG_TOOL_DETAILS").text,
+            "Full shell commands, tool input, and MCP, skill and plugin names: sent, because OTEL_LOG_TOOL_DETAILS = 1 (set by environment variable)"
+        );
+        assert_eq!(
+            gate("OTEL_LOG_TOOL_DETAILS").path.as_deref(),
+            Some("env:OTEL_LOG_TOOL_DETAILS")
+        );
+        assert_eq!(
+            gate("OTEL_LOG_USER_PROMPTS").text,
+            "Prompt text: sent as <REDACTED>, because OTEL_LOG_USER_PROMPTS is unset"
+        );
+        assert!(p.identity.iter().any(|a| a.key == "team"));
+        assert!(p.identity.iter().any(|a| a.key == "secret"));
+        let json = serde_json::to_string(p).unwrap();
+        assert!(!json.contains("hunter2") && !json.contains("blue"));
     }
 
     #[test]
@@ -746,6 +928,19 @@ mod tests {
             .unwrap();
         assert_eq!(admin.signals, [Signal::Usage, Signal::Identity]);
         assert!(admin.title.contains("otel.example-corp.com"));
+        // only the finding that holds the exporter variable carries the payload
+        let p = admin.payload.as_ref().unwrap();
+        let up = p
+            .gates
+            .iter()
+            .find(|g| g.flag == "OTEL_LOG_USER_PROMPTS")
+            .unwrap();
+        assert!(up.on && up.set_by == Some(Origin::Environment));
+        assert!(
+            f.iter()
+                .filter(|f| f.payload.is_some())
+                .all(|f| f.source.origin == Origin::System)
+        );
         let local = f
             .iter()
             .find(|f| f.source.origin == Origin::Environment && f.in_effect)
