@@ -784,3 +784,41 @@ fn the_hello_line_golden() {
     }
     let _ = std::fs::remove_dir_all(&state);
 }
+
+#[test]
+fn a_symlinked_state_directory_is_refused_with_exit_1() {
+    let base = tmp("symlinked-state");
+    std::fs::create_dir_all(&base).unwrap();
+    std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let real = base.join("real");
+    std::fs::create_dir(&real).unwrap();
+    std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let link = base.join("state");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_cainary-otel-debug"))
+        .env("XDG_STATE_HOME", &link)
+        .env("HOME", &base)
+        .args([
+            "--tls",
+            "--tls-host",
+            HOST,
+            "--port",
+            "0",
+            "--listen",
+            "127.0.0.1",
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("symlink"));
+    assert!(!real.join("cainary").exists());
+    let del = Command::new(env!("CARGO_BIN_EXE_cainary-otel-debug"))
+        .env("XDG_STATE_HOME", &link)
+        .env("HOME", &base)
+        .arg("--delete-ca")
+        .output()
+        .unwrap();
+    assert_eq!(del.status.code(), Some(1));
+    let _ = std::fs::remove_dir_all(&base);
+}

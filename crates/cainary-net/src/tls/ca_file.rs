@@ -8,11 +8,11 @@
 //! `--tls` run can't replace the certificate under the first.
 
 use std::ffi::CString;
-use std::fs::{DirBuilder, File};
+use std::fs::File;
 use std::io::{self, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 pub const CA_FILE: &str = "otel-debug-ca.pem";
@@ -66,66 +66,243 @@ pub struct Published {
     _dir: CaDir,
 }
 
-impl CaDir {
-    /// Creates the directory (0700, like any missing parents) if needed, refuses a symlinked
-    /// final component, and validates the opened descriptor.
-    pub fn open(dir: &Path) -> Result<CaDir, CaFileError> {
-        match std::fs::symlink_metadata(dir) {
-            Ok(m) if m.file_type().is_symlink() => {
-                return failed(format!(
-                    "the certificate directory {} is a symlink; refusing to use it",
-                    dir.display()
-                ));
-            }
-            Ok(_) => {}
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                DirBuilder::new()
-                    .recursive(true)
-                    .mode(0o700)
-                    .create(dir)
-                    .map_err(|e| {
-                        CaFileError::Failed(format!(
-                            "can't create the certificate directory {}: {e}",
-                            dir.display()
-                        ))
-                    })?;
-            }
-            Err(e) => {
-                return failed(format!("can't inspect {}: {e}", dir.display()));
-            }
-        }
-        let path = cstr_path(dir);
-        // SAFETY: `path` is a valid NUL-terminated string; the flags are plain constants.
-        let raw = unsafe {
-            libc::open(
-                path.as_ptr(),
-                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-            )
+/// Symlinks followed while resolving the path: only root-owned ones (`/home -> var/home`).
+const MAX_LINKS: usize = 8;
+
+struct Stat {
+    uid: u32,
+    mode: u32,
+}
+
+fn fstat_fd(fd: &OwnedFd) -> io::Result<Stat> {
+    let f = File::from(fd.try_clone()?);
+    let m = f.metadata()?;
+    Ok(Stat {
+        uid: m.uid(),
+        mode: m.mode(),
+    })
+}
+
+/// `fstatat(dirfd, name, AT_SYMLINK_NOFOLLOW)`: `Ok(None)` when absent.
+fn lstat_at(dirfd: &OwnedFd, name: &CString) -> io::Result<Option<(Stat, bool)>> {
+    // SAFETY: an all-zero `stat` is a valid value for the call to fill in.
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    // SAFETY: valid descriptor, NUL-terminated name and a live `stat` for the call.
+    let r = unsafe {
+        libc::fstatat(
+            dirfd.as_raw_fd(),
+            name.as_ptr(),
+            &mut st,
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    };
+    if r != 0 {
+        let e = io::Error::last_os_error();
+        return if e.kind() == io::ErrorKind::NotFound {
+            Ok(None)
+        } else {
+            Err(e)
         };
-        if raw < 0 {
+    }
+    let link = st.st_mode & libc::S_IFMT == libc::S_IFLNK;
+    Ok(Some((
+        Stat {
+            uid: st.st_uid,
+            mode: st.st_mode as u32,
+        },
+        link,
+    )))
+}
+
+fn open_dir_at(dirfd: &OwnedFd, name: &CString) -> io::Result<OwnedFd> {
+    // SAFETY: valid descriptor and NUL-terminated name; the flags are plain constants.
+    let raw = unsafe {
+        libc::openat(
+            dirfd.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if raw < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `raw` is a fresh descriptor we own.
+    Ok(unsafe { OwnedFd::from_raw_fd(raw) })
+}
+
+fn readlink_at(dirfd: &OwnedFd, name: &CString) -> io::Result<Vec<u8>> {
+    let mut buf = vec![0u8; 4096];
+    // SAFETY: valid descriptor, NUL-terminated name, and a buffer of the stated length.
+    let n = unsafe {
+        libc::readlinkat(
+            dirfd.as_raw_fd(),
+            name.as_ptr(),
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+        )
+    };
+    if n < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    buf.truncate(n as usize);
+    Ok(buf)
+}
+
+impl CaDir {
+    /// Walks `dir` from `/` one component at a time, each opened relative to its parent's
+    /// descriptor with `O_DIRECTORY | O_NOFOLLOW` (design §16.7.2), so no ancestor can be swapped
+    /// for a symlink between the check and the use.
+    ///
+    /// - Every directory on the way must be owned by root or by us; one that group/other can
+    ///   write must have the sticky bit (`/tmp`). The final directory is stricter: ours, no
+    ///   group/other write.
+    /// - A symlink is refused unless root owns it (`/home -> var/home` on some systems), and
+    ///   only a few such links are followed.
+    /// - With `create`, missing directories are made with `mkdirat(0700)` and reopened through
+    ///   the same checks. Without it, a missing one is `Ok(None)`.
+    fn walk(dir: &Path, create: bool) -> Result<Option<CaDir>, CaFileError> {
+        use std::path::Component;
+        if !dir.is_absolute() {
             return failed(format!(
-                "can't open the certificate directory {}: {}",
-                dir.display(),
-                io::Error::last_os_error()
-            ));
-        }
-        // SAFETY: `raw` is a fresh descriptor we own.
-        let fd = unsafe { OwnedFd::from_raw_fd(raw) };
-        let md = File::from(fd.try_clone().map_err(|e| {
-            CaFileError::Failed(format!("can't duplicate the directory descriptor: {e}"))
-        })?)
-        .metadata()
-        .map_err(|e| CaFileError::Failed(format!("can't stat {}: {e}", dir.display())))?;
-        if md.uid() != euid() || md.mode() & 0o022 != 0 {
-            return failed(format!(
-                "the certificate directory {} must be owned by you and not writable by group or others",
+                "the certificate directory {} is not an absolute path",
                 dir.display()
             ));
         }
-        Ok(CaDir {
+        let bad = |why: &str| -> Result<Option<CaDir>, CaFileError> {
+            failed(format!("the certificate directory {} {why}", dir.display()))
+        };
+        let me = euid();
+        // SAFETY: a constant, valid, NUL-terminated path.
+        let root = unsafe {
+            libc::open(
+                c"/".as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+            )
+        };
+        if root < 0 {
+            return failed(format!("can't open /: {}", io::Error::last_os_error()));
+        }
+        // SAFETY: `root` is a fresh descriptor we own.
+        let mut fd = unsafe { OwnedFd::from_raw_fd(root) };
+        let mut todo: std::collections::VecDeque<String> = dir
+            .components()
+            .filter_map(|c| match c {
+                Component::Normal(n) => Some(n.to_string_lossy().into_owned()),
+                _ => None,
+            })
+            .collect();
+        let total = todo.len();
+        let mut links = 0usize;
+        let mut depth = 0usize;
+        while let Some(name) = todo.pop_front() {
+            if name == "." || name == ".." || name.contains('\0') {
+                return bad("contains a component that isn't a plain name");
+            }
+            let c = cstr(&name);
+            let found = lstat_at(&fd, &c)
+                .map_err(|e| CaFileError::Failed(format!("can't inspect {name}: {e}")))?;
+            match found {
+                None if !create => return Ok(None),
+                None => {
+                    // SAFETY: valid descriptor and NUL-terminated name.
+                    let r = unsafe { libc::mkdirat(fd.as_raw_fd(), c.as_ptr(), 0o700) };
+                    if r != 0 && io::Error::last_os_error().kind() != io::ErrorKind::AlreadyExists {
+                        return failed(format!(
+                            "can't create {name} for the certificate directory: {}",
+                            io::Error::last_os_error()
+                        ));
+                    }
+                }
+                Some((st, true)) => {
+                    if st.uid != 0 {
+                        return bad("has a symlink on its path; refusing to use it");
+                    }
+                    links += 1;
+                    if links > MAX_LINKS {
+                        return bad("has too many symlinks on its path");
+                    }
+                    let target = readlink_at(&fd, &c)
+                        .map_err(|e| CaFileError::Failed(format!("can't read a symlink: {e}")))?;
+                    let target = Path::new(std::ffi::OsStr::from_bytes(&target));
+                    if target.is_absolute() {
+                        // Restart from the root with the link's target in front.
+                        // SAFETY: a constant, valid, NUL-terminated path.
+                        let r = unsafe {
+                            libc::open(
+                                c"/".as_ptr(),
+                                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+                            )
+                        };
+                        if r < 0 {
+                            return failed(format!("can't open /: {}", io::Error::last_os_error()));
+                        }
+                        // SAFETY: `r` is a fresh descriptor we own.
+                        fd = unsafe { OwnedFd::from_raw_fd(r) };
+                    }
+                    let mut front: Vec<String> = Vec::new();
+                    for comp in target.components() {
+                        match comp {
+                            Component::Normal(n) => front.push(n.to_string_lossy().into_owned()),
+                            Component::RootDir | Component::CurDir => {}
+                            _ => {
+                                return bad("has a symlink with a '..' target; refusing to use it");
+                            }
+                        }
+                    }
+                    for n in front.into_iter().rev() {
+                        todo.push_front(n);
+                    }
+                    continue;
+                }
+                Some(_) => {}
+            }
+            let next = open_dir_at(&fd, &c).map_err(|e| {
+                CaFileError::Failed(if e.raw_os_error() == Some(libc::ELOOP) {
+                    format!(
+                        "the certificate directory {} has a symlink on its path; refusing to use it",
+                        dir.display()
+                    )
+                } else {
+                    format!("can't open {name} on the way to {}: {e}", dir.display())
+                })
+            })?;
+            depth += 1;
+            let st = fstat_fd(&next)
+                .map_err(|e| CaFileError::Failed(format!("can't stat {name}: {e}")))?;
+            let last = todo.is_empty();
+            let group_other_write = st.mode & 0o022 != 0;
+            let ok = if last && depth >= total {
+                st.uid == me && !group_other_write
+            } else {
+                (st.uid == 0 || st.uid == me) && (!group_other_write || st.mode & 0o1000 != 0)
+            };
+            if !ok {
+                return failed(if last {
+                    format!(
+                        "the certificate directory {} must be owned by you and not writable by group or others",
+                        dir.display()
+                    )
+                } else {
+                    format!(
+                        "{name} on the way to the certificate directory {} is not safe (owned by someone else, or writable by others without the sticky bit)",
+                        dir.display()
+                    )
+                });
+            }
+            fd = next;
+        }
+        Ok(Some(CaDir {
             fd,
             dir: dir.to_path_buf(),
-        })
+        }))
+    }
+
+    pub fn open(dir: &Path) -> Result<CaDir, CaFileError> {
+        Ok(CaDir::walk(dir, true)?.expect("create always yields a directory"))
+    }
+
+    fn exists(&self, name: &str) -> bool {
+        lstat_at(&self.fd, &cstr(name)).is_ok_and(|s| s.is_some())
     }
 
     /// `openat` relative to the directory; the file must be ours, regular, with one link.
@@ -222,10 +399,6 @@ impl CaDir {
     }
 }
 
-fn cstr_path(p: &Path) -> CString {
-    CString::new(p.as_os_str().as_bytes()).unwrap_or_else(|_| cstr("/nonexistent-invalid-path"))
-}
-
 /// Takes the lock and publishes `pem` as `<dir>/otel-debug-ca.pem`. The lock is held until the
 /// returned value is dropped (the end of the run).
 pub fn publish(dir: &Path, pem: &str) -> Result<Published, CaFileError> {
@@ -241,13 +414,11 @@ pub fn publish(dir: &Path, pem: &str) -> Result<Published, CaFileError> {
 
 /// `--delete-ca`: removes the certificate file. Refuses while a run holds the lock.
 pub fn delete(dir: &Path) -> Result<bool, CaFileError> {
-    match std::fs::symlink_metadata(dir) {
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-        _ => {}
-    }
-    let d = CaDir::open(dir)?;
+    let Some(d) = CaDir::walk(dir, false)? else {
+        return Ok(false);
+    };
     let _lock = d.lock()?;
-    let existed = std::fs::symlink_metadata(dir.join(CA_FILE)).is_ok();
+    let existed = d.exists(CA_FILE);
     if !d.unlink(CA_FILE) {
         return failed("can't delete the certificate file");
     }
@@ -365,5 +536,55 @@ mod tests {
         drop(publish(&d, "new").unwrap());
         assert_eq!(fs::read_to_string(d.join(CA_FILE)).unwrap(), "new");
         fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn refuses_a_symlinked_ancestor() {
+        let base = tmp("ancestor");
+        fs::create_dir_all(&base).unwrap();
+        fs::set_permissions(&base, fs::Permissions::from_mode(0o700)).unwrap();
+        let real = base.join("real");
+        fs::create_dir(&real).unwrap();
+        fs::set_permissions(&real, fs::Permissions::from_mode(0o700)).unwrap();
+        let link = base.join("state");
+        symlink(&real, &link).unwrap();
+        // The symlink sits above the certificate directory, as a symlinked XDG_STATE_HOME would.
+        for target in [link.join("cainary"), link.join("a/b/cainary")] {
+            match publish(&target, "x") {
+                Err(CaFileError::Failed(m)) => assert!(m.contains("symlink"), "{m}"),
+                other => panic!("expected a refusal, got {:?}", other.err()),
+            }
+            assert!(matches!(delete(&target), Err(CaFileError::Failed(_))));
+        }
+        assert!(
+            !real.join("cainary").exists(),
+            "nothing was created through the link"
+        );
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn refuses_an_unsafe_ancestor_and_relative_paths() {
+        let base = tmp("unsafe-ancestor");
+        fs::create_dir_all(&base).unwrap();
+        fs::set_permissions(&base, fs::Permissions::from_mode(0o777)).unwrap();
+        match publish(&base.join("cainary"), "x") {
+            Err(CaFileError::Failed(m)) => assert!(m.contains("not safe"), "{m}"),
+            other => panic!("expected a refusal, got {:?}", other.err()),
+        }
+        fs::set_permissions(&base, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(publish(Path::new("relative/cainary"), "x").is_err());
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn creates_missing_ancestors_privately() {
+        let base = tmp("create-ancestors");
+        let d = base.join("a/b/cainary");
+        drop(publish(&d, "x").unwrap());
+        for p in [base.join("a"), base.join("a/b"), d.clone()] {
+            assert_eq!(mode(&p), 0o700, "{}", p.display());
+        }
+        fs::remove_dir_all(&base).unwrap();
     }
 }
