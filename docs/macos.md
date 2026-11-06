@@ -6,8 +6,10 @@ detection in §4, and the subprocess contract in §9.1.
 
 **Ground rules.** The UI renders what the core says: it never computes a level, a summary or a
 diff, and its only arithmetic is the badge count (the `status` rule). It writes only its prefs
-domain `ua.SkeLLLa.cAInary` and the login-item registration. No network: Docs and Support links
-open in the browser on click (`NSWorkspace.open`, http(s) only). No credential files: it reads its
+domain `ua.SkeLLLa.cAInary` and the login-item registration. (The opt-in OTel debug collector's
+log file, §2.8, is written by the collector child, not by the app.) No network in the app itself:
+Docs and Support links open in the browser on click (`NSWorkspace.open`, http(s) only). The only
+listening socket belongs to the opt-in collector child (§2.8), on loopback. No credential files: it reads its
 prefs, its own bundle, and (through `NSWorkspace`, for icons) the AI apps' `Info.plist`.
 
 ## 1. Contract with the core
@@ -129,8 +131,9 @@ off with `EntryIcon.useAppIcons = false`.
 ### 2.3 Details window (`DetailView.swift`, 780×560)
 
 A `NavigationSplitView`. The sidebar has Changes (when there are any), AI apps (the four, with
-not-installed ones greyed), Other monitoring, and Checked locations. Popover rows and notification
-clicks set `Navigation.selection: DetailSelection` (`.changes`, `.entry(id)`, `.sources`).
+not-installed ones greyed), Other monitoring, and Checked locations and OTel debug collector (§2.8).
+Popover rows and notification clicks set `Navigation.selection: DetailSelection` (`.changes`,
+`.entry(id)`, `.sources`, `.collector`).
 
 `DetailView` takes the `ScanState`. `.scanning(nil)` shows "Scanning…". `.failed(_, nil)` shows a
 centered "Couldn't scan", the error's reason and **Retry** (the store's refresh). `.failed(_, last)`
@@ -148,6 +151,17 @@ the detail pane and dims it (opacity 0.5, no colour), so stale green never reads
    - `detail`, "Sends: …", and "Set by: …" (an origin phrase: mdm → "your organization (MDM)",
      user → "you", …);
    - `config.path`, then the evidence in a selectable monospaced block;
+   - **What it sends** (`PayloadView.swift`), only when the finding has a `payload` (in-effect
+     telemetry findings): a collapsed `DisclosureGroup` after the evidence and before Docs, drawn
+     from the core's JSON as is. Inside: the export and catalog version (plus a "may" tag); one
+     line per gate (a chip, "sent", "redacted", "generic", "not sent" or "local only", and the
+     core's `text`); the identity attributes ("on every record"); the resource attributes; the
+     records, each with a "may" tag when `maybe`, a "seen" tag when `observed`, its attributes as
+     `key — what`, and a chip on content attributes; and the sample in a selectable monospaced
+     block with **Copy** (`NSPasteboard`). The model decodes `payload` leniently: a missing or
+     malformed one is `nil` and never fails the report, and `Sent`, `Export` and `ItemKind` are open
+     string enums. It is closed by default, and its state lives in `Navigation.expanded` under
+     `"<findingKey>#payload"`.
    - **Reveal in Finder**, only for `config.kind` `file`/`dir` with a path starting `/` or `~/`
      (`~` expanded) that exists;
    - **Docs**, a `Button` (not a `Link`, so it renders in snapshots) that opens the http(s) URL.
@@ -183,6 +197,9 @@ opens Details at that entry, not the popover: `MenuBarExtra` has no public API t
   `willPresent` → `.banner`; `didReceive` → `Navigation.select(.entry(id))` and
   `WindowOpener.openDetails()`.
 
+A red-flag notification from the collector (§2.8) has the identifier prefix
+`otel-collector-alert:`; its click opens Details at the collector pane instead of an entry.
+
 ### 2.5 Settings (`SettingsView.swift`)
 
 A grouped `Form`, 480 pt wide:
@@ -193,6 +210,7 @@ A grouped `Form`, 480 pt wide:
   value is kept in the list.
 - **Startup:** Launch at login (`LoginItem.swift`: `SMAppService.mainApp`, the approval hint, the
   error line).
+- **OTel debug collector:** the opt-in toggle and its options (§2.8).
 - **Support Ukraine; version, Source code, About…**
 
 There is no `--alert` picker: levels, the icon and notifications all ignore it. The legacy
@@ -242,6 +260,65 @@ open; the details window SwiftUI opens at launch is closed again.
 - **Mark as seen:** `replace(raw)` with the current report, bump `generation` (which also drops a
   scan or post in flight), and rescan.
 
+### 2.8 OTel debug collector (opt-in; `CollectorClient`, `CollectorStore`, `CollectorView`)
+
+An off-by-default toggle in Settings that runs `cainary-otel-debug`, a separate local OTLP/HTTP
+receiver, as a child of the app, so you can see what an AI tool's telemetry export contains. The
+design is `docs/design/otel-payload-preview.md` §8, §9 and §14. `cainary scan` never starts it, and
+the app never talks to it over the network: it reads the child's stdout.
+
+- **Helper:** `Contents/Helpers/cainary-otel-debug`; DEBUG builds also honour
+  `CAINARY_OTEL_DEBUG=<path>`. A missing helper shows "the collector is missing from the app".
+- **Preferences** (`Preferences.swift`, in the app's own domain):
+
+  | key | default |
+  | --- | --- |
+  | `otelCollectorEnabled` (Bool) | `false` |
+  | `otelCollectorPort` (Int, 1024–65535) | `4318` |
+  | `otelCollectorLogToFile` (Bool) | `false` |
+  | `otelCollectorLogPath` (String) | empty: `~/Library/Logs/cAInary/otel-debug.jsonl` |
+  | `otelCollectorPresets` ([String], the presets that are on) | absent: the default-on set (everything but `ipv4`) |
+  | `otelCollectorPatterns` (Data, JSON `[{name, kind, pattern, caseSensitive}]`) | none |
+  | `otelCollectorNotify` (Bool) | `true` |
+
+  The toggle is intent: when it is on, the collector starts at launch. Changing any option that
+  reaches the child (port, log file, presets, patterns) restarts a running one after a short pause;
+  "Notify about red flags" doesn't. `--show-values` is not offered.
+- **Settings section:** the toggle; the port; "Show in UI only" or "Also save to:" a path with
+  **Choose…** (`NSSavePanel`); a checkbox per preset; a table of your own patterns (name, pattern,
+  **Regex** and **Match case** checkboxes, add and remove); "Notify about red flags".
+- **Process** (`CollectorClient.swift`): Foundation `Process` with three `Pipe`s. argv is only
+  `--json --config-stdin --port <n> [--log-file <path>]`. The red-flag patterns and presets go over
+  stdin as one JSON line, so the pattern text never appears in `ps`. The app then keeps the write
+  end of stdin open and never closes it: that is the lifeline, the child exits on stdin EOF, so it
+  can't outlive the app, `kill -9` included. The write end is close-on-exec, so the `cainary scan`
+  children don't inherit it. stdout is read by a line reader with a 4 MiB line cap (a longer line
+  kills the child: "Stopped: output too large."); stderr keeps the last 8 KiB.
+- **Stop:** close stdin, SIGTERM, wait up to 2 s (1 s when the app quits), SIGKILL, reap. Toggling
+  off does this in the background; a restart waits for it, so the port is free. On quit,
+  `applicationWillTerminate` stops the child synchronously.
+- **State** (`CollectorStore`, an `ObservableObject`): off, starting, listening (the `hello`), or
+  failed (a reason, with **Retry**; there is no auto-restart). It keeps the last 50 `batch` lines,
+  200 `alert` lines and 16 MiB of lines in memory, never on disk. It reads JSON-lines v1
+  (`CollectorLines.swift`) and tolerates unknown types, keys and `error.source` values; another `v`
+  stops the collector with "Update cAInary".
+- **Pane** (`CollectorView.swift`): a status line ("Listening on http://127.0.0.1:4318 · 12 batches
+  · 3 red flags", or Stopped or Failed); the `hello.setup` lines in two monospaced blocks with
+  **Copy**; the red flags; and the batches, newest first, each a `DisclosureGroup` drawn from
+  `summary` (group chips, an orange "not in catalog" tag) with a "Raw records" group for the masked
+  `resources`.
+- **Notifications:** a red flag posts a plain-text notification titled `Red flag: <pattern>` with
+  the body `<event> · <attribute> (<match>)`, at most one per pattern per 60 s. Control and bidi
+  characters are escaped first. A click opens the pane.
+- **Sandbox and entitlements:** none. The app is not sandboxed and has no entitlements, so
+  `com.apple.security.network.server` isn't needed, and the hardened runtime doesn't restrict
+  listening sockets. The child binds loopback only. Whether the Application Firewall prompts for
+  it is untested: check by hand once.
+- **The log file** is written by the child (mode 0600, in a 0700 directory it creates), not by the
+  app, so "writes only its prefs domain" still holds for the app itself.
+- The collector is unauthenticated: any local process can post to it, so the pane shows what it
+  *received*.
+
 ## 3. Files (`macos/`: macOS 14+, SwiftUI, Swift 6, swiftc via Makefile, no SwiftPM)
 
 | file | role |
@@ -256,6 +333,8 @@ open; the details window SwiftUI opens at launch is closed again.
 | `Sources/BaselineStore.swift` | `baseline`, `notifiedChangeIds`, `replace(raw) -> Bool`; `ChangeTracker` (§2.7 steps 3–6) |
 | `Sources/Notifier.swift` | `plan()`, `UNNotifier` |
 | `Sources/Navigation.swift` | `ObservableObject`: `selection`, `expanded` |
+| `Sources/PayloadView.swift` | "What it sends" (§2.3), `CopyBlock`, `SentChip` |
+| `Sources/CollectorClient.swift`, `CollectorLines.swift`, `CollectorSettings.swift`, `CollectorStore.swift`, `CollectorView.swift` | the OTel debug collector (§2.8) |
 | `Sources/Style.swift` | level style, `LevelChip`, display names (signal, origin, surface), `WindowAccessor` |
 | `Sources/MenuBarIcon.swift` | `image(MenuState, IconStyle) -> NSImage`, the label view |
 | `Sources/EntryIcon.swift` | §2.2 icons |
@@ -311,7 +390,10 @@ Steps:
 `LSUIElement`, `LSMinimumSystemVersion` 14.0, and the `__VERSION__`/`__COMMIT__`/`__BUILD_DATE__`
 placeholders. There is no `CFBundleIconFile` yet (no artwork; SF Symbols only).
 
-No entitlements, and no Python, Ruby or Node anywhere.
+No entitlements (the collector child needs none either, §2.8), and no Python, Ruby or Node
+anywhere. `bundle.sh` is expected to put the collector at `Contents/Helpers/cainary-otel-debug`
+and sign it as `ua.SkeLLLa.cAInary.otel-debug`; that change is pending (packaging is decided
+separately).
 
 ## 5. Proving it works without a human
 
@@ -329,6 +411,9 @@ every `Sources/*.swift` except `main.swift`, plus `Tests/Support/*.swift`:
 - Decodes every `crates/cainary-core/tests/golden/*.json` and `crates/cainary-cli/tests/golden/*.json`.
 - Forward-compatibility cases, written to `$TMPDIR`: an unknown slug per open enum decodes; an
   extra key is ignored; a missing key and a wrong type both fail.
+- **`PayloadTests.swift`**: every golden decodes, and exactly the findings with a `payload` key get
+  one. A string, `null` or export-less payload is `nil` and the finding survives; an unknown `sent`,
+  `export` or `kind` slug is kept; an absent `maybe` is false.
 - `MenuState`: `empty-macos` is a template; `device-only-proxy` is coloured with badge 1; a
   synthetic incomplete `ok` is `?`; an unknown level is `?`, never green.
 
@@ -341,6 +426,16 @@ every `Sources/*.swift` except `main.swift`, plus `Tests/Support/*.swift`:
   Deadline 1 s, each asserting `.timedOut`, the helper reaped, and **elapsed < 4 s**:
   `trap '' TERM; sleep 60`; `sleep 60 & exec sleep 60` (a descendant holds the pipes); and
   `sleep 60 & exit 0` (exited, pipes still open).
+- **`CollectorTests.swift`** (§2.8): the v1 lines of `Tests/Support/CollectorSamples.swift`
+  (hello, batch, alert, error; unknown type, key and `error.source`; `v: 2` refused; garbage
+  skipped); the settings → argv (no pattern text) and stdin config line, prefs round trip and
+  clamping; `CollectorClient` against `collector-*.sh` stubs (lines in order, the config on stdin,
+  stop closes stdin and reaps, a SIGTERM-ignoring child is killed after the grace, an oversize
+  line kills the child, an exit carries stderr, a missing helper); `CollectorStore` retention
+  (50 batches, 200 alerts, 16 MiB), the 60 s per-pattern throttle, `v: 2` → "Update cAInary",
+  escaped stderr, and with a real stub child: start at launch, one restart for two edits, no
+  restart for a notify change, off and quit reap it. Not covered here: the no-orphan test that
+  SIGKILLs a helper process holding the lifeline, and a scan running while the collector is up.
 - **`TrackerTests.swift`**, `ChangeTracker` with explicit times: nothing is due before
   `confirmAfter`, even if a scan runs; due after; a flap (seen, then gone at the confirm) posts
   nothing; notify A, a scan sees only B, then A+B → A is due again after a new confirm; unhandled
@@ -369,8 +464,9 @@ every `Sources/*.swift` except `main.swift`, plus `Tests/Support/*.swift`:
 - **Popover:** `popover-<fixture>.png` for `empty-macos`, `claude-code-org-macos`,
   `device-macos-managed`, `device-only-proxy` and `cursor-macos-managed`; also `-changes`
   (org-macos against an `empty-macos` baseline), `-failed`, `-scanning`, and a dark org-macos.
-- **Details:** `detail-claude.png` (org-macos, all rows expanded), `detail-monitor.png` (the first
+- **Details:** `detail-claude.png` (org-macos, all rows and every "What it sends" expanded), `detail-monitor.png` (the first
   `others` entry of `device-macos-managed`) and `detail-not-installed.png`.
+- **Collector:** `collector.png` (the pane on the sample lines) and `collector-failed.png`.
 - **Menu bar:** `menubar.png`, every `MenuState` look × both icon styles, on light and dark strips.
 
 Pass: every PNG exists, isn't empty, and has a sane height (popover 200–1400 pt). Reviewers then
@@ -403,7 +499,16 @@ make build ui-test bundle && open dist/cAInary.app
    Allow notifications when asked. About 30 s later "Claude · HIGH" arrives, and a click opens
    Claude's details. The popover shows "Changes since …", and Mark as seen clears it. Clean up
    with `kill $!; defaults delete ua.SkeLLLa.cAInary`.
-6. **Failure:** `CAINARY_CORE=/nonexistent dist/cAInary.app/Contents/MacOS/cAInary` shows a grey
+6. **OTel debug collector.** In Settings turn on "Run the collector", then in fish:
+
+   ```fish
+   env CLAUDE_CODE_ENABLE_TELEMETRY=1 OTEL_LOGS_EXPORTER=otlp OTEL_EXPORTER_OTLP_PROTOCOL=http/json OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 claude -p hi
+   ```
+
+   The pane shows a batch and, with a pattern that matches the prompt, a red flag and a
+   notification whose click opens the pane. Quit the app: `pgrep cainary-otel-debug` finds nothing.
+   Then `kill -9` the app while it listens: the helper is gone within a few seconds.
+7. **Failure:** `CAINARY_CORE=/nonexistent dist/cAInary.app/Contents/MacOS/cAInary` shows a grey
    `?` and "Couldn't scan".
 
 ## 6. Not planned
