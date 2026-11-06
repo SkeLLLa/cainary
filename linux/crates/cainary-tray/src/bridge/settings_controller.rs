@@ -66,6 +66,8 @@ pub mod qobject {
         )]
         #[qproperty(QString, launch_at_login_error, cxx_name = "launchAtLoginError")]
         #[qproperty(bool, notifications_available, cxx_name = "notificationsAvailable")]
+        #[qproperty(QString, collector_json, cxx_name = "collectorJson")]
+        #[qproperty(bool, file_chooser_available, cxx_name = "fileChooserAvailable")]
         // Why settings.toml couldn't be read (defaults are in use); empty when it could.
         #[qproperty(QString, load_error, cxx_name = "loadError")]
         type SettingsController = super::SettingsControllerRust;
@@ -84,6 +86,14 @@ pub mod qobject {
         fn set_close_to_tray(self: Pin<&mut SettingsController>, value: bool);
         #[cxx_name = "setIconStyle"]
         fn set_icon_style(self: Pin<&mut SettingsController>, value: QString);
+
+        #[qinvokable]
+        #[cxx_name = "setCollector"]
+        fn set_collector(self: Pin<&mut SettingsController>, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "chooseCollectorLogFile"]
+        fn choose_collector_log_file(self: Pin<&mut SettingsController>);
 
         #[qsignal]
         #[cxx_name = "refreshChanged"]
@@ -118,6 +128,8 @@ pub struct SettingsControllerRust {
     icon_style: QString,
     launch_at_login_error: QString,
     notifications_available: bool,
+    collector_json: QString,
+    file_chooser_available: bool,
     load_error: QString,
 }
 
@@ -132,6 +144,8 @@ impl Default for SettingsControllerRust {
             icon_style: QString::from("monochrome"),
             launch_at_login_error: QString::default(),
             notifications_available: false,
+            collector_json: QString::from("{}"),
+            file_chooser_available: false,
             load_error: QString::default(),
         }
     }
@@ -147,6 +161,8 @@ pub struct SettingsView {
     pub icon_style: &'static str,
     pub launch_at_login_error: String,
     pub notifications_available: bool,
+    pub collector_json: String,
+    pub file_chooser_available: bool,
 }
 
 impl cxx_qt::Initialize for qobject::SettingsController {
@@ -187,7 +203,14 @@ impl qobject::SettingsController {
         }
         self.as_mut()
             .set_launch_at_login_error(QString::from(view.launch_at_login_error.as_str()));
-        self.set_notifications_available(view.notifications_available);
+        self.as_mut()
+            .set_notifications_available(view.notifications_available);
+        let collector_json = QString::from(view.collector_json.as_str());
+        if self.collector_json != collector_json {
+            self.as_mut().rust_mut().collector_json = collector_json;
+            self.as_mut().collector_json_changed();
+        }
+        self.set_file_chooser_available(view.file_chooser_available);
     }
 
     fn set_refresh(mut self: Pin<&mut Self>, value: QString) {
@@ -246,5 +269,15 @@ impl qobject::SettingsController {
         controller::send(AppMessage::Command(AppCommand::SetIconStyle(
             value.to_string(),
         )));
+    }
+
+    fn set_collector(self: Pin<&mut Self>, value: &QString) {
+        controller::send(AppMessage::Command(AppCommand::SetCollector(
+            value.to_string(),
+        )));
+    }
+
+    fn choose_collector_log_file(self: Pin<&mut Self>) {
+        controller::send(AppMessage::Command(AppCommand::ChooseCollectorLogFile));
     }
 }

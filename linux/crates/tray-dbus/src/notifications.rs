@@ -60,6 +60,8 @@ impl Notifier {
 
     pub async fn post(&self, n: &Notification) -> zbus::Result<u32> {
         let replaces = self.lock().latest.get(&n.entry).copied().unwrap_or(0);
+        let summary = escape_plain_text(&n.summary);
+        let body = escape_plain_text(&n.body);
         let mut hints = HashMap::new();
         hints.insert("desktop-entry", Value::from(crate::APP_ID));
         // Normal urgency: these are changes worth a look, not emergencies.
@@ -70,8 +72,8 @@ impl Notifier {
                 "cAInary",
                 replaces,
                 crate::APP_ID,
-                &n.summary,
-                &n.body,
+                &summary,
+                &body,
                 &["default", "Open details"],
                 hints,
                 -1,
@@ -123,7 +125,45 @@ impl Notifier {
     }
 }
 
+/// Freedesktop notification bodies allow a small markup subset. These values are plain text, so
+/// escape markup and control characters before they reach the desktop shell.
+pub fn escape_plain_text(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for ch in text.chars() {
+        let code = ch as u32;
+        if code <= 0x1f
+            || (0x7f..=0x9f).contains(&code)
+            || (0x202a..=0x202e).contains(&code)
+            || (0x2066..=0x2069).contains(&code)
+            || matches!(code, 0x200e | 0x200f | 0x061c)
+        {
+            escaped.push_str(&format!("\\u{{{code:04X}}}"));
+        } else {
+            match ch {
+                '&' => escaped.push_str("&amp;"),
+                '<' => escaped.push_str("&lt;"),
+                '>' => escaped.push_str("&gt;"),
+                _ => escaped.push(ch),
+            }
+        }
+    }
+    escaped
+}
+
 enum Signal {
     Invoked(ActionInvoked),
     Closed(NotificationClosed),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::escape_plain_text;
+
+    #[test]
+    fn notification_text_cannot_add_markup_or_lines() {
+        assert_eq!(
+            escape_plain_text("<b>bad & text</b>\nsecond\u{202e}"),
+            "&lt;b&gt;bad &amp; text&lt;/b&gt;\\u{000A}second\\u{202E}"
+        );
+    }
 }

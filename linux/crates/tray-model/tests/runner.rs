@@ -4,9 +4,10 @@ mod common;
 
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use cainary_tray_model::runner::{self, Client, Limits, RunError, ScanError};
+use cainary_tray_model::runner::{self, Client, Limits, RunError, ScanError, StreamMsg};
 use common::{golden, stub, temp_dir};
 
 fn client(name: &str, extra: &[PathBuf]) -> Client {
@@ -34,6 +35,112 @@ fn read_pid(path: &PathBuf) -> i32 {
         .trim()
         .parse()
         .unwrap()
+}
+
+#[test]
+fn stream_reads_bounded_lines_and_stops_with_stdin_eof() {
+    let args = [
+        OsString::from("-c"),
+        OsString::from("printf 'first\\nsecond\\n'; cat >/dev/null"),
+    ];
+    let mut stream = runner::spawn_stream(std::path::Path::new("/bin/sh"), &args, 1024).unwrap();
+    stream.write_stdin(b"{\"v\":1}\n").unwrap();
+    let receiver = stream.take_receiver().unwrap();
+    let mut lines = Vec::new();
+    while lines.len() < 2 {
+        match receiver.recv_timeout(Duration::from_secs(2)).unwrap() {
+            StreamMsg::Line(line) => lines.push(line),
+            other => panic!("unexpected stream message: {other:?}"),
+        }
+    }
+    assert_eq!(lines, ["first", "second"]);
+    stream.stop(Duration::from_secs(1));
+    assert!(
+        receiver
+            .try_iter()
+            .any(|message| matches!(message, StreamMsg::Exited { .. }))
+    );
+}
+
+#[test]
+fn stream_stops_on_an_oversize_line() {
+    let args = [
+        OsString::from("-c"),
+        OsString::from("printf '12345678901234567890\\n'; sleep 30"),
+    ];
+    let mut stream = runner::spawn_stream(std::path::Path::new("/bin/sh"), &args, 16).unwrap();
+    let receiver = stream.take_receiver().unwrap();
+    assert_eq!(
+        receiver.recv_timeout(Duration::from_secs(2)).unwrap(),
+        StreamMsg::Fault("output too large".into())
+    );
+    assert!(matches!(
+        receiver.recv_timeout(Duration::from_secs(2)).unwrap(),
+        StreamMsg::Exited { .. }
+    ));
+    stream.stop(Duration::from_secs(1));
+}
+
+#[test]
+fn collector_child_dies_when_its_parent_is_sigkilled() {
+    const PID_FILE: &str = "CAINARY_STREAM_TEST_PID_FILE";
+    if let Some(path) = std::env::var_os(PID_FILE) {
+        let _stream = runner::spawn_stream(
+            std::path::Path::new("/bin/sleep"),
+            &[OsString::from("30")],
+            1024,
+        )
+        .unwrap();
+        std::fs::write(path, _stream.pid().to_string()).unwrap();
+        loop {
+            std::thread::sleep(Duration::from_secs(60));
+        }
+    }
+
+    // Adopt and reap the helper's child, so a zombie cannot make kill(pid, 0) look alive.
+    // SAFETY: PR_SET_CHILD_SUBREAPER takes an integer flag and has no pointer arguments.
+    assert_eq!(unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) }, 0);
+    let pid_file = temp_dir("stream-parent-death").join("pid");
+    let mut helper = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "collector_child_dies_when_its_parent_is_sigkilled",
+            "--nocapture",
+        ])
+        .env(PID_FILE, &pid_file)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !pid_file.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(pid_file.exists(), "helper didn't start the stream child");
+    let child_pid = read_pid(&pid_file);
+    // SAFETY: `helper.id()` is the child process this test just spawned.
+    assert_eq!(
+        unsafe { libc::kill(helper.id() as libc::pid_t, libc::SIGKILL) },
+        0
+    );
+    let _ = helper.wait();
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let mut status = 0;
+        // SAFETY: wait only for the adopted collector child and do not block.
+        let reaped = unsafe { libc::waitpid(child_pid, &mut status, libc::WNOHANG) } == child_pid;
+        // SAFETY: signal 0 checks whether this pid still exists.
+        let exists = unsafe { libc::kill(child_pid, 0) } == 0;
+        if reaped || !exists {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "collector child {child_pid} survived parent death"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 #[test]

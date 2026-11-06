@@ -8,6 +8,7 @@ use std::time::{Duration, SystemTime};
 
 use serde_json::{Value, json};
 
+use crate::collector::Model as CollectorModel;
 use crate::report::Report;
 use crate::runner::ScanError;
 use crate::settings::Settings;
@@ -35,7 +36,7 @@ pub struct Scenario {
     pub name: &'static str,
     /// The window shown: `popup`, `details`, `settings` or `about`.
     pub window: &'static str,
-    /// What Details selects: `""` (the default entry), `":changes"` or `":sources"`.
+    /// What Details selects: `""`, `":changes"`, `":sources"` or `":collector"`.
     pub selection: &'static str,
     pub state: ScanState,
     pub settings: Settings,
@@ -56,6 +57,21 @@ pub fn with_changes(raw: &[u8], changes: Vec<Value>, since_error: Option<&str>) 
     report["since"] = json!({"scannedAt": "2026-01-01T00:00:00Z", "error": since_error});
     report["changes"] = Value::Array(changes);
     serde_json::to_vec(&report).expect("a report serializes")
+}
+
+/// A synthetic collector stream for the Details offscreen snapshot.
+pub fn collector_sample() -> String {
+    let mut model = CollectorModel::default();
+    model.accept(
+        r#"{"v":1,"type":"hello","ts":"2026-01-01T14:05:00Z","generator":"cainary-otel-debug 0.6.0","endpoint":"http://127.0.0.1:4318","setup":{"claudeCode":["CLAUDE_CODE_ENABLE_TELEMETRY=1","OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318"],"codex":["otel.exporter={otlp-http={…}}"],"notes":["Use a local endpoint in the tool configuration."]}}"#.into(),
+    );
+    model.accept(
+        r#"{"v":1,"type":"batch","ts":"2026-01-01T14:05:01Z","seq":1,"signal":"logs","path":"/v1/logs","bytes":20431,"vendor":"claude-code","service":{"name":"claude-code","version":"2.1.316"},"catalog":"claude-code 2.1.316","records":12,"notInCatalog":1,"summary":{"identity":["user.email"],"resource":["host.arch"],"records":[{"name":"claude_code.tool_result","kind":"event","count":3,"known":true,"what":"A tool finished","attrs":[{"key":"tool_parameters","group":"content","flag":"OTEL_LOG_TOOL_DETAILS","known":true},{"key":"foo","group":null,"known":false}]}]},"resources":[]}"#.into(),
+    );
+    model.accept(
+        r#"{"v":1,"type":"alert","ts":"2026-01-01T14:05:02Z","seq":1,"pattern":"aws-access-key","preset":true,"signal":"logs","event":"claude_code.tool_result","attribute":"tool_input","where":"value","count":2,"match":"AKI…(20 chars)"}"#.into(),
+    );
+    serde_json::to_string(&model.view()).expect("collector sample serializes")
 }
 
 fn snapshot(raw: &[u8]) -> Arc<Snapshot> {
@@ -124,6 +140,14 @@ pub fn scenarios() -> Vec<Scenario> {
         ),
         scenario("popup-empty", "popup", "", ready(EMPTY), &defaults, false),
         scenario("details", "details", "", ready(CLAUDE), &defaults, false),
+        scenario(
+            "details-collector",
+            "details",
+            ":collector",
+            ready(CLAUDE),
+            &defaults,
+            false,
+        ),
         scenario(
             "details-changes",
             "details",

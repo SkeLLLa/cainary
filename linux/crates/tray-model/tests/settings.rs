@@ -4,6 +4,7 @@ mod common;
 
 use std::os::unix::fs::PermissionsExt;
 
+use cainary_tray_model::settings::{CollectorPattern, CollectorPatternKind, CollectorSettings};
 use cainary_tray_model::settings::{Refresh, Settings};
 use cainary_tray_model::{autostart, locate};
 use common::temp_dir;
@@ -13,6 +14,13 @@ fn settings_round_trip_and_default_when_missing_or_broken() {
     let dir = temp_dir("settings");
     let path = dir.join("cainary/tray.toml");
     assert_eq!(Settings::load(&path), Settings::default());
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    // A pre-collector tray.toml continues to load with the opt-in feature disabled.
+    std::fs::write(&path, "refresh = \"5m\"\nnotifications = false\n").unwrap();
+    let old = Settings::load(&path);
+    assert_eq!(old.refresh, Refresh::Min5);
+    assert!(!old.notifications);
+    assert!(!old.collector.enabled);
     let s = Settings {
         refresh: Refresh::Daily,
         notifications: false,
@@ -32,6 +40,49 @@ fn settings_round_trip_and_default_when_missing_or_broken() {
     std::fs::write(&path, "future = 1\nnotifications = false\n").unwrap();
     assert!(!Settings::load(&path).notifications);
     assert_eq!(Refresh::default().interval().as_secs(), 600);
+}
+
+#[test]
+fn collector_settings_round_trip_with_patterns() {
+    let dir = temp_dir("collector-settings");
+    let path = dir.join("tray.toml");
+    let mut settings = Settings::default();
+    settings.collector.enabled = true;
+    settings.collector.port = 4444;
+    settings.collector.log_to_file = true;
+    settings.collector.log_path = "/tmp/otel-debug.jsonl".into();
+    settings.collector.patterns.push(CollectorPattern {
+        name: "customer".into(),
+        kind: CollectorPatternKind::Regex,
+        pattern: "acme".into(),
+        case_sensitive: true,
+    });
+    settings.save(&path).unwrap();
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert!(saved.contains("[collector]"));
+    assert!(saved.contains("case_sensitive = true"));
+    assert_eq!(Settings::load(&path), settings);
+}
+
+#[test]
+fn collector_patterns_use_child_name_rules() {
+    let pattern = |name: &str| CollectorPattern {
+        name: name.into(),
+        kind: CollectorPatternKind::Text,
+        pattern: "private-pattern".into(),
+        case_sensitive: false,
+    };
+    let mut settings = CollectorSettings::default();
+    settings.patterns.push(pattern("customer-id"));
+    assert!(settings.valid());
+
+    settings.patterns[0].name = "Customer-ID".into();
+    assert!(!settings.valid());
+    settings.patterns[0].name = "email".into();
+    assert!(!settings.valid());
+    settings.patterns[0].name = "customer-id".into();
+    settings.patterns.push(pattern("customer-id"));
+    assert!(!settings.valid());
 }
 
 #[test]

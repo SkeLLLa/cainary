@@ -8,7 +8,10 @@
 use serde::Serialize;
 
 use crate::level::Level;
-use crate::report::{Change, Entry, Finding, PROBLEM_STATES, Report, SourceRecord};
+use crate::report::{
+    Change, Entry, Finding, PROBLEM_STATES, Payload, PayloadAttribute, PayloadGate, PayloadRecord,
+    Report, SourceRecord,
+};
 use crate::settings::Settings;
 use crate::store::ScanState;
 use crate::strings::{self, ENVIRONMENT_NOTE};
@@ -119,6 +122,52 @@ pub struct FindingView {
     pub evidence: String,
     pub reveal_path: String,
     pub docs: String,
+    pub payload: Option<PayloadView>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PayloadView {
+    pub heading: String,
+    pub maybe: bool,
+    pub docs: String,
+    pub gates: Vec<PayloadGateView>,
+    pub identity: Vec<PayloadAttributeView>,
+    pub conditional_identity: Vec<PayloadAttributeView>,
+    pub resource: Vec<PayloadAttributeView>,
+    pub records: Vec<PayloadRecordView>,
+    pub sample: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PayloadGateView {
+    pub chip: String,
+    pub label: String,
+    pub text: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PayloadAttributeView {
+    pub key: String,
+    pub what: String,
+    pub maybe: bool,
+    pub content: bool,
+    pub gate: String,
+    pub sent: String,
+    pub when: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PayloadRecordView {
+    pub title: String,
+    pub what: String,
+    pub observed: bool,
+    pub maybe: bool,
+    pub unit: String,
+    pub attrs: Vec<PayloadAttributeView>,
 }
 
 #[derive(Debug, Serialize)]
@@ -468,6 +517,121 @@ fn finding_view(
         evidence,
         reveal_path: resolve_reveal_path(&finding.config.kind, &finding.config.path),
         docs: docs.to_owned(),
+        payload: finding.payload.as_ref().map(payload_view),
+    }
+}
+
+fn payload_view(payload: &Payload) -> PayloadView {
+    let identity = payload
+        .identity
+        .iter()
+        .filter(|attribute| is_always_identity(attribute))
+        .map(payload_attribute_view)
+        .collect();
+    let conditional_identity = payload
+        .identity
+        .iter()
+        .filter(|attribute| !is_always_identity(attribute))
+        .map(payload_attribute_view)
+        .collect();
+    PayloadView {
+        heading: format!("{} · {}", payload.export, payload.catalog),
+        maybe: payload.maybe,
+        docs: if is_web_url(&payload.docs) {
+            payload.docs.clone()
+        } else {
+            String::new()
+        },
+        gates: payload.gates.iter().map(payload_gate_view).collect(),
+        identity,
+        conditional_identity,
+        resource: payload
+            .resource
+            .iter()
+            .map(payload_attribute_view)
+            .collect(),
+        records: payload.records.iter().map(payload_record_view).collect(),
+        sample: payload.sample.join("\n"),
+    }
+}
+
+fn payload_gate_view(gate: &PayloadGate) -> PayloadGateView {
+    let chip = match gate.sent.as_str() {
+        "yes" => "sent",
+        "redacted" => "redacted",
+        "generic" => "custom",
+        "local" => "local",
+        "no" => "not sent",
+        _ => "unknown",
+    };
+    let prefix = format!("{}: ", gate.label);
+    let text = gate.text.strip_prefix(&prefix).unwrap_or(&gate.text);
+    PayloadGateView {
+        chip: chip.to_owned(),
+        label: gate.label.clone(),
+        text: text.to_owned(),
+    }
+}
+
+fn payload_attribute_view(attribute: &PayloadAttribute) -> PayloadAttributeView {
+    PayloadAttributeView {
+        key: attribute.key.clone(),
+        what: attribute.what.clone(),
+        maybe: attribute.maybe,
+        content: attribute.group == "content",
+        gate: attribute.flag.clone().unwrap_or_default(),
+        sent: attribute.sent.clone().unwrap_or_default(),
+        when: attribute.when.clone().unwrap_or_default(),
+    }
+}
+
+fn is_always_identity(attribute: &PayloadAttribute) -> bool {
+    attribute.when.is_none()
+        && !attribute.maybe
+        && attribute.sent.as_deref().is_none_or(|sent| sent != "no")
+}
+
+#[cfg(test)]
+mod payload_tests {
+    use super::payload_view;
+    use crate::report::Payload;
+
+    #[test]
+    fn groups_conditional_identity_and_keeps_export_gate_labels() {
+        let payload: Payload = serde_json::from_value(serde_json::json!({
+            "export": "logs",
+            "catalog": "claude-code 2.1.316",
+            "gates": [{
+                "label": "Prompt text",
+                "sent": "redacted",
+                "text": "Prompt text: sent as <REDACTED>"
+            }],
+            "identity": [
+                {"key": "session.id"},
+                {"key": "vcs.repository.name", "when": "inside a git repository"},
+                {"key": "identity.source", "maybe": true}
+            ]
+        }))
+        .unwrap();
+
+        let view = payload_view(&payload);
+        assert_eq!(view.identity.len(), 1);
+        assert_eq!(view.identity[0].key, "session.id");
+        assert_eq!(view.conditional_identity.len(), 2);
+        assert_eq!(view.conditional_identity[0].when, "inside a git repository");
+        assert_eq!(view.gates[0].label, "Prompt text");
+        assert_eq!(view.gates[0].text, "sent as <REDACTED>");
+    }
+}
+
+fn payload_record_view(record: &PayloadRecord) -> PayloadRecordView {
+    PayloadRecordView {
+        title: format!("{} · {}", record.name, record.kind),
+        what: record.what.clone(),
+        observed: record.observed,
+        maybe: record.maybe,
+        unit: record.unit.clone().unwrap_or_default(),
+        attrs: record.attrs.iter().map(payload_attribute_view).collect(),
     }
 }
 

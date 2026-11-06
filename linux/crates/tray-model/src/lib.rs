@@ -5,6 +5,7 @@
 pub mod autostart;
 pub mod baseline;
 pub mod change;
+pub mod collector;
 pub mod fixtures;
 pub mod level;
 pub mod locate;

@@ -127,6 +127,10 @@ ColumnLayout {
             font.pointSize: Application.font.pointSize * 0.9
             Layout.fillWidth: true
         }
+        PayloadSection {
+            payload: root.finding ? root.finding.payload : null
+            Layout.fillWidth: true
+        }
         RowLayout {
             spacing: 8
             Button {

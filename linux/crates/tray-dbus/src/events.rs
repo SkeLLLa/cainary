@@ -75,6 +75,8 @@ pub enum Command {
     Tray(TrayUpdate),
     /// Posts `Notification`; the reply, if asked for, says whether the server took it.
     Notify(Notification, Option<async_channel::Sender<bool>>),
+    /// Opens the portal SaveFile dialog and returns a local file path, when available.
+    ChooseLogFile(async_channel::Sender<Option<String>>),
     /// Shows a file in the file manager (falls back via [`UiEvent::RevealFailed`]).
     Reveal(String),
     Shutdown,

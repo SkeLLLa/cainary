@@ -1,10 +1,81 @@
-use std::sync::OnceLock;
+use std::collections::VecDeque;
+use std::sync::{Condvar, Mutex, OnceLock};
 
 use async_channel::Sender;
 use cainary_tray_dbus::UiEvent;
+use cainary_tray_model::runner::StreamMsg;
 use cainary_tray_model::store::StoreEvent;
 
 static APP_MESSAGES: OnceLock<Sender<AppMessage>> = OnceLock::new();
+const COLLECTOR_QUEUE_BYTES: usize = 16 << 20;
+
+#[derive(Default)]
+struct CollectorQueueState {
+    messages: VecDeque<StreamMsg>,
+    bytes: usize,
+    wake_pending: bool,
+    closed: bool,
+}
+
+/// Bounded handoff from the pipe reader to the controller thread. A single wake message covers
+/// queued lines, so the app-wide event channel cannot accumulate collector output without bound.
+#[derive(Default)]
+pub struct CollectorMailbox {
+    state: Mutex<CollectorQueueState>,
+    space: Condvar,
+}
+
+impl CollectorMailbox {
+    /// Adds a message and returns whether the producer should queue a controller wake-up. `None`
+    /// means the mailbox was closed while the producer was waiting for space.
+    pub fn enqueue(&self, message: StreamMsg) -> Option<bool> {
+        let bytes = stream_message_bytes(&message);
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        while !state.closed && state.bytes.saturating_add(bytes) > COLLECTOR_QUEUE_BYTES {
+            state = self
+                .space
+                .wait(state)
+                .unwrap_or_else(|error| error.into_inner());
+        }
+        if state.closed {
+            return None;
+        }
+        state.bytes += bytes;
+        state.messages.push_back(message);
+        let wake = !state.wake_pending;
+        state.wake_pending = true;
+        Some(wake)
+    }
+
+    /// Removes one message and releases its byte budget. Clears the wake flag atomically with an
+    /// empty-queue check, so a concurrent producer either joins this drain or sends a new wake.
+    pub fn pop(&self) -> Option<StreamMsg> {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let Some(message) = state.messages.pop_front() else {
+            state.wake_pending = false;
+            return None;
+        };
+        state.bytes = state.bytes.saturating_sub(stream_message_bytes(&message));
+        self.space.notify_one();
+        Some(message)
+    }
+
+    pub fn close(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.closed = true;
+        state.messages.clear();
+        state.bytes = 0;
+        state.wake_pending = false;
+        self.space.notify_all();
+    }
+}
+
+fn stream_message_bytes(message: &StreamMsg) -> usize {
+    match message {
+        StreamMsg::Line(line) | StreamMsg::Fault(line) => line.len(),
+        StreamMsg::Exited { stderr_tail, .. } => stderr_tail.len(),
+    }
+}
 
 #[derive(Debug)]
 pub enum AppCommand {
@@ -23,6 +94,10 @@ pub enum AppCommand {
     SetStartMinimized(bool),
     SetCloseToTray(bool),
     SetIconStyle(String),
+    SetCollector(String),
+    ChooseCollectorLogFile,
+    RetryCollector,
+    CopyText(String),
     Quit,
 }
 
@@ -30,6 +105,12 @@ pub enum AppMessage {
     Command(AppCommand),
     Ui(UiEvent),
     Store(StoreEvent),
+    CollectorStreamReady {
+        generation: u64,
+        mailbox: std::sync::Arc<CollectorMailbox>,
+    },
+    CollectorLogPathChosen(Option<String>),
+    StopCollector(std::sync::mpsc::Sender<()>),
     Clipboard(String),
     Timer,
     Stop,
@@ -42,5 +123,25 @@ pub fn install(sender: Sender<AppMessage>) {
 pub fn send(message: AppMessage) {
     if let Some(sender) = APP_MESSAGES.get() {
         let _ = sender.try_send(message);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CollectorMailbox;
+    use cainary_tray_model::runner::StreamMsg;
+
+    #[test]
+    fn collector_mailbox_coalesces_wakes_and_closes() {
+        let mailbox = CollectorMailbox::default();
+        assert_eq!(mailbox.enqueue(StreamMsg::Line("one".into())), Some(true));
+        assert_eq!(mailbox.enqueue(StreamMsg::Line("two".into())), Some(false));
+        assert_eq!(mailbox.pop(), Some(StreamMsg::Line("one".into())));
+        assert_eq!(mailbox.pop(), Some(StreamMsg::Line("two".into())));
+        assert_eq!(mailbox.pop(), None);
+        assert_eq!(mailbox.enqueue(StreamMsg::Line("three".into())), Some(true));
+        mailbox.close();
+        assert_eq!(mailbox.pop(), None);
+        assert_eq!(mailbox.enqueue(StreamMsg::Line("four".into())), None);
     }
 }

@@ -4,7 +4,7 @@
 //! Slugs other than `level` stay plain strings; `KNOWN_*` lists say which ones this build
 //! recognises, so an unknown value shows as its slug instead of failing the decode.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::level::Level;
 
@@ -61,6 +61,105 @@ pub struct Finding {
     pub config: Config,
     #[serde(default)]
     pub docs: Option<String>,
+    /// Optional telemetry payload preview. Bad payload data is ignored without failing the scan.
+    #[serde(default, deserialize_with = "deserialize_payload_lenient")]
+    pub payload: Option<Payload>,
+}
+
+fn deserialize_payload_lenient<'de, D>(deserializer: D) -> Result<Option<Payload>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value(value).ok())
+}
+
+/// Scan-only description of what an OTel export may contain. Values are never captured here.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Payload {
+    #[serde(default)]
+    pub export: String,
+    #[serde(default)]
+    pub catalog: String,
+    #[serde(default)]
+    pub docs: String,
+    #[serde(default)]
+    pub maybe: bool,
+    #[serde(default)]
+    pub gates: Vec<PayloadGate>,
+    #[serde(default)]
+    pub identity: Vec<PayloadAttribute>,
+    #[serde(default)]
+    pub resource: Vec<PayloadAttribute>,
+    #[serde(default)]
+    pub records: Vec<PayloadRecord>,
+    #[serde(default)]
+    pub sample: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PayloadGate {
+    #[serde(default)]
+    pub flag: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub on: bool,
+    #[serde(default)]
+    pub sent: String,
+    #[serde(default)]
+    pub value: Option<String>,
+    #[serde(default)]
+    pub set_by: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub text: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PayloadAttribute {
+    #[serde(default)]
+    pub key: String,
+    #[serde(default)]
+    pub what: String,
+    #[serde(default)]
+    pub group: String,
+    #[serde(default)]
+    pub maybe: bool,
+    #[serde(default)]
+    pub flag: Option<String>,
+    #[serde(default)]
+    pub sent: Option<String>,
+    /// When the identity attribute is present only in some exports or situations.
+    #[serde(default)]
+    pub when: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PayloadRecord {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub what: String,
+    #[serde(default)]
+    pub unit: Option<String>,
+    #[serde(default)]
+    pub maybe: bool,
+    #[serde(default)]
+    pub observed: bool,
+    #[serde(default)]
+    pub flag: Option<String>,
+    #[serde(default)]
+    pub sent: Option<String>,
+    #[serde(default)]
+    pub attrs: Vec<PayloadAttribute>,
 }
 
 /// An app or monitor and its findings.
@@ -221,5 +320,53 @@ impl Report {
         self.sources
             .iter()
             .filter(|s| PROBLEM_STATES.contains(&s.state.as_str()))
+    }
+}
+
+#[cfg(test)]
+mod payload_tests {
+    use super::Finding;
+
+    #[test]
+    fn malformed_payload_is_ignored_without_rejecting_finding() {
+        let finding: Finding = serde_json::from_str(
+            r#"{"id":"claude-1","level":"low","title":"Telemetry","payload":{"export":7}}"#,
+        )
+        .unwrap();
+        assert!(finding.payload.is_none());
+    }
+
+    #[test]
+    fn malformed_preview_does_not_reject_a_scan_report() {
+        let mut report: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../crates/cainary-core/tests/golden/claude-code-linux.json"
+        )))
+        .unwrap();
+        report["apps"][0]["findings"][0]["payload"] = serde_json::json!({"export": 7});
+        let bytes = serde_json::to_vec(&report).unwrap();
+        let decoded = super::Report::decode(&bytes).expect("the scan still decodes");
+        assert!(decoded.apps[0].findings[0].payload.is_none());
+    }
+
+    #[test]
+    fn payload_decode_ignores_unknown_keys() {
+        let finding: Finding = serde_json::from_str(
+            r#"{"id":"claude-1","level":"low","title":"Telemetry","payload":{"export":"logs","catalog":"claude-code 2.1.316","future":{"key":true}}}"#,
+        )
+        .unwrap();
+        assert_eq!(finding.payload.unwrap().export, "logs");
+    }
+
+    #[test]
+    fn identity_when_is_optional_and_kept() {
+        let finding: Finding = serde_json::from_str(
+            r#"{"id":"claude-1","level":"low","title":"Telemetry","payload":{"export":"logs","identity":[{"key":"vcs.repository.name","when":"inside a git repository"}]}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            finding.payload.unwrap().identity[0].when.as_deref(),
+            Some("inside a git repository")
+        );
     }
 }

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -8,13 +8,14 @@ use async_channel::{Receiver, Sender};
 use cainary_tray_dbus::filemanager::file_uri;
 use cainary_tray_dbus::{self, Notification, Options as BusOptions, Service, TrayUpdate, UiEvent};
 use cainary_tray_model::notify_plan::Planned;
-use cainary_tray_model::runner::Client;
+use cainary_tray_model::runner::{self, Client, StreamHandle, StreamMsg};
 use cainary_tray_model::schedule::Scheduler;
-use cainary_tray_model::settings::{Refresh, Settings};
+use cainary_tray_model::settings::{CollectorSettings, Refresh, Settings};
 use cainary_tray_model::store::{Notifier, ScanState, Store, StoreEvent, Trigger};
 use cainary_tray_model::tray_icon::IconStyle;
 use cainary_tray_model::{
-    autostart, baseline::BaselineStore, change::ChangeTracker, locate, strings, summary, view,
+    autostart, baseline::BaselineStore, change::ChangeTracker, collector, locate, strings, summary,
+    view,
 };
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
 use futures_lite::future;
@@ -22,7 +23,7 @@ use zbus::Connection;
 
 use crate::bridge::ffi::ffi;
 use crate::bridge::settings_controller::SettingsView;
-use crate::controller::{self, AppCommand, AppMessage};
+use crate::controller::{self, AppCommand, AppMessage, CollectorMailbox};
 use crate::diagnostics::{self, Facts, vlog};
 use crate::env_defaults;
 use crate::placement;
@@ -132,8 +133,18 @@ pub fn run(options: &crate::Options) -> Result<i32, String> {
         BusSetup::Secondary(connection) => Some(connection),
         BusSetup::Unavailable => None,
     });
+    let file_chooser_available = file_chooser_available(match &bus {
+        BusSetup::Primary(connection) => Some(connection),
+        BusSetup::Secondary(connection) => Some(connection),
+        BusSetup::Unavailable => None,
+    });
     let launch_at_login_error = Arc::new(Mutex::new(String::new()));
-    sync_settings(&initial_settings, "", notifications_available);
+    sync_settings(
+        &initial_settings,
+        "",
+        notifications_available,
+        file_chooser_available,
+    );
 
     let mut service = None;
     let mut bus_commands = None;
@@ -171,6 +182,7 @@ pub fn run(options: &crate::Options) -> Result<i32, String> {
     };
 
     let cli_path = locate::cli(options.dev);
+    let collector_path = locate::otel_debug(options.dev);
     let mut client = Client::new(cli_path);
     client.extra_args = locate::scan_args(options.dev);
     let cli_version = client.version();
@@ -207,6 +219,7 @@ pub fn run(options: &crate::Options) -> Result<i32, String> {
     })));
     let worker = match spawn_controller(
         message_receiver,
+        message_sender.clone(),
         store.clone(),
         bus_commands,
         Arc::clone(&settings),
@@ -216,6 +229,8 @@ pub fn run(options: &crate::Options) -> Result<i32, String> {
         Arc::clone(&icons),
         Arc::clone(&launch_at_login_error),
         notifications_available,
+        file_chooser_available,
+        collector_path,
     ) {
         Ok(worker) => worker,
         Err(error) => {
@@ -259,6 +274,16 @@ pub fn run(options: &crate::Options) -> Result<i32, String> {
     // Ingress first (timer, D-Bus), then end the scan instead of abandoning it, then the
     // controller that was feeding the store.
     lock(&scheduler).stop();
+    let (stopped_sender, stopped_receiver) = mpsc::channel();
+    if message_sender
+        .try_send(AppMessage::StopCollector(stopped_sender))
+        .is_ok()
+        && stopped_receiver
+            .recv_timeout(Duration::from_secs(3))
+            .is_err()
+    {
+        eprintln!("cainary-tray: the OTel collector didn't stop in time");
+    }
     if let Some(mut service) = service {
         service.shutdown();
     }
@@ -304,6 +329,12 @@ fn notifications_available(connection: Option<&Connection>) -> bool {
     })
 }
 
+fn file_chooser_available(connection: Option<&Connection>) -> bool {
+    connection.is_some_and(|connection| {
+        future::block_on(cainary_tray_dbus::portal::available(connection))
+    })
+}
+
 fn forward_ui_events(receiver: Receiver<UiEvent>, messages: Sender<AppMessage>) {
     let _ = std::thread::Builder::new()
         .name("cainary-ui-events".into())
@@ -317,6 +348,7 @@ fn forward_ui_events(receiver: Receiver<UiEvent>, messages: Sender<AppMessage>) 
 #[allow(clippy::too_many_arguments)]
 fn spawn_controller(
     receiver: Receiver<AppMessage>,
+    messages: Sender<AppMessage>,
     store: Store,
     bus_commands: Option<Sender<cainary_tray_dbus::Command>>,
     settings: Arc<Mutex<Settings>>,
@@ -326,18 +358,29 @@ fn spawn_controller(
     icons: Arc<TrayIcons>,
     launch_at_login_error: Arc<Mutex<String>>,
     notifications_available: bool,
+    file_chooser_available: bool,
+    collector_path: Option<PathBuf>,
 ) -> std::io::Result<JoinHandle<()>> {
     std::thread::Builder::new()
         .name("cainary-controller".into())
         .spawn(move || {
             let mut has_seen_watcher = false;
             let mut scan_started = None;
+            let mut collector_runtime = CollectorRuntime::new(
+                collector_path,
+                bus_commands.clone(),
+                Arc::clone(&settings),
+                messages.clone(),
+            );
+            collector_runtime.restart(lock(&settings).collector.clone());
             while let Ok(message) = future::block_on(receiver.recv()) {
                 match message {
                     AppMessage::Command(command) => handle_command(
                         command,
                         &store,
+                        &mut collector_runtime,
                         bus_commands.as_ref(),
+                        &messages,
                         &settings,
                         settings_path.as_deref(),
                         autostart_path.as_deref(),
@@ -345,15 +388,36 @@ fn spawn_controller(
                         &icons,
                         &launch_at_login_error,
                         notifications_available,
+                        file_chooser_available,
                     ),
                     AppMessage::Ui(event) => handle_ui_event(event, &store, &mut has_seen_watcher),
                     AppMessage::Store(event) => {
                         log_scan(&event, &mut scan_started);
                         publish_state(&store, bus_commands.as_ref(), &icons, &settings)
                     }
+                    AppMessage::CollectorStreamReady {
+                        generation,
+                        mailbox,
+                    } => collector_runtime.handle_stream_queue(generation, mailbox),
+                    AppMessage::CollectorLogPathChosen(path) => {
+                        collector_runtime.log_path_chosen(path, settings_path.as_deref());
+                        publish_settings(
+                            &settings,
+                            &launch_at_login_error,
+                            notifications_available,
+                            file_chooser_available,
+                        );
+                    }
+                    AppMessage::StopCollector(done) => {
+                        collector_runtime.stop();
+                        let _ = done.send(());
+                    }
                     AppMessage::Clipboard(text) => ui::copy_text(text),
                     AppMessage::Timer => store.request(Trigger::Timer),
-                    AppMessage::Stop => break,
+                    AppMessage::Stop => {
+                        collector_runtime.stop();
+                        break;
+                    }
                 }
             }
         })
@@ -363,7 +427,9 @@ fn spawn_controller(
 fn handle_command(
     command: AppCommand,
     store: &Store,
+    collector_runtime: &mut CollectorRuntime,
     bus_commands: Option<&Sender<cainary_tray_dbus::Command>>,
+    messages: &Sender<AppMessage>,
     settings: &Arc<Mutex<Settings>>,
     settings_path: Option<&Path>,
     autostart_path: Option<&Path>,
@@ -371,6 +437,7 @@ fn handle_command(
     icons: &TrayIcons,
     launch_at_login_error: &Arc<Mutex<String>>,
     notifications_available: bool,
+    file_chooser_available: bool,
 ) {
     match command {
         AppCommand::Refresh => store.request(Trigger::Manual),
@@ -402,7 +469,12 @@ fn handle_command(
         }
         AppCommand::SetRefresh(value) => {
             let Some(refresh) = parse_refresh(&value) else {
-                publish_settings(settings, launch_at_login_error, notifications_available);
+                publish_settings(
+                    settings,
+                    launch_at_login_error,
+                    notifications_available,
+                    file_chooser_available,
+                );
                 return;
             };
             let mut current = lock(settings);
@@ -437,7 +509,12 @@ fn handle_command(
             if let Err(error) = autostart_result {
                 *lock(launch_at_login_error) = error.clone();
                 eprintln!("cainary-tray: could not update autostart entry: {error}");
-                publish_settings(settings, launch_at_login_error, notifications_available);
+                publish_settings(
+                    settings,
+                    launch_at_login_error,
+                    notifications_available,
+                    file_chooser_available,
+                );
                 return;
             }
             *lock(launch_at_login_error) = String::new();
@@ -448,7 +525,12 @@ fn handle_command(
                 save_settings(&current, settings_path);
             }
             drop(current);
-            publish_settings(settings, launch_at_login_error, notifications_available);
+            publish_settings(
+                settings,
+                launch_at_login_error,
+                notifications_available,
+                file_chooser_available,
+            );
             if changed {
                 store.request(Trigger::Settings);
             }
@@ -461,15 +543,82 @@ fn handle_command(
         }
         AppCommand::SetIconStyle(value) => {
             let Some(style) = IconStyle::from_key(&value) else {
-                publish_settings(settings, launch_at_login_error, notifications_available);
+                publish_settings(
+                    settings,
+                    launch_at_login_error,
+                    notifications_available,
+                    file_chooser_available,
+                );
                 return;
             };
             if update_setting(settings, settings_path, |s| &mut s.icon_style, style) {
                 publish_tray(store, bus_commands, icons, settings);
             }
         }
+        AppCommand::SetCollector(value) => {
+            let Ok(next) = serde_json::from_str::<CollectorSettings>(&value) else {
+                publish_settings(
+                    settings,
+                    launch_at_login_error,
+                    notifications_available,
+                    file_chooser_available,
+                );
+                return;
+            };
+            if !next.valid() {
+                publish_settings(
+                    settings,
+                    launch_at_login_error,
+                    notifications_available,
+                    file_chooser_available,
+                );
+                return;
+            }
+            let mut current = lock(settings);
+            if current.collector == next {
+                return;
+            }
+            current.collector = next.clone();
+            save_settings(&current, settings_path);
+            drop(current);
+            collector_runtime.restart(next);
+            publish_settings(
+                settings,
+                launch_at_login_error,
+                notifications_available,
+                file_chooser_available,
+            );
+        }
+        AppCommand::ChooseCollectorLogFile => {
+            request_collector_log_file(bus_commands, messages);
+        }
+        AppCommand::RetryCollector => {
+            collector_runtime.restart(lock(settings).collector.clone());
+        }
+        AppCommand::CopyText(text) => ui::copy_text(text),
         AppCommand::Quit => ui::quit(),
     }
+}
+
+fn request_collector_log_file(
+    bus_commands: Option<&Sender<cainary_tray_dbus::Command>>,
+    messages: &Sender<AppMessage>,
+) {
+    let Some(commands) = bus_commands else { return };
+    let (reply, result) = async_channel::bounded(1);
+    if commands
+        .try_send(cainary_tray_dbus::Command::ChooseLogFile(reply))
+        .is_err()
+    {
+        return;
+    }
+    let messages = messages.clone();
+    let _ = std::thread::Builder::new()
+        .name("cainary-file-chooser".into())
+        .spawn(move || {
+            let path = future::block_on(async { result.recv().await.ok().flatten() });
+            let _ = messages.try_send(AppMessage::CollectorLogPathChosen(path));
+        });
 }
 
 /// Sets one setting to `value` and saves the file; false when it already was.
@@ -695,17 +844,25 @@ fn publish_settings(
     settings: &Arc<Mutex<Settings>>,
     launch_at_login_error: &Arc<Mutex<String>>,
     notifications_available: bool,
+    file_chooser_available: bool,
 ) {
     let current = lock(settings);
     let launch_error = lock(launch_at_login_error).clone();
-    sync_settings(&current, &launch_error, notifications_available);
+    sync_settings(
+        &current,
+        &launch_error,
+        notifications_available,
+        file_chooser_available,
+    );
 }
 
 pub(crate) fn sync_settings(
     settings: &Settings,
     launch_error: &str,
     notifications_available: bool,
+    file_chooser_available: bool,
 ) {
+    let collector_json = collector_settings_json(&settings.collector);
     let view = SettingsView {
         refresh: refresh_key(settings.refresh),
         notifications: settings.notifications,
@@ -715,8 +872,21 @@ pub(crate) fn sync_settings(
         icon_style: settings.icon_style.as_str(),
         launch_at_login_error: launch_error.to_owned(),
         notifications_available,
+        collector_json,
+        file_chooser_available,
     };
     ui::settings(move |controller| controller.apply(&view));
+}
+
+fn collector_settings_json(settings: &CollectorSettings) -> String {
+    let mut value = serde_json::to_value(settings).unwrap_or_default();
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "logPathSuggestion".into(),
+            serde_json::Value::String(CollectorSettings::suggested_log_path()),
+        );
+    }
+    serde_json::to_string(&value).unwrap_or_else(|_| "{}".into())
 }
 
 fn refresh_key(refresh: Refresh) -> &'static str {
@@ -748,6 +918,263 @@ fn is_web_url(url: &str) -> bool {
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|error| error.into_inner())
+}
+
+struct CollectorRuntime {
+    model: collector::Model,
+    binary: Option<PathBuf>,
+    stream: Option<StreamHandle>,
+    mailbox: Option<Arc<CollectorMailbox>>,
+    generation: u64,
+    bus_commands: Option<Sender<cainary_tray_dbus::Command>>,
+    settings: Arc<Mutex<Settings>>,
+    messages: Sender<AppMessage>,
+}
+
+impl CollectorRuntime {
+    fn new(
+        binary: Option<PathBuf>,
+        bus_commands: Option<Sender<cainary_tray_dbus::Command>>,
+        settings: Arc<Mutex<Settings>>,
+        messages: Sender<AppMessage>,
+    ) -> Self {
+        Self {
+            model: collector::Model::default(),
+            binary,
+            stream: None,
+            mailbox: None,
+            generation: 0,
+            bus_commands,
+            settings,
+            messages,
+        }
+    }
+
+    fn restart(&mut self, preferences: CollectorSettings) {
+        self.stop_child();
+        self.generation = self.generation.wrapping_add(1);
+        self.model = collector::Model::default();
+        if !preferences.enabled {
+            self.publish();
+            return;
+        }
+        if !preferences.valid() {
+            self.model
+                .failed("Check the collector port and red-flag patterns.");
+            self.publish();
+            return;
+        }
+        let Some(binary) = self.binary.as_deref() else {
+            self.model.failed("Collector helper not found.");
+            self.publish();
+            return;
+        };
+        let args = match collector::child_args(&preferences) {
+            Ok(args) => args.into_iter().map(Into::into).collect::<Vec<_>>(),
+            Err(error) => {
+                self.model.failed(error);
+                self.publish();
+                return;
+            }
+        };
+        let config = match collector::config_stdin(&preferences) {
+            Ok(config) => config,
+            Err(error) => {
+                self.model.failed(error);
+                self.publish();
+                return;
+            }
+        };
+        self.model.starting();
+        self.publish();
+        let mut stream = match runner::spawn_stream(binary, &args, collector::MAX_LINE) {
+            Ok(stream) => stream,
+            Err(error) => {
+                self.model
+                    .failed(format!("Couldn't start collector: {error:?}"));
+                self.publish();
+                return;
+            }
+        };
+        if let Err(error) = stream.write_stdin(&config) {
+            stream.stop(Duration::from_secs(2));
+            self.model
+                .failed(format!("Couldn't configure collector: {error}"));
+            self.publish();
+            return;
+        }
+        let Some(receiver) = stream.take_receiver() else {
+            stream.stop(Duration::from_secs(2));
+            self.model.failed("Couldn't read collector output.");
+            self.publish();
+            return;
+        };
+        let messages = self.messages.clone();
+        let generation = self.generation;
+        let mailbox = Arc::new(CollectorMailbox::default());
+        let reader_mailbox = Arc::clone(&mailbox);
+        match std::thread::Builder::new()
+            .name("cainary-collector-lines".into())
+            .spawn(move || {
+                while let Ok(message) = receiver.recv() {
+                    let exited = matches!(message, StreamMsg::Exited { .. });
+                    let wake = match reader_mailbox.enqueue(message) {
+                        Some(wake) => wake,
+                        None => break,
+                    };
+                    if wake
+                        && messages
+                            .try_send(AppMessage::CollectorStreamReady {
+                                generation,
+                                mailbox: Arc::clone(&reader_mailbox),
+                            })
+                            .is_err()
+                    {
+                        reader_mailbox.close();
+                        break;
+                    }
+                    if exited {
+                        break;
+                    }
+                }
+            }) {
+            Ok(_) => {
+                self.stream = Some(stream);
+                self.mailbox = Some(mailbox);
+            }
+            Err(error) => {
+                stream.stop(Duration::from_secs(2));
+                self.model
+                    .failed(format!("Couldn't read collector output: {error}"));
+                self.publish();
+            }
+        }
+    }
+
+    fn stop_child(&mut self) {
+        if let Some(mailbox) = self.mailbox.take() {
+            mailbox.close();
+        }
+        if let Some(mut stream) = self.stream.take() {
+            stream.stop(Duration::from_secs(2));
+        }
+    }
+
+    fn stop(&mut self) {
+        self.stop_child();
+        if !matches!(self.model.state, collector::State::Off) {
+            self.model.stopped("Stopped");
+            self.publish();
+        }
+    }
+
+    fn handle_stream_queue(&mut self, generation: u64, mailbox: Arc<CollectorMailbox>) {
+        if generation != self.generation {
+            mailbox.close();
+            return;
+        }
+        while let Some(message) = mailbox.pop() {
+            self.handle_stream(generation, message);
+        }
+    }
+
+    fn handle_stream(&mut self, generation: u64, message: StreamMsg) {
+        if generation != self.generation {
+            return;
+        }
+        match message {
+            StreamMsg::Line(line) => {
+                let (stop, alert) = self.model.accept(line);
+                if let Some(alert) = alert {
+                    let notify = lock(&self.settings).collector.notify;
+                    if let Some((summary, body)) =
+                        self.model
+                            .alert_notification(&alert, notify, Instant::now())
+                        && let Some(commands) = &self.bus_commands
+                    {
+                        let _ = commands.try_send(cainary_tray_dbus::Command::Notify(
+                            Notification {
+                                entry: format!(":collector:{}", alert.pattern),
+                                summary,
+                                body,
+                            },
+                            None,
+                        ));
+                    }
+                }
+                if stop {
+                    self.stop_child();
+                }
+                self.publish();
+            }
+            StreamMsg::Fault(reason) => {
+                self.model.failed(format!("Stopped: {reason}"));
+                self.stop_child();
+                self.publish();
+            }
+            StreamMsg::Exited { code, stderr_tail } => {
+                if let Some(mailbox) = self.mailbox.take() {
+                    mailbox.close();
+                }
+                self.stream.take();
+                if matches!(
+                    self.model.state,
+                    collector::State::Starting | collector::State::Listening
+                ) {
+                    let stderr = stderr_tail.lines().next().unwrap_or_default();
+                    let reason = if !stderr.is_empty() {
+                        format!("Stopped: {}", safe_output_line(stderr))
+                    } else if let Some(code) = code.filter(|code| *code != 0) {
+                        format!("Stopped: collector exited with status {code}")
+                    } else {
+                        "Stopped".into()
+                    };
+                    self.model.stopped(reason);
+                }
+                self.publish();
+            }
+        }
+    }
+
+    fn log_path_chosen(&mut self, path: Option<String>, settings_path: Option<&Path>) {
+        let Some(path) = path else { return };
+        let next = {
+            let mut settings = lock(&self.settings);
+            if settings.collector.log_path == path && settings.collector.log_to_file {
+                return;
+            }
+            settings.collector.log_path = path;
+            settings.collector.log_to_file = true;
+            save_settings(&settings, settings_path);
+            settings.collector.clone()
+        };
+        self.restart(next);
+    }
+
+    fn publish(&self) {
+        let Ok(json) = serde_json::to_string(&self.model.view()) else {
+            return;
+        };
+        ui::collector(move |controller| controller.apply(&json));
+    }
+}
+
+fn safe_output_line(text: &str) -> String {
+    let mut safe = String::with_capacity(text.len());
+    for ch in text.chars() {
+        let code = ch as u32;
+        if code <= 0x1f
+            || (0x7f..=0x9f).contains(&code)
+            || (0x202a..=0x202e).contains(&code)
+            || (0x2066..=0x2069).contains(&code)
+            || matches!(code, 0x200e | 0x200f | 0x061c)
+        {
+            safe.push_str(&format!("\\u{{{code:04X}}}"));
+        } else {
+            safe.push(ch);
+        }
+    }
+    safe
 }
 
 struct AppNotifier {

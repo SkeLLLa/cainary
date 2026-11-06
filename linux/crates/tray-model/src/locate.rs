@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 /// Where the distro packages install the CLI.
 pub const SYSTEM_CLI: &str = "/usr/bin/cainary";
+pub const SYSTEM_OTEL_DEBUG: &str = "/usr/bin/cainary-otel-debug";
 
 /// The developer overrides (`CAINARY_CORE`, `CAINARY_SCAN_ARGS`) apply to debug builds, or to a
 /// release build started with `--dev`.
@@ -22,6 +23,33 @@ pub fn cli(dev_flag: bool) -> Option<PathBuf> {
         .flatten();
     let exe = std::fs::read_link("/proc/self/exe").ok();
     cli_from(env, exe.as_deref(), Path::new(SYSTEM_CLI))
+}
+
+/// The bundled OTel debug helper. Like the scanner, it is never resolved through PATH.
+pub fn otel_debug(dev_flag: bool) -> Option<PathBuf> {
+    let env = dev_overrides(dev_flag)
+        .then(|| std::env::var_os("CAINARY_OTEL_DEBUG"))
+        .flatten();
+    let exe = std::fs::read_link("/proc/self/exe").ok();
+    otel_debug_from(env, exe.as_deref(), Path::new(SYSTEM_OTEL_DEBUG))
+}
+
+/// [`otel_debug`] with its inputs spelled out, for tests.
+pub fn otel_debug_from(
+    env: Option<OsString>,
+    exe: Option<&Path>,
+    system: &Path,
+) -> Option<PathBuf> {
+    if let Some(path) = env.filter(|path| Path::new(path).is_absolute()) {
+        return Some(PathBuf::from(path));
+    }
+    let sibling = exe
+        .and_then(Path::parent)
+        .map(|dir| dir.join("cainary-otel-debug"));
+    sibling
+        .into_iter()
+        .chain([system.to_path_buf()])
+        .find(|path| is_executable(path))
 }
 
 /// [`cli`] with its inputs spelled out, for tests.
@@ -87,6 +115,42 @@ mod tests {
     #[test]
     fn the_system_cli_is_in_usr_bin() {
         assert_eq!(SYSTEM_CLI, "/usr/bin/cainary");
+    }
+
+    #[test]
+    fn the_collector_helper_lookup_never_uses_path() {
+        let dir = std::env::temp_dir().join(format!("cainary-otel-locate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("bin")).unwrap();
+        let system = dir.join("system-helper");
+        std::fs::write(&system, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&system, PermissionsExt::from_mode(0o755)).unwrap();
+        let exe = dir.join("bin/cainary-tray");
+        assert_eq!(
+            otel_debug_from(None, Some(&exe), &system),
+            Some(system.clone())
+        );
+        let sibling = dir.join("bin/cainary-otel-debug");
+        std::fs::write(&sibling, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&sibling, PermissionsExt::from_mode(0o755)).unwrap();
+        assert_eq!(
+            otel_debug_from(None, Some(&exe), &system),
+            Some(sibling.clone())
+        );
+        let override_path = dir.join("dev-helper");
+        assert_eq!(
+            otel_debug_from(Some(override_path.clone().into()), Some(&exe), &system),
+            Some(override_path)
+        );
+        assert_eq!(
+            otel_debug_from(
+                None,
+                Some(Path::new("/nonexistent/tray")),
+                Path::new("/nonexistent/helper")
+            ),
+            None
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

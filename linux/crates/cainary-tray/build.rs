@@ -43,6 +43,7 @@ fn main() {
             "qml/Main.qml",
             "qml/Popup.qml",
             "qml/Details.qml",
+            "qml/CollectorPage.qml",
             "qml/SettingsWindow.qml",
             "qml/AboutWindow.qml",
             "qml/components/AppMenu.qml",
@@ -51,6 +52,7 @@ fn main() {
             "qml/components/EntryIcon.qml",
             "qml/components/FailureBanner.qml",
             "qml/components/FindingRow.qml",
+            "qml/components/PayloadSection.qml",
             "qml/components/Legend.qml",
             "qml/components/LevelChip.qml",
             "qml/components/LevelIcon.qml",
@@ -63,6 +65,7 @@ fn main() {
     let mut builder = CxxQtBuilder::new_qml_module(qml)
         .files([
             "src/bridge/app_controller.rs",
+            "src/bridge/collector_controller.rs",
             "src/bridge/settings_controller.rs",
             "src/bridge/ffi.rs",
         ])

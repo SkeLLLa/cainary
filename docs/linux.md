@@ -344,3 +344,27 @@ snapshots.
   `QT_QUICK_CONTROLS_STYLE` yourself.
 - **A second launch does nothing.** It raises the running instance and exits. `cainary-tray
   --details` opens Details in it.
+
+## 10. OTel debug collector
+
+The **OTel debug collector** in Settings is off by default. When enabled, the tray starts the
+bundled `cainary-otel-debug` child and stops it when the setting is turned off or the tray quits.
+The enabled setting is saved in `$XDG_CONFIG_HOME/cainary/tray.toml` under `[collector]`; an older
+settings file without that table still loads with the collector disabled. If it remains enabled,
+the collector starts again when the tray next launches.
+
+The receiver listens on loopback only and makes no outbound connections. It is unauthenticated,
+so any local process can send it telemetry. Details shows the endpoint, setup lines, red-flag
+alerts, and a bounded recent batch summary. Collector output stays in memory: the tray retains at
+most 16 MiB of lines, 50 batches, and 200 alerts. Desktop notifications for red flags are enabled
+by default and limited to one per pattern every 60 seconds.
+
+Choose **Show in UI only** to keep the stream in memory. **Also save to** writes a JSONL log at the
+selected path; **Choose…** opens the desktop's xdg-desktop-portal file chooser. The default
+suggested path is `$XDG_STATE_HOME/cainary/otel-debug.jsonl` (or the XDG default state directory).
+Custom red-flag patterns are sent to the child over stdin, not placed in its command-line
+arguments.
+
+The tray looks for the collector binary in this order: `CAINARY_OTEL_DEBUG` in development mode,
+next to `cainary-tray`, then `/usr/bin/cainary-otel-debug`. It never searches `PATH`. Packaged
+Linux builds include the binary.

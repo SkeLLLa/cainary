@@ -13,7 +13,9 @@ use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TryRecvError, sync_channel};
 use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::report::{DecodeError, Report, SCHEMA};
@@ -59,8 +61,439 @@ pub enum RunError {
     Cancelled,
 }
 
+/// A line read from a long-lived child, or its final status and bounded stderr tail.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StreamMsg {
+    Line(String),
+    Fault(String),
+    Exited {
+        code: Option<i32>,
+        stderr_tail: String,
+    },
+}
+
+enum StreamCommand {
+    Write(Vec<u8>),
+    CloseStdin,
+    Stop(Duration),
+}
+
+/// A process and its single-purpose supervisor thread. The child is spawned and reaped by that
+/// thread, which is also the lifetime to which PR_SET_PDEATHSIG is attached.
+pub struct StreamHandle {
+    pid: libc::pid_t,
+    commands: SyncSender<StreamCommand>,
+    receiver: Option<Receiver<StreamMsg>>,
+    finished: Receiver<()>,
+    worker: Option<JoinHandle<()>>,
+    stopped: bool,
+}
+
+impl StreamHandle {
+    pub fn pid(&self) -> libc::pid_t {
+        self.pid
+    }
+
+    /// Queues bytes for the child's stdin. The caller sends the config line and then leaves the
+    /// pipe open as the child's lifeline.
+    pub fn write_stdin(&self, bytes: &[u8]) -> io::Result<()> {
+        if bytes.len() > (1 << 20) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "stdin message is too large",
+            ));
+        }
+        self.commands
+            .send(StreamCommand::Write(bytes.to_vec()))
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "child supervisor stopped"))
+    }
+
+    pub fn close_stdin(&self) -> io::Result<()> {
+        self.commands
+            .send(StreamCommand::CloseStdin)
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "child supervisor stopped"))
+    }
+
+    /// Transfers the only event receiver to a reader thread.
+    pub fn take_receiver(&mut self) -> Option<Receiver<StreamMsg>> {
+        self.receiver.take()
+    }
+
+    /// Closes stdin, sends SIGTERM, waits for `grace`, then kills the process group and reaps.
+    pub fn stop(&mut self, grace: Duration) {
+        if self.stopped {
+            return;
+        }
+        self.stopped = true;
+        let _ = self.commands.send(StreamCommand::Stop(grace));
+        let deadline = Instant::now() + grace + Duration::from_secs(1);
+        loop {
+            if let Some(receiver) = &self.receiver {
+                while receiver.try_recv().is_ok() {}
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match self.finished.recv_timeout(remaining.min(TICK)) {
+                Ok(()) | Err(RecvTimeoutError::Disconnected) => break,
+                Err(RecvTimeoutError::Timeout) => {}
+            }
+        }
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+impl Drop for StreamHandle {
+    fn drop(&mut self) {
+        self.stop(Duration::from_secs(2));
+    }
+}
+
 /// How often the loop looks at the child while its pipes are quiet.
 const TICK: Duration = Duration::from_millis(20);
+
+/// Starts a long-running line-oriented child. Its line reader and stderr tail are bounded, and
+/// all process creation stays in this file (guard L3).
+pub fn spawn_stream(
+    program: &std::path::Path,
+    args: &[OsString],
+    max_line: usize,
+) -> Result<StreamHandle, RunError> {
+    let parent = std::process::id() as libc::pid_t;
+    let program = program.to_path_buf();
+    let args = args.to_vec();
+    let max_line = max_line.clamp(1, MAX_STREAM_LINE);
+    let (ready_tx, ready_rx) = sync_channel(1);
+    let (commands, command_rx) = sync_channel(16);
+    let (events_tx, receiver) = sync_channel(1);
+    let (finished_tx, finished) = sync_channel(1);
+    let worker = thread::Builder::new()
+        .name("cainary-otel-debug".into())
+        .spawn(move || {
+            let mut command = Command::new(&program);
+            command
+                .args(&args)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .env_remove("XDG_ACTIVATION_TOKEN")
+                .process_group(0);
+            // SAFETY: async-signal-safe calls only. PDEATHSIG is tied to this dedicated thread,
+            // which stays alive until the child has been waited for.
+            unsafe {
+                command.pre_exec(move || {
+                    if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                    if libc::getppid() != parent {
+                        libc::raise(libc::SIGTERM);
+                    }
+                    Ok(())
+                });
+            }
+            match command.spawn() {
+                Ok(child) => {
+                    let pid = child.id() as libc::pid_t;
+                    let _ = ready_tx.send(Ok(pid));
+                    supervise_stream(child, command_rx, events_tx, max_line);
+                }
+                Err(error) => {
+                    let _ = ready_tx.send(Err(error));
+                }
+            }
+            let _ = finished_tx.send(());
+        })
+        .map_err(RunError::Spawn)?;
+    let pid = match ready_rx.recv() {
+        Ok(Ok(pid)) => pid,
+        Ok(Err(error)) => {
+            let _ = worker.join();
+            return Err(RunError::Spawn(error));
+        }
+        Err(_) => {
+            let _ = worker.join();
+            return Err(RunError::Spawn(io::Error::other(
+                "stream supervisor stopped",
+            )));
+        }
+    };
+    Ok(StreamHandle {
+        pid,
+        commands,
+        receiver: Some(receiver),
+        finished,
+        worker: Some(worker),
+        stopped: false,
+    })
+}
+
+const MAX_STREAM_LINE: usize = 4 << 20;
+const STREAM_STDERR_LIMIT: usize = 8 << 10;
+
+fn supervise_stream(
+    mut child: Child,
+    commands: Receiver<StreamCommand>,
+    events: SyncSender<StreamMsg>,
+    max_line: usize,
+) {
+    let mut stdin = child.stdin.take();
+    let mut stdout = child.stdout.take();
+    let mut stderr = child.stderr.take();
+    for fd in [
+        stdin.as_ref().map(AsRawFd::as_raw_fd),
+        stdout.as_ref().map(AsRawFd::as_raw_fd),
+        stderr.as_ref().map(AsRawFd::as_raw_fd),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        set_nonblocking(fd);
+    }
+
+    let mut input = Vec::new();
+    let mut input_offset = 0;
+    let mut close_after_write = false;
+    let mut output_line = Vec::new();
+    let mut stderr_tail = Vec::new();
+    let mut stopping: Option<(Instant, Duration)> = None;
+    let mut fault = None;
+
+    loop {
+        loop {
+            match commands.try_recv() {
+                Ok(StreamCommand::Write(bytes)) if stopping.is_none() && stdin.is_some() => {
+                    if input
+                        .len()
+                        .saturating_sub(input_offset)
+                        .saturating_add(bytes.len())
+                        > (1 << 20)
+                    {
+                        fault = Some("stdin config is too large".to_owned());
+                        stopping = Some((Instant::now(), Duration::ZERO));
+                        stdin.take();
+                        kill_group(&child, libc::SIGTERM);
+                    } else {
+                        if input_offset > 0 {
+                            input.drain(..input_offset);
+                            input_offset = 0;
+                        }
+                        input.extend_from_slice(&bytes);
+                    }
+                }
+                Ok(StreamCommand::CloseStdin) => {
+                    close_after_write = true;
+                }
+                Ok(StreamCommand::Stop(grace)) => {
+                    stdin.take();
+                    if stopping.is_none() {
+                        kill_group(&child, libc::SIGTERM);
+                        stopping = Some((Instant::now(), grace));
+                    }
+                }
+                Ok(StreamCommand::Write(_)) => {}
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+            }
+        }
+
+        if stopping.is_none()
+            && let Some(pipe) = stdin.as_mut()
+            && input_offset < input.len()
+        {
+            match Write::write(pipe, &input[input_offset..]) {
+                Ok(n) => input_offset += n,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                Err(_) => {
+                    stdin.take();
+                    input.clear();
+                    input_offset = 0;
+                }
+            }
+        }
+        if close_after_write && input_offset == input.len() {
+            stdin.take();
+        }
+
+        match read_stream_stdout(&mut stdout, &mut output_line, max_line, &events) {
+            Ok(()) => {}
+            Err(StreamReadError::TooLarge) => {
+                fault = Some("output too large".to_owned());
+                stdin.take();
+                kill_group(&child, libc::SIGKILL);
+                let _ = child.wait();
+                break;
+            }
+            Err(StreamReadError::InvalidUtf8) => {
+                fault = Some("collector wrote invalid UTF-8".to_owned());
+                kill_group(&child, libc::SIGKILL);
+                let _ = child.wait();
+                break;
+            }
+        }
+        read_stream_stderr(&mut stderr, &mut stderr_tail);
+
+        if let Some((started, grace)) = stopping
+            && started.elapsed() >= grace
+        {
+            kill_group(&child, libc::SIGKILL);
+            let _ = child.wait();
+            read_stream_stdout(&mut stdout, &mut output_line, max_line, &events).ok();
+            read_stream_stderr(&mut stderr, &mut stderr_tail);
+            break;
+        }
+
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                // Drain bytes already written, but don't wait for a descendant that inherited a
+                // pipe. The process group is killed before the direct child is reaped.
+                loop {
+                    let before = output_line.len();
+                    read_stream_stdout(&mut stdout, &mut output_line, max_line, &events).ok();
+                    read_stream_stderr(&mut stderr, &mut stderr_tail);
+                    if stdout.is_none() || output_line.len() == before {
+                        break;
+                    }
+                }
+                kill_group(&child, libc::SIGKILL);
+                let _ = child.wait();
+                break;
+            }
+            Ok(None) => {}
+            Err(_) => break,
+        }
+
+        if let Some((_, grace)) = stopping
+            && grace.is_zero()
+        {
+            kill_group(&child, libc::SIGKILL);
+            let _ = child.wait();
+            break;
+        }
+        poll_stream(stdin.as_ref(), stdout.as_ref(), stderr.as_ref(), TICK);
+    }
+
+    if !output_line.is_empty() && fault.is_none() {
+        if let Ok(line) = String::from_utf8(std::mem::take(&mut output_line)) {
+            let _ = events.send(StreamMsg::Line(line));
+        } else {
+            fault = Some("collector wrote invalid UTF-8".into());
+        }
+    }
+    if let Some(fault) = fault {
+        let _ = events.send(StreamMsg::Fault(fault));
+    }
+    let status = child.try_wait().ok().flatten();
+    let _ = events.send(StreamMsg::Exited {
+        code: status.and_then(|status| status.code()),
+        stderr_tail: String::from_utf8_lossy(&stderr_tail).into_owned(),
+    });
+}
+
+enum StreamReadError {
+    TooLarge,
+    InvalidUtf8,
+}
+
+fn read_stream_stdout(
+    stdout: &mut Option<ChildStdout>,
+    pending: &mut Vec<u8>,
+    max_line: usize,
+    events: &SyncSender<StreamMsg>,
+) -> Result<(), StreamReadError> {
+    let Some(pipe) = stdout.as_mut() else {
+        return Ok(());
+    };
+    let mut chunk = [0_u8; 8192];
+    loop {
+        match pipe.read(&mut chunk) {
+            Ok(0) => {
+                stdout.take();
+                break;
+            }
+            Ok(n) => pending.extend_from_slice(&chunk[..n]),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+            Err(_) => {
+                stdout.take();
+                break;
+            }
+        }
+        while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
+            if newline > max_line {
+                return Err(StreamReadError::TooLarge);
+            }
+            let mut bytes = pending.drain(..=newline).collect::<Vec<_>>();
+            bytes.pop();
+            if bytes.last() == Some(&b'\r') {
+                bytes.pop();
+            }
+            let line = String::from_utf8(bytes).map_err(|_| StreamReadError::InvalidUtf8)?;
+            let _ = events.send(StreamMsg::Line(line));
+        }
+        if pending.len() > max_line {
+            return Err(StreamReadError::TooLarge);
+        }
+    }
+    Ok(())
+}
+
+fn read_stream_stderr(stderr: &mut Option<ChildStderr>, tail: &mut Vec<u8>) {
+    let Some(pipe) = stderr.as_mut() else { return };
+    let mut chunk = [0_u8; 4096];
+    loop {
+        match pipe.read(&mut chunk) {
+            Ok(0) => {
+                stderr.take();
+                break;
+            }
+            Ok(n) => {
+                tail.extend_from_slice(&chunk[..n]);
+                if tail.len() > STREAM_STDERR_LIMIT {
+                    let excess = tail.len() - STREAM_STDERR_LIMIT;
+                    tail.drain(..excess);
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+            Err(_) => {
+                stderr.take();
+                break;
+            }
+        }
+    }
+}
+
+fn poll_stream(
+    stdin: Option<&ChildStdin>,
+    stdout: Option<&ChildStdout>,
+    stderr: Option<&ChildStderr>,
+    timeout: Duration,
+) {
+    let mut fds = Vec::with_capacity(3);
+    if let Some(pipe) = stdin {
+        fds.push(libc::pollfd {
+            fd: pipe.as_raw_fd(),
+            events: libc::POLLOUT,
+            revents: 0,
+        });
+    }
+    for fd in [
+        stdout.map(AsRawFd::as_raw_fd),
+        stderr.map(AsRawFd::as_raw_fd),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        fds.push(libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        });
+    }
+    let millis = timeout.as_millis().clamp(1, i32::MAX as u128) as i32;
+    // SAFETY: `fds` contains valid pollfd entries for the live child pipes.
+    unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, millis) };
+}
 
 /// Runs `program` with `args`, feeding it `stdin` (or `/dev/null` when there is none).
 pub fn run(

@@ -27,6 +27,44 @@ ApplicationWindow {
         { key: "1h", text: qsTr("Hour") },
         { key: "daily", text: qsTr("Daily") }
     ]
+    readonly property var collector: {
+        const defaults = { enabled: false, port: 4318, log_to_file: false, log_path: "", presets: [], notify: true, patterns: [], logPathSuggestion: "" };
+        try {
+            const value = JSON.parse(SettingsController.collectorJson);
+            return {
+                enabled: value.enabled === true,
+                port: value.port || 4318,
+                log_to_file: value.log_to_file === true,
+                log_path: value.log_path || "",
+                presets: value.presets || [],
+                notify: value.notify !== false,
+                patterns: value.patterns || [],
+                logPathSuggestion: value.logPathSuggestion || ""
+            };
+        } catch (error) {
+            return defaults;
+        }
+    }
+    readonly property var collectorPresets: [
+        { key: "email", label: qsTr("Email addresses") },
+        { key: "private-key", label: qsTr("Private keys") },
+        { key: "jwt", label: qsTr("JWTs") },
+        { key: "aws-access-key", label: qsTr("AWS access keys") },
+        { key: "github-token", label: qsTr("GitHub tokens") },
+        { key: "anthropic-key", label: qsTr("Anthropic keys") },
+        { key: "openai-key", label: qsTr("OpenAI keys") },
+        { key: "slack-token", label: qsTr("Slack tokens") }
+    ]
+
+    function changeCollector(change) {
+        const next = JSON.parse(JSON.stringify(win.collector));
+        change(next);
+        SettingsController.setCollector(JSON.stringify(next));
+    }
+
+    function updatePattern(index, key, value) {
+        changeCollector(next => { next.patterns[index][key] = value; });
+    }
 
     function present() {
         show();
@@ -105,6 +143,129 @@ ApplicationWindow {
                         color: win.warning
                         wrapMode: Text.Wrap
                         Layout.fillWidth: true
+                    }
+                }
+            }
+
+            Section {
+                title: qsTr("OTel debug collector")
+                ColumnLayout {
+                    anchors.fill: parent
+                    Switch {
+                        text: qsTr("Enable local OTel debug collector")
+                        checked: win.collector.enabled
+                        onToggled: win.changeCollector(next => { next.enabled = checked; })
+                    }
+                    RowLayout {
+                        Label { text: qsTr("Port") }
+                        SpinBox {
+                            from: 1024
+                            to: 65535
+                            value: Math.max(1024, win.collector.port || 4318)
+                            editable: true
+                            onValueModified: win.changeCollector(next => { next.port = value; })
+                        }
+                        Item { Layout.fillWidth: true }
+                    }
+
+                    ButtonGroup { id: logChoice }
+                    RadioButton {
+                        text: qsTr("Show in UI only")
+                        ButtonGroup.group: logChoice
+                        checked: !win.collector.log_to_file
+                        onToggled: if (checked) win.changeCollector(next => { next.log_to_file = false; })
+                    }
+                    RadioButton {
+                        text: qsTr("Also save to:")
+                        ButtonGroup.group: logChoice
+                        checked: win.collector.log_to_file
+                        onToggled: if (checked) win.changeCollector(next => { next.log_to_file = true; })
+                    }
+                    RowLayout {
+                        enabled: win.collector.log_to_file
+                        TextField {
+                            text: win.collector.log_path
+                            placeholderText: qsTr("Suggested: ") + (win.collector.logPathSuggestion || "~/.local/state/cainary/otel-debug.jsonl")
+                            onEditingFinished: win.changeCollector(next => { next.log_path = text; })
+                            Layout.fillWidth: true
+                        }
+                        Button {
+                            visible: SettingsController.fileChooserAvailable
+                            text: qsTr("Choose…")
+                            onClicked: SettingsController.chooseCollectorLogFile()
+                        }
+                    }
+                    Label {
+                        visible: !SettingsController.fileChooserAvailable
+                        text: qsTr("The desktop file chooser portal isn't available; enter a path above.")
+                        color: win.palette.placeholderText
+                        wrapMode: Text.Wrap
+                        Layout.fillWidth: true
+                    }
+
+                    Label { text: qsTr("Red-flag presets"); font.weight: Font.DemiBold }
+                    Repeater {
+                        model: win.collectorPresets
+                        delegate: CheckBox {
+                            required property var modelData
+                            text: modelData.label
+                            checked: win.collector.presets.indexOf(modelData.key) >= 0
+                            onToggled: win.changeCollector(next => {
+                                const i = next.presets.indexOf(modelData.key);
+                                if (checked && i < 0)
+                                    next.presets.push(modelData.key);
+                                else if (!checked && i >= 0)
+                                    next.presets.splice(i, 1);
+                            })
+                        }
+                    }
+
+                    Label { text: qsTr("Custom patterns"); font.weight: Font.DemiBold }
+                    Repeater {
+                        model: win.collector.patterns
+                        delegate: RowLayout {
+                            required property int index
+                            required property var modelData
+                            Layout.fillWidth: true
+                            TextField {
+                                text: modelData.name
+                                placeholderText: qsTr("Name")
+                                onEditingFinished: win.updatePattern(index, "name", text)
+                                Layout.preferredWidth: 110
+                            }
+                            TextField {
+                                text: modelData.pattern
+                                placeholderText: qsTr("Pattern")
+                                onEditingFinished: win.updatePattern(index, "pattern", text)
+                                Layout.fillWidth: true
+                            }
+                            CheckBox {
+                                text: qsTr("Regex")
+                                checked: modelData.kind === "regex"
+                                onToggled: win.updatePattern(index, "kind", checked ? "regex" : "text")
+                            }
+                            CheckBox {
+                                text: qsTr("Match case")
+                                checked: modelData.case_sensitive
+                                onToggled: win.updatePattern(index, "case_sensitive", checked)
+                            }
+                            ToolButton {
+                                text: "−"
+                                Accessible.name: qsTr("Remove pattern")
+                                onClicked: win.changeCollector(next => { next.patterns.splice(index, 1); })
+                            }
+                        }
+                    }
+                    Button {
+                        text: qsTr("Add pattern")
+                        onClicked: win.changeCollector(next => {
+                            next.patterns.push({ name: "", kind: "text", pattern: "", case_sensitive: false });
+                        })
+                    }
+                    CheckBox {
+                        text: qsTr("Notify about red flags")
+                        checked: win.collector.notify
+                        onToggled: win.changeCollector(next => { next.notify = checked; })
                     }
                 }
             }

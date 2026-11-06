@@ -11,12 +11,14 @@ use cxx_qt::CxxQtThread;
 use cxx_qt_lib::QString;
 
 use crate::bridge::app_controller::qobject::AppController;
+use crate::bridge::collector_controller::qobject::CollectorController;
 use crate::bridge::ffi::ffi;
 use crate::bridge::settings_controller::qobject::SettingsController;
 use crate::diagnostics::vlog;
 
 static APP: OnceLock<CxxQtThread<AppController>> = OnceLock::new();
 static SETTINGS: OnceLock<CxxQtThread<SettingsController>> = OnceLock::new();
+static COLLECTOR: OnceLock<CxxQtThread<CollectorController>> = OnceLock::new();
 static UI_READY: AtomicBool = AtomicBool::new(false);
 
 pub fn register_app(thread: CxxQtThread<AppController>) {
@@ -27,6 +29,10 @@ pub fn register_settings(thread: CxxQtThread<SettingsController>) {
     let _ = SETTINGS.set(thread);
 }
 
+pub fn register_collector(thread: CxxQtThread<CollectorController>) {
+    let _ = COLLECTOR.set(thread);
+}
+
 /// Called by `Main.qml` once its windows exist.
 pub fn mark_ready() {
     UI_READY.store(true, Ordering::Release);
@@ -34,7 +40,10 @@ pub fn mark_ready() {
 
 /// Both controllers exist and `Main.qml` finished creating its windows.
 pub fn ready() -> bool {
-    APP.get().is_some() && SETTINGS.get().is_some() && UI_READY.load(Ordering::Acquire)
+    APP.get().is_some()
+        && SETTINGS.get().is_some()
+        && COLLECTOR.get().is_some()
+        && UI_READY.load(Ordering::Acquire)
 }
 
 /// Runs `f` on the Qt thread with the `AppController`.
@@ -47,6 +56,13 @@ pub fn app(f: impl FnOnce(Pin<&mut AppController>) + Send + 'static) {
 /// Runs `f` on the Qt thread with the `SettingsController`.
 pub fn settings(f: impl FnOnce(Pin<&mut SettingsController>) + Send + 'static) {
     if let Some(thread) = SETTINGS.get() {
+        let _ = thread.queue(f);
+    }
+}
+
+/// Runs `f` on the Qt thread with the collector page controller.
+pub fn collector(f: impl FnOnce(Pin<&mut CollectorController>) + Send + 'static) {
+    if let Some(thread) = COLLECTOR.get() {
         let _ = thread.queue(f);
     }
 }

@@ -85,6 +85,106 @@ pub struct Settings {
     /// Whether the popup's not-installed app rows are expanded.
     #[serde(rename = "notInstalledExpanded")]
     pub not_installed_expanded: bool,
+    /// The opt-in local OTel receiver. Its child settings are versioned independently of tray UI.
+    pub collector: CollectorSettings,
+}
+
+pub const COLLECTOR_PRESETS: [&str; 8] = [
+    "email",
+    "private-key",
+    "jwt",
+    "aws-access-key",
+    "github-token",
+    "anthropic-key",
+    "openai-key",
+    "slack-token",
+];
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CollectorSettings {
+    pub enabled: bool,
+    pub port: u16,
+    pub log_to_file: bool,
+    pub log_path: String,
+    pub presets: Vec<String>,
+    pub notify: bool,
+    pub patterns: Vec<CollectorPattern>,
+}
+
+impl Default for CollectorSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: 4318,
+            log_to_file: false,
+            log_path: String::new(),
+            presets: COLLECTOR_PRESETS
+                .iter()
+                .map(|name| (*name).into())
+                .collect(),
+            notify: true,
+            patterns: Vec::new(),
+        }
+    }
+}
+
+impl CollectorSettings {
+    pub fn valid(&self) -> bool {
+        (1024..=u16::MAX).contains(&self.port)
+            && self.patterns.len() <= 64
+            && self
+                .presets
+                .iter()
+                .all(|name| COLLECTOR_PRESETS.contains(&name.as_str()))
+            && self.patterns.iter().all(|pattern| {
+                (pattern.name.trim().is_empty() && pattern.pattern.is_empty())
+                    || (!pattern.name.trim().is_empty()
+                        && !pattern.pattern.is_empty()
+                        && valid_collector_pattern_name(&pattern.name)
+                        && !COLLECTOR_PRESETS.contains(&pattern.name.as_str())
+                        && pattern.pattern.len() <= 16 * 1024)
+            })
+            && self.patterns.iter().enumerate().all(|(index, pattern)| {
+                pattern.name.trim().is_empty()
+                    || !self.patterns[..index]
+                        .iter()
+                        .any(|prior| prior.name == pattern.name)
+            })
+    }
+
+    pub fn suggested_log_path() -> String {
+        crate::state_home()
+            .map(|dir| dir.join("cainary/otel-debug.jsonl").display().to_string())
+            .unwrap_or_default()
+    }
+}
+
+fn valid_collector_pattern_name(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= 64
+        && (bytes[0].is_ascii_lowercase() || bytes[0].is_ascii_digit())
+        && bytes.iter().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_' || *byte == b'-'
+        })
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CollectorPatternKind {
+    #[default]
+    Text,
+    Regex,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectorPattern {
+    pub name: String,
+    pub kind: CollectorPatternKind,
+    pub pattern: String,
+    #[serde(default)]
+    pub case_sensitive: bool,
 }
 
 impl Default for Settings {
@@ -99,6 +199,7 @@ impl Default for Settings {
             details_width: 780,
             details_height: 560,
             not_installed_expanded: false,
+            collector: CollectorSettings::default(),
         }
     }
 }

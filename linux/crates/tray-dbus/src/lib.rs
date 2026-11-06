@@ -7,6 +7,7 @@ pub mod filemanager;
 pub mod instance;
 pub mod logind;
 pub mod notifications;
+pub mod portal;
 pub mod tray;
 pub mod watcher;
 
@@ -155,6 +156,13 @@ async fn run(
                     if let Some(reply) = reply {
                         let _ = reply.send(ok).await;
                     }
+                }
+                Command::ChooseLogFile(reply) => {
+                    let result = match with_timeout(CALL_TIMEOUT, portal::save_file(&conn)).await {
+                        Some(Ok(path)) => path,
+                        _ => None,
+                    };
+                    let _ = reply.send(result).await;
                 }
                 Command::Reveal(path) => {
                     let shown =

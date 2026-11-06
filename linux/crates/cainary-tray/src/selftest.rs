@@ -98,7 +98,11 @@ pub fn run() -> Result<i32, String> {
 /// Publishes the scenario's view and settings the way the app does, then opens its window.
 fn show(scenario: &Scenario, last_view: &mut String) {
     app::publish_view_state(last_view, &scenario.state, &scenario.settings, false);
-    app::sync_settings(&scenario.settings, "", false);
+    app::sync_settings(&scenario.settings, "", false, false);
+    if scenario.selection == ":collector" {
+        let collector = fixtures::collector_sample();
+        ui::collector(move |controller| controller.apply(&collector));
+    }
     match scenario.window {
         "popup" => ui::app(|controller| controller.popup_requested(0, 0, &QString::default())),
         "details" => ui::show_details(scenario.selection.to_owned()),

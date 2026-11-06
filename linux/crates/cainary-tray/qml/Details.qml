@@ -15,7 +15,7 @@ ApplicationWindow {
     property var view: null
     property var st: null
 
-    // An entry id, ":changes", ":sources" or "" for the default.
+    // An entry id, ":changes", ":sources", ":collector" or "" for the default.
     property string selection: ""
     readonly property var v: view
     readonly property bool dark: palette.window.hslLightness < 0.5
@@ -27,6 +27,8 @@ ApplicationWindow {
             return selection;
         if (selection === ":sources")
             return selection;
+        if (selection === ":collector" || selection.startsWith(":collector:"))
+            return ":collector";
         if (selection.length > 0 && v.entries[selection] !== undefined)
             return selection;
         return v.defaultSelection;
@@ -49,7 +51,7 @@ ApplicationWindow {
         requestActivate();
     }
 
-    // Sidebar rows built from the view: {kind: "changes"|"header"|"entry"|"sources", ...}.
+    // Sidebar rows built from the view.
     readonly property var sidebar: {
         const items = [];
         if (v === null)
@@ -65,6 +67,7 @@ ApplicationWindow {
                 items.push({ kind: "entry", id: o.id, row: o });
         }
         items.push({ kind: "sources", id: ":sources" });
+        items.push({ kind: "collector", id: ":collector" });
         return items;
     }
 
@@ -185,9 +188,9 @@ ApplicationWindow {
                                 installed: item.modelData.row ? item.modelData.row.installed : true
                             }
                             Label {
-                                visible: item.modelData.kind === "changes" || item.modelData.kind === "sources"
+                                visible: item.modelData.kind === "changes" || item.modelData.kind === "sources" || item.modelData.kind === "collector"
                                 anchors.centerIn: parent
-                                text: item.modelData.kind === "changes" ? "±" : "☰"
+                                text: item.modelData.kind === "changes" ? "±" : item.modelData.kind === "collector" ? "◉" : "☰"
                 color: item.highlighted ? item.palette.highlightedText : item.palette.placeholderText
                             }
                         }
@@ -195,6 +198,7 @@ ApplicationWindow {
                             text: item.isHeader ? item.modelData.text
                                   : item.modelData.kind === "changes" ? qsTr("Changes")
                                   : item.modelData.kind === "sources" ? qsTr("Checked locations")
+                                  : item.modelData.kind === "collector" ? qsTr("OTel debug collector")
                                   : item.modelData.row.name
                             font.weight: item.isHeader ? Font.DemiBold : Font.Normal
                             color: item.isHeader ? item.palette.placeholderText
@@ -295,6 +299,15 @@ ApplicationWindow {
                                     change: modelData
                                     Layout.fillWidth: true
                                 }
+                            }
+                        }
+
+                        ColumnLayout {
+                            visible: win.effective === ":collector"
+                            Layout.fillWidth: true
+                            Layout.margins: 16
+                            CollectorPage {
+                                Layout.fillWidth: true
                             }
                         }
 
