@@ -1,18 +1,20 @@
 //! Text report renderer (architecture.md §8.1): the `scan` text layout and the `sources` TSV.
 
 use cainary_core::model::{
-    ChangeKind, ChangeScope, Entry, Finding, Level, Origin, Report, ScannedSource, SourceState,
+    ChangeKind, ChangeScope, Entry, Finding, Level, Origin, Payload, Report, ScannedSource, Sent,
+    SourceState,
 };
+use cainary_core::rules::otel_catalog::Export;
 
 /// `NOT INSTALLED`, the longest level label.
 const LEVEL_W: usize = 13;
 /// `OPTED OUT`, the longest label in a finding line.
 const FINDING_W: usize = 9;
 
-struct Paint(bool);
+pub(crate) struct Paint(pub(crate) bool);
 
 impl Paint {
-    fn wrap(&self, code: &str, s: &str) -> String {
+    pub(crate) fn wrap(&self, code: &str, s: &str) -> String {
         if self.0 {
             format!("\x1b[{code}m{s}\x1b[0m")
         } else {
@@ -20,11 +22,11 @@ impl Paint {
         }
     }
 
-    fn bold(&self, s: &str) -> String {
+    pub(crate) fn bold(&self, s: &str) -> String {
         self.wrap("1", s)
     }
 
-    fn dim(&self, s: &str) -> String {
+    pub(crate) fn dim(&self, s: &str) -> String {
         self.wrap("2", s)
     }
 
@@ -262,7 +264,18 @@ fn set_by(o: Origin) -> &'static str {
     o.set_by()
 }
 
-fn finding(out: &mut String, f: &Finding, multi: bool, p: &Paint) {
+pub(crate) fn finding(out: &mut String, f: &Finding, multi: bool, p: &Paint) {
+    finding_block(out, f, multi, p, true);
+}
+
+/// The finding block; `with_payload` adds the payload summary lines before `docs:`.
+pub(crate) fn finding_block(
+    out: &mut String,
+    f: &Finding,
+    multi: bool,
+    p: &Paint,
+    with_payload: bool,
+) {
     let level = f.level();
     let may = if f.best_effort { " (may)" } else { "" };
     let surface = if multi {
@@ -295,8 +308,44 @@ fn finding(out: &mut String, f: &Finding, multi: bool, p: &Paint) {
     for e in &f.evidence {
         out.push_str(&format!("{pad}  {}\n", p.dim(e)));
     }
+    if let (true, Some(pl)) = (with_payload, &f.payload) {
+        payload_lines(out, f, pl, &pad, p);
+    }
     if let Some(r) = &f.reference {
         out.push_str(&format!("{pad}docs: {r}\n"));
+    }
+}
+
+/// `events`, `metrics` or `spans`: what an export's records are called.
+pub(crate) fn noun(e: Export) -> &'static str {
+    match e {
+        Export::Logs => "events",
+        Export::Metrics => "metrics",
+        Export::Traces | Export::Beta => "spans",
+    }
+}
+
+fn payload_lines(out: &mut String, f: &Finding, pl: &Payload, pad: &str, p: &Paint) {
+    let n = noun(pl.export);
+    out.push_str(&format!(
+        "{pad}payload: {} {n} · catalog {} · more: cainary explain {}\n",
+        pl.records.len(),
+        pl.catalog,
+        f.id
+    ));
+    let sent: Vec<&str> = pl
+        .identity
+        .iter()
+        .filter(|a| a.sent != Some(Sent::No))
+        .map(|a| a.key.as_str())
+        .collect();
+    let one = n.trim_end_matches('s');
+    out.push_str(&format!(
+        "{pad}  identity on every {one}: {}\n",
+        sent.join(", ")
+    ));
+    for g in &pl.gates {
+        out.push_str(&format!("{pad}  {}\n", p.dim(&g.text)));
     }
 }
 

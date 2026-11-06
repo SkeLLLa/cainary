@@ -90,6 +90,13 @@ Claude — HIGH · Conversations are sent
                OTEL_LOGS_EXPORTER = otlp
                OTEL_EXPORTER_OTLP_ENDPOINT = https://otel.example-corp.com:4318
                OTEL_EXPORTER_OTLP_HEADERS = Authorization
+             payload: 28 events · catalog claude-code 2.1.316 · more: cainary explain claude-11
+               identity on every event: user.email, user.account_uuid, user.account_id, organization.id, user.id, session.id, ccr.session.id, terminal.type, app.version, app.entrypoint, vcs.repository.url.full, vcs.owner.name, vcs.repository.name, vcs.provider.name, user.groups, identity.source
+               Prompt text: sent as <REDACTED>, because OTEL_LOG_USER_PROMPTS is unset
+               Claude's response text: sent as <REDACTED>, because OTEL_LOG_ASSISTANT_RESPONSES is unset, so it follows OTEL_LOG_USER_PROMPTS, which is unset
+               Full shell commands, tool input, and MCP, skill and plugin names: sent, because OTEL_LOG_TOOL_DETAILS = 1 (set by environment variable)
+               Full model requests and responses, the whole conversation: not sent, because OTEL_LOG_RAW_API_BODIES is unset
+               Your managed settings (redacted) and their SHA-256: not sent, because OTEL_LOG_MANAGED_SETTINGS is unset
              docs: https://code.claude.com/docs/en/monitoring-usage
 
   LOW        Claude Code sends usage data and your identity to otel.example-corp.com
@@ -100,6 +107,15 @@ Claude — HIGH · Conversations are sent
                OTEL_METRICS_EXPORTER = otlp
                OTEL_EXPORTER_OTLP_ENDPOINT = https://otel.example-corp.com:4318
                OTEL_EXPORTER_OTLP_HEADERS = Authorization
+             payload: 8 metrics · catalog claude-code 2.1.316 · more: cainary explain claude-12
+               identity on every metric: user.email, user.account_uuid, user.account_id, organization.id, user.id, session.id, ccr.session.id, terminal.type, user.groups, identity.source
+               Full shell commands, tool input, and MCP, skill and plugin names: sent, because OTEL_LOG_TOOL_DETAILS = 1 (set by environment variable)
+               Session ID on metrics: sent, because OTEL_METRICS_INCLUDE_SESSION_ID is unset (on by default)
+               Account IDs on metrics: sent, because OTEL_METRICS_INCLUDE_ACCOUNT_UUID is unset (on by default)
+               Claude Code version on metrics: not sent, because OTEL_METRICS_INCLUDE_VERSION is unset
+               How Claude Code was started, on metrics: not sent, because OTEL_METRICS_INCLUDE_ENTRYPOINT is unset
+               Your custom attributes on metrics: sent, because OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES is unset (on by default)
+               Repository URL, owner and name: not sent, because OTEL_METRICS_INCLUDE_REPOSITORY is unset
              docs: https://code.claude.com/docs/en/monitoring-usage
 
   LOW        Anthropic receives usage metrics by default
