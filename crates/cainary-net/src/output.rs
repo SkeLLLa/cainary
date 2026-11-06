@@ -139,7 +139,7 @@ impl ErrorEvent {
 }
 
 impl Event {
-    fn size(&self) -> usize {
+    pub fn size(&self) -> usize {
         match self {
             Event::Batch(b) => {
                 b.tail.len()
@@ -152,11 +152,6 @@ impl Event {
             }
             Event::Error(e) => e.tail.len() + e.text.len(),
         }
-    }
-
-    /// What the queue charges for this event: its size, capped at the queue's byte limit.
-    pub fn reserved_bytes(&self, cap: usize) -> usize {
-        self.size().min(cap)
     }
 
     #[cfg(test)]
@@ -399,11 +394,5 @@ mod tests {
                 .contains("/v1/logs")
         );
         assert!(ErrorEvent::dropped(7).tail.contains("\"dropped\":7"));
-    }
-
-    #[test]
-    fn reserved_bytes_are_capped() {
-        assert_eq!(Event::sized_for_test(10).reserved_bytes(100), 10);
-        assert_eq!(Event::sized_for_test(1000).reserved_bytes(100), 100);
     }
 }

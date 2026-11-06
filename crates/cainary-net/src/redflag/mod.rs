@@ -131,7 +131,9 @@ fn builder(p: &str, case_insensitive: bool) -> RegexBuilder {
 fn compile_error(name: &str, e: regex::Error) -> PatternError {
     match e {
         regex::Error::CompiledTooBig(_) => PatternError::TooBig(name.to_string()),
-        other => PatternError::Invalid(name.to_string(), other.to_string()),
+        // regex's own message quotes the pattern, which may have come from --config-stdin.
+        regex::Error::Syntax(_) => PatternError::Invalid(name.to_string(), "syntax error".into()),
+        _ => PatternError::Invalid(name.to_string(), "unsupported expression".into()),
     }
 }
 
@@ -211,7 +213,7 @@ impl Matcher {
                 .ascii_case_insensitive(ci)
                 .match_kind(MatchKind::Standard)
                 .build(lits)
-                .map_err(|e| PatternError::Invalid("text".into(), e.to_string()))?;
+                .map_err(|_| PatternError::TooBig("(text patterns)".into()))?;
             Ok(Some(Literals { ac, ids }))
         };
         let text = [mk(ci_lits, ci_ids, true)?, mk(cs_lits, cs_ids, false)?];
@@ -224,7 +226,10 @@ impl Matcher {
             regex::Error::CompiledTooBig(_) => {
                 PatternError::TooBig("(all regexes together)".into())
             }
-            other => PatternError::Invalid("(all regexes together)".into(), other.to_string()),
+            _ => PatternError::Invalid(
+                "(all regexes together)".into(),
+                "unsupported expression".into(),
+            ),
         })?;
         Ok(Matcher {
             patterns,
@@ -390,12 +395,14 @@ impl Scanner<'_> {
     }
 
     /// Scans a value, at most `MAX_LEAF_BYTES` of it and what's left of the request's bytes.
-    pub fn scan(&mut self, hay: &str, out: &mut Vec<Hit>) {
+    /// Returns whether the whole value was scanned; false means a hit may have been missed.
+    pub fn scan(&mut self, hay: &str, out: &mut Vec<Hit>) -> bool {
         if hay.is_empty() || self.matcher.patterns.is_empty() {
-            return;
+            return true;
         }
         let cap = MAX_LEAF_BYTES.min(self.bytes_left);
         let mut end = hay.len().min(cap);
+        let mut complete = end == hay.len();
         if end < hay.len() {
             self.incomplete = true;
             while !hay.is_char_boundary(end) {
@@ -403,7 +410,7 @@ impl Scanner<'_> {
             }
         }
         if end == 0 {
-            return;
+            return false;
         }
         self.bytes_left -= end;
         if !self
@@ -411,7 +418,9 @@ impl Scanner<'_> {
             .scan_with(&hay[..end], out, &mut self.candidates_left)
         {
             self.incomplete = true;
+            complete = false;
         }
+        complete
     }
 }
 
@@ -546,6 +555,18 @@ mod tests {
             PatternError::TooBig("x".into()).to_string(),
             "red flag 'x': regex is too big to compile (limit 1 MiB)"
         );
+    }
+
+    #[test]
+    fn compile_errors_never_quote_the_pattern() {
+        for pat in ["SECRET-TOKEN(", "SECRET-TOKEN[", "(?<SECRET-TOKEN"] {
+            let e = Matcher::new(vec![p("a", Kind::Regex, pat, false)])
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(!e.contains("SECRET"), "{e}");
+            assert!(e.contains("'a'"));
+        }
     }
 
     #[test]

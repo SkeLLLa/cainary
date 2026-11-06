@@ -8,7 +8,7 @@ use crate::http::{self, Framing, HttpError, Limits, Response};
 use crate::logfile::LogFile;
 use crate::otlp::{self, Ctx, Route};
 use crate::output::{self, ErrorEvent, Event, FlagInfo, Hello};
-use crate::queue::{Queue, Semaphore};
+use crate::queue::{Queue, Refused, Semaphore};
 use crate::redflag::Matcher;
 use crate::setup;
 use std::cell::Cell;
@@ -496,12 +496,11 @@ impl Shared {
     }
 
     fn try_send(&self, ev: Event) {
-        let bytes = ev.reserved_bytes(self.t.queue_bytes);
-        if let Some(p) = self
+        if let Ok(p) = self
             .queue
-            .reserve(bytes, Instant::now() + Duration::from_millis(100))
+            .reserve(&[ev.size()], Instant::now() + Duration::from_millis(100))
         {
-            p.send(ev);
+            p.send(vec![ev]);
         }
     }
 }
@@ -621,26 +620,20 @@ fn request(reader: &mut BufReader<Guarded>, w: &TcpStream, sh: &Shared) -> Next 
 
     // Room in the output queue is reserved before the 200 is written, so an accepted batch is
     // never lost to a full queue, and `--once` can't cut the response.
-    let batch = Event::Batch(prepared.batch);
-    let extra: Vec<Event> = prepared.extra.into_iter().map(Event::Error).collect();
-    let cap = sh.t.queue_bytes;
-    let mut permits = Vec::new();
-    for ev in std::iter::once(&batch).chain(extra.iter()) {
-        match sh.queue.reserve(ev.reserved_bytes(cap), deadline) {
-            Some(p) => permits.push(p),
-            None => return deny(503, "busy"),
-        }
-    }
+    let mut events = vec![Event::Batch(prepared.batch)];
+    events.extend(prepared.extra.into_iter().map(Event::Error));
+    let sizes: Vec<usize> = events.iter().map(Event::size).collect();
+    let permit = match sh.queue.reserve(&sizes, deadline) {
+        Ok(p) => p,
+        Err(Refused::TooLarge) => return deny(413, "batch too large to show"),
+        Err(Refused::Timeout) => return deny(503, "busy"),
+    };
     let keep = head.keep_alive();
     let resp = Response::json(200, "{}".to_string(), keep);
     if !write_response(w, &resp) {
         return Next::Close { linger: false };
     }
-    let mut permits = permits.into_iter();
-    permits.next().expect("batch permit").send(batch);
-    for (p, ev) in permits.zip(extra) {
-        p.send(ev);
-    }
+    permit.send(events);
     if keep {
         Next::KeepAlive
     } else {

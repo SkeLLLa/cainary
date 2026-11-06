@@ -19,6 +19,11 @@ pub const MAX_IDENT: usize = 256;
 /// A raw `--show-values` match is cut here; the limits of §14 still apply.
 const MAX_RAW_MATCH: usize = 1024;
 const MAX_DEPTH: usize = 32;
+/// Text-mode output kept per batch, and per value (design §14.1: retained output is bounded).
+const MAX_TEXT_BODY: usize = 256 << 10;
+const MAX_TEXT_VALUE: usize = 512;
+/// What the output thread adds in front of a batch's JSON tail.
+const ENVELOPE_BYTES: usize = 256;
 
 pub const PROTOBUF_MESSAGE: &str = "cainary-otel-debug reads OTLP/JSON only: set OTEL_EXPORTER_OTLP_PROTOCOL=http/json (Claude Code) or protocol = \"json\" in the otlp-http exporter (Codex)";
 pub const COMPRESSED_MESSAGE: &str =
@@ -124,19 +129,22 @@ pub enum Fail {
     Shape(Signal),
     /// 413
     TooMany,
+    /// 413: the summary alone is over the output line cap.
+    TooLarge,
 }
 
 impl Fail {
     pub fn status(&self) -> u16 {
         match self {
             Fail::Shape(_) => 400,
-            Fail::TooMany => 413,
+            Fail::TooMany | Fail::TooLarge => 413,
         }
     }
     pub fn message(&self) -> String {
         match self {
             Fail::Shape(s) => format!("not an OTLP {} document", s.name()),
             Fail::TooMany => "too many records or attributes in one request".to_string(),
+            Fail::TooLarge => "too many distinct names for one output line".to_string(),
         }
     }
 }
@@ -149,7 +157,7 @@ struct Attr<'a> {
 }
 
 struct Rec<'a> {
-    name: String,
+    name: &'a str,
     kind: &'static str,
     body: Option<&'a Value>,
     event_name: Option<&'a str>,
@@ -157,8 +165,8 @@ struct Rec<'a> {
 }
 
 struct Scope<'a> {
-    name: String,
-    version: Option<String>,
+    name: &'a str,
+    version: Option<&'a str>,
     recs: Vec<Rec<'a>>,
 }
 
@@ -247,15 +255,10 @@ impl Walker {
                 let s = self.obj(s)?;
                 let (name, version) = match s.get("scope") {
                     Some(sc) => (
-                        sc.get("name")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_string(),
-                        sc.get("version")
-                            .and_then(Value::as_str)
-                            .map(str::to_string),
+                        sc.get("name").and_then(Value::as_str).unwrap_or(""),
+                        sc.get("version").and_then(Value::as_str),
                     ),
-                    None => (String::new(), None),
+                    None => ("", None),
                 };
                 let recs = match self.signal {
                     Signal::Logs => self.logs(s)?,
@@ -292,7 +295,7 @@ impl Walker {
                 .filter(|b| is_event_name(b))
                 .filter(|b| event_name.is_some_and(|e| e == *b || b.ends_with(&format!(".{e}"))));
             recs.push(Rec {
-                name: from_body.or(event_name).unwrap_or("").to_string(),
+                name: from_body.or(event_name).unwrap_or(""),
                 kind: "event",
                 body,
                 event_name,
@@ -320,7 +323,7 @@ impl Walker {
                 for p in points {
                     let p = self.obj(p)?;
                     recs.push(Rec {
-                        name: name.to_string(),
+                        name,
                         kind: "metric",
                         body: None,
                         event_name: None,
@@ -339,11 +342,7 @@ impl Walker {
         for s in items {
             let s = self.obj(s)?;
             recs.push(Rec {
-                name: s
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string(),
+                name: s.get("name").and_then(Value::as_str).unwrap_or(""),
                 kind: "span",
                 body: None,
                 event_name: None,
@@ -354,11 +353,7 @@ impl Walker {
             for e in events {
                 let e = self.obj(e)?;
                 recs.push(Rec {
-                    name: e
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string(),
+                    name: e.get("name").and_then(Value::as_str).unwrap_or(""),
                     kind: "span-event",
                     body: None,
                     event_name: None,
@@ -565,6 +560,16 @@ struct Proc<'m> {
     hits: Vec<Hit>,
 }
 
+/// Appends within the text budget; once it is spent, one marker and nothing more.
+fn push_capped(text: &mut String, add: &str) {
+    const MARK: &str = "… (output truncated)\n";
+    if text.len() + add.len() + MARK.len() <= MAX_TEXT_BODY {
+        text.push_str(add);
+    } else if !text.ends_with(MARK) {
+        text.push_str(MARK);
+    }
+}
+
 fn cut(s: &str, max: usize) -> String {
     if s.len() <= max {
         return s.to_string();
@@ -646,8 +651,11 @@ impl<'m> Proc<'m> {
     ) -> String {
         let mut hits = std::mem::take(&mut self.hits);
         hits.clear();
-        self.scanner.scan(s, &mut hits);
-        let shown = self.namer.name(s, kind, known, !hits.is_empty());
+        let complete = self.scanner.scan(s, &mut hits);
+        // Verbatim only after a complete, negative scan (design §14.2).
+        let shown = self
+            .namer
+            .name(s, kind, known, !hits.is_empty() || !complete);
         // An alert names a flagged key by its label, never by the key itself.
         let attr = if where_ == "key" || where_ == "resource" {
             Some(shown.as_str())
@@ -663,8 +671,10 @@ impl<'m> Proc<'m> {
     fn shown(&mut self, s: &str, kind: Label, known: bool) -> String {
         let mut hits = std::mem::take(&mut self.hits);
         hits.clear();
-        self.scanner.scan(s, &mut hits);
-        let shown = self.namer.name(s, kind, known, !hits.is_empty());
+        let complete = self.scanner.scan(s, &mut hits);
+        let shown = self
+            .namer
+            .name(s, kind, known, !hits.is_empty() || !complete);
         self.hits = hits;
         shown
     }
@@ -708,7 +718,10 @@ impl<'m> Proc<'m> {
     }
 
     fn text_value(&self, v: &Value) -> String {
-        escape(&if self.show { raw(v) } else { mask(v) })
+        escape(&cut(
+            &if self.show { raw(v) } else { mask(v) },
+            MAX_TEXT_VALUE,
+        ))
     }
 }
 
@@ -755,15 +768,19 @@ pub fn process(signal: Signal, bytes: usize, doc: &Value, ctx: &Ctx) -> Result<P
     let mut resource_keys: Vec<String> = Vec::new();
     let mut text_body = String::new();
     let mut summaries: Vec<Summary> = Vec::new();
+    let mut summary_index: HashMap<(String, &'static str), usize> = HashMap::new();
+    let mut name_cache: HashMap<(usize, usize), String> = HashMap::new();
 
     for res in &resources {
         let mut attrs = Vec::new();
         let mut line = Vec::new();
-        for a in &res.attrs {
+        for (i, a) in res.attrs.iter().enumerate() {
             let label = p.scan_name(a.key, Label::Key, false, "resource", None, None);
             p.scan_value(a.value, "resource", Some(&label), None);
             attrs.push(p.field(&label, a.value));
-            line.push(format!("{} {}", escape(&label), p.text_value(a.value)));
+            if i < 32 {
+                line.push(format!("{} {}", escape(&label), p.text_value(a.value)));
+            }
             if !resource_keys.contains(&label) {
                 resource_keys.push(label);
             }
@@ -778,22 +795,33 @@ pub fn process(signal: Signal, bytes: usize, doc: &Value, ctx: &Ctx) -> Result<P
             service = Some((name, version));
         }
         if !line.is_empty() {
-            text_body.push_str(&format!("resource   {}\n", line.join(" · ")));
+            push_capped(
+                &mut text_body,
+                &format!("resource   {}\n", line.join(" · ")),
+            );
         }
 
         let mut scopes_json = Vec::new();
         for sc in &res.scopes {
-            let scope_name = p.scan_name(&sc.name, Label::Name, false, "scope", None, None);
+            let scope_name = p.scan_name(sc.name, Label::Name, false, "scope", None, None);
             let version = sc
                 .version
-                .as_deref()
                 .map(|v| p.scan_name(v, Label::Name, false, "scope", None, None));
             let mut recs_json = Vec::new();
             for r in &sc.recs {
-                let name = if r.name.is_empty() {
-                    "(unnamed)".to_string()
-                } else {
-                    p.scan_name(&r.name, Label::Name, false, "name", None, None)
+                // Sanitized once per distinct raw slice: all points of a metric share one name.
+                let slice = (r.name.as_ptr() as usize, r.name.len());
+                let name = match name_cache.get(&slice) {
+                    Some(n) => n.clone(),
+                    None => {
+                        let n = if r.name.is_empty() {
+                            "(unnamed)".to_string()
+                        } else {
+                            p.scan_name(r.name, Label::Name, false, "name", None, None)
+                        };
+                        name_cache.insert(slice, n.clone());
+                        n
+                    }
                 };
                 if let Some(b) = r.body {
                     p.scan_value(b, "body", None, Some(&name));
@@ -807,9 +835,9 @@ pub fn process(signal: Signal, bytes: usize, doc: &Value, ctx: &Ctx) -> Result<P
                     fields.push(p.field(&label, a.value));
                     keys.push(label);
                 }
-                match summaries
-                    .iter_mut()
-                    .find(|s| s.name == name && s.kind == r.kind)
+                match summary_index
+                    .get(&(name.clone(), r.kind))
+                    .map(|i| &mut summaries[*i])
                 {
                     Some(s) => {
                         s.count += 1;
@@ -819,12 +847,15 @@ pub fn process(signal: Signal, bytes: usize, doc: &Value, ctx: &Ctx) -> Result<P
                             }
                         }
                     }
-                    None => summaries.push(Summary {
-                        name: name.clone(),
-                        kind: r.kind,
-                        count: 1,
-                        keys,
-                    }),
+                    None => {
+                        summary_index.insert((name.clone(), r.kind), summaries.len());
+                        summaries.push(Summary {
+                            name: name.clone(),
+                            kind: r.kind,
+                            count: 1,
+                            keys,
+                        });
+                    }
                 }
                 recs_json
                     .push(json!({"name": name, "kind": r.kind, "known": false, "attrs": fields}));
@@ -835,10 +866,16 @@ pub fn process(signal: Signal, bytes: usize, doc: &Value, ctx: &Ctx) -> Result<P
     }
 
     for s in &summaries {
-        text_body.push_str(&format!("{} ×{}\n", escape(&s.name), s.count));
+        push_capped(
+            &mut text_body,
+            &format!("{} ×{}\n", escape(&s.name), s.count),
+        );
         let keys: Vec<String> = s.keys.iter().take(16).map(|k| escape(k)).collect();
         if !keys.is_empty() {
-            text_body.push_str(&format!("  attrs    {}\n", keys.join(" · ")));
+            push_capped(
+                &mut text_body,
+                &format!("  attrs    {}\n", keys.join(" · ")),
+            );
         }
     }
 
@@ -881,7 +918,8 @@ pub fn process(signal: Signal, bytes: usize, doc: &Value, ctx: &Ctx) -> Result<P
     let resources_value = Value::Array(resource_json);
     let resources_text = resources_value.to_string();
     let summary_text = summary.to_string();
-    let omit = resources_text.len() + summary_text.len() + 2048 > crate::output::MAX_LINE_BYTES;
+    let omit = resources_text.len() + summary_text.len() + 2048 + ENVELOPE_BYTES
+        > crate::output::MAX_LINE_BYTES;
 
     let service_json = service
         .as_ref()
@@ -906,6 +944,11 @@ pub fn process(signal: Signal, bytes: usize, doc: &Value, ctx: &Ctx) -> Result<P
     if incomplete {
         m.insert("scanIncomplete".into(), json!(true));
     }
+    let tail = Value::Object(m).to_string();
+    // The summary always stays, so if it alone can't fit one line the batch can't be shown.
+    if tail.len() + ENVELOPE_BYTES > crate::output::MAX_LINE_BYTES {
+        return Err(Fail::TooLarge);
+    }
     let header = format!(
         "{} · {} · {} records",
         signal.name(),
@@ -922,7 +965,7 @@ pub fn process(signal: Signal, bytes: usize, doc: &Value, ctx: &Ctx) -> Result<P
     };
     Ok(Prepared {
         batch: BatchEvent {
-            tail: Value::Object(m).to_string(),
+            tail,
             text_header: header,
             text_body,
             alerts,
@@ -1309,5 +1352,77 @@ mod tests {
         assert!(p.batch.tail.contains("\"scanIncomplete\":true"));
         assert_eq!(p.extra.len(), 1);
         assert!(p.extra[0].tail.contains("red-flags"));
+    }
+
+    fn secret_ctx() -> Ctx {
+        let p = Pattern {
+            name: "secret".into(),
+            kind: Kind::Text,
+            pattern: "SECRET-TOKEN".into(),
+            case_sensitive: true,
+            preset: false,
+        };
+        Ctx {
+            matcher: Arc::new(Matcher::new(vec![p]).unwrap()),
+            show_values: false,
+        }
+    }
+
+    #[test]
+    fn a_huge_metric_name_is_sanitized_once_not_per_point() {
+        let c = ctx(false);
+        let name = "n".repeat(6 << 20);
+        let points: Vec<Value> = (0..MAX_RECORDS).map(|_| json!({})).collect();
+        let doc = json!({"resourceMetrics": [{"scopeMetrics": [{"metrics": [
+            {"name": name, "sum": {"dataPoints": points}}]}]}]});
+        let p = process(Signal::Metrics, 1, &doc, &c).unwrap();
+        assert!(p.batch.tail.len() < 1 << 20, "{}", p.batch.tail.len());
+        assert!(!p.batch.tail.contains("nnnnnnnn"));
+        assert!(p.batch.tail.contains("<unknown-name-1>"));
+        assert!(p.batch.tail.contains("\"records\":10000"));
+    }
+
+    #[test]
+    fn an_exhausted_budget_never_lets_a_name_through_unscanned() {
+        let c = secret_ctx();
+        let pad = "p".repeat(crate::redflag::MAX_LEAF_BYTES);
+        let attrs: Vec<Value> = (0..20)
+            .map(|i| attr(&format!("pad{i}"), sv(&pad)))
+            .collect();
+        let doc = logs(
+            attrs,
+            json!({"name": "SECRET-TOKEN", "version": "SECRET-TOKEN"}),
+            vec![json!({"attributes": [attr("SECRET-TOKEN", sv("v"))]})],
+        );
+        let p = process(Signal::Logs, 1, &doc, &c).unwrap();
+        let all = format!(
+            "{}{}{}",
+            p.batch.tail, p.batch.text_header, p.batch.text_body
+        );
+        assert!(!all.contains("SECRET-TOKEN"), "{all}");
+        assert!(p.batch.tail.contains("scanIncomplete"));
+    }
+
+    #[test]
+    fn a_summary_over_the_line_cap_is_rejected() {
+        let c = ctx(false);
+        let spans: Vec<Value> = (0..MAX_RECORDS)
+            .map(|i| json!({"name": format!("{i:0>128}")}))
+            .collect();
+        let doc = json!({"resourceSpans": [{"scopeSpans": [{"spans": spans}]}]});
+        let e = process(Signal::Traces, 1, &doc, &c).err().unwrap();
+        assert_eq!(e, Fail::TooLarge);
+        assert_eq!(e.status(), 413);
+    }
+
+    #[test]
+    fn show_values_text_output_is_bounded() {
+        let c = ctx(true);
+        let big = "x".repeat(3 << 20);
+        let attrs: Vec<Value> = (0..3).map(|i| attr(&format!("k{i}"), sv(&big))).collect();
+        let doc = logs(attrs, json!({"name": "s"}), vec![json!({})]);
+        let p = process(Signal::Logs, 1, &doc, &c).unwrap();
+        assert!(p.batch.text_body.len() < MAX_TEXT_BODY + 64);
+        assert!(p.batch.tail.len() + ENVELOPE_BYTES <= crate::output::MAX_LINE_BYTES);
     }
 }

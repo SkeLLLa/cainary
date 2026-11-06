@@ -226,7 +226,8 @@ fn check_guard3(srcs: &[Src]) -> Vec<String> {
 
 /// Calls that open or resolve an outbound connection. None may appear anywhere in the net
 /// crate, `server.rs` included: it listens and never dials.
-const NET_BANNED_CALLS: [&str; 10] = [
+const NET_BANNED_CALLS: [&str; 11] = [
+    "core::net",
     "TcpStream::connect",
     ".connect(",
     "connect_timeout",
@@ -239,7 +240,17 @@ const NET_BANNED_CALLS: [&str; 10] = [
     "os::unix::net",
 ];
 
+/// Identifier tokens (`[A-Za-z0-9_]+`), so `cainary_core` isn't `core` and `max_connections`
+/// isn't `connect`.
+fn idents(code: &str) -> Vec<&str> {
+    code.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
 /// N1: `std::net` only in `server.rs`, and no outbound or resolving call anywhere in the crate.
+/// Aliases can't hide a dial: the identifier `connect` (or `connect_*`) is banned outright, as
+/// is renaming anything about `std`, `core`, `alloc` or `net` in a `use` or `extern crate`.
 fn check_n1(srcs: &[Src]) -> Vec<String> {
     let mut bad = Vec::new();
     for s in srcs.iter().filter(|s| in_net(&s.rel)) {
@@ -254,6 +265,26 @@ fn check_n1(srcs: &[Src]) -> Vec<String> {
         for call in NET_BANNED_CALLS {
             if code.contains(call) {
                 bad.push(format!("{}: outbound or resolving call `{call}`", s.rel));
+            }
+        }
+        if idents(&code)
+            .iter()
+            .any(|t| *t == "connect" || t.starts_with("connect_"))
+        {
+            bad.push(format!("{}: the identifier `connect` is banned", s.rel));
+        }
+        for stmt in code.split(';') {
+            let stmt = stmt.trim_start();
+            let toks = idents(stmt);
+            // `use` may follow `{`, `pub` or an attribute, so look anywhere in the statement.
+            let renames = toks.contains(&"use") || toks.contains(&"extern");
+            if renames
+                && toks.contains(&"as")
+                && toks
+                    .iter()
+                    .any(|t| matches!(*t, "std" | "core" | "alloc" | "net"))
+            {
+                bad.push(format!("{}: renamed std/core/net import `{stmt}`", s.rel));
             }
         }
     }
@@ -718,8 +749,43 @@ mod fires {
             assert!(!check_n1(&net("otlp.rs", call)).is_empty(), "{call}");
         }
         assert!(check_n1(&net("server.rs", "let l = TcpListener::bind(addr);")).is_empty());
+        assert!(
+            check_n1(&net(
+                "server.rs",
+                "let max_connections = 1; let c = connection;"
+            ))
+            .is_empty()
+        );
+        assert!(
+            check_n1(&net(
+                "output.rs",
+                "use cainary_core::value as v; use serde_json::Value as V;"
+            ))
+            .is_empty()
+        );
         // Other crates are not N1's business.
         assert!(check_n1(&src("cainary-core/src/analysis.rs", "x.connect(a);")).is_empty());
+    }
+
+    #[test]
+    fn n1_aliases_cannot_hide_a_dial() {
+        for code in [
+            "use std::net::TcpStream as S;\nlet s = S::connect(a);",
+            "type S = std::net::TcpStream;\nlet s = S::connect(a);",
+            "use std::net as n;\nlet s = n::TcpStream::connect(a);",
+            "use std as s;\nlet x = s::net::TcpStream::connect(a);",
+            "extern crate std as s;",
+            "use core::net::SocketAddr;",
+            "use ::std::net::TcpStream as T;",
+            "let s = <TcpStream>::connect(a);",
+            "let f = TcpStream::connect;",
+            "let s = std::net::TcpStream::connect_timeout(&a, d);",
+            "use std::net::{TcpStream as S};",
+            "pub use std::net as n;",
+        ] {
+            assert!(!check_n1(&net("server.rs", code)).is_empty(), "{code}");
+            assert!(!check_n1(&net("otlp.rs", code)).is_empty(), "{code}");
+        }
     }
 
     #[test]
