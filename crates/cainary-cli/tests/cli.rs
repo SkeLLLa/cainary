@@ -103,6 +103,76 @@ fn summary_and_rich_goldens() {
     );
 }
 
+#[test]
+fn explain_goldens() {
+    let explain = |fixture_name: &str, name: &str, id: &str| {
+        let fx = fixture(fixture_name);
+        let out = run(&["explain", id, "--fixture", &fx]);
+        assert_eq!(out.status.code(), Some(0), "{id}");
+        let got = String::from_utf8(out.stdout).unwrap();
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/golden")
+            .join(name);
+        if std::env::var("CAINARY_BLESS").is_ok_and(|v| v == "1") {
+            std::fs::write(&path, &got).unwrap();
+            return;
+        }
+        let want = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{}: {e}; run with CAINARY_BLESS=1", path.display()));
+        assert_eq!(want, got, "{name} differs from its golden");
+    };
+    explain(
+        "claude-code-org-macos",
+        "claude-code-org-macos.explain.txt",
+        EXPLAIN_CLAUDE,
+    );
+    explain("codex-linux", "codex-linux.explain.txt", EXPLAIN_CODEX);
+}
+
+/// Ids as `scan` prints them; the goldens pin which finding each one is.
+const EXPLAIN_CLAUDE: &str = "claude-11";
+const EXPLAIN_CODEX: &str = "openai-4";
+
+#[test]
+fn explain_unknown_id_exits_2() {
+    let fx = fixture("claude-code-org-macos");
+    let out = run(&["explain", "nope-9", "--fixture", &fx]);
+    assert_eq!(out.status.code(), Some(2));
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(err.contains("no finding 'nope-9'; `cainary scan` lists the ids"));
+    assert_eq!(run(&["explain"]).status.code(), Some(2));
+}
+
+#[test]
+fn explain_without_payload_says_so() {
+    let fx = fixture("claude-code-org-macos");
+    let out = run(&["explain", "claude-1", "--fixture", &fx, "--no-color"]);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .contains("This finding has no payload preview.")
+    );
+}
+
+#[test]
+fn otel_debug_prints_the_hint_and_exits_0() {
+    let out = run(&["otel-debug"]);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "The OTel debug collector is a separate program: run `cainary-otel-debug` (see `cainary-otel-debug --help`).\ncainary itself never listens on or connects to the network.\n"
+    );
+    assert_eq!(run(&["otel-debug", "--port", "1"]).status.code(), Some(2));
+}
+
+#[test]
+fn summary_prints_no_payload_lines() {
+    let fx = fixture("claude-code-org-macos");
+    let out = run(&["scan", "--summary", "--fixture", &fx]);
+    assert!(!String::from_utf8(out.stdout).unwrap().contains("payload:"));
+}
+
 // --- `--since` ---
 
 use serde_json::Value;

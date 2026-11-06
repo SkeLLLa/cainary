@@ -19,6 +19,10 @@ pub enum Command {
     Sources {
         json: bool,
     },
+    Explain {
+        target: String,
+    },
+    OtelDebug,
     Version,
     Help,
 }
@@ -71,11 +75,15 @@ enum Kind {
     Scan,
     Status,
     Sources,
+    Explain,
+    OtelDebug,
 }
 
 pub fn parse(args: &[String]) -> Result<(Command, Common), ArgError> {
     let Some(first) = args.first() else {
-        return Err(usage("missing command (scan, status, sources)"));
+        return Err(usage(
+            "missing command (scan, status, sources, explain, otel-debug)",
+        ));
     };
     let kind = match first.as_str() {
         "--version" | "-V" => return Ok((Command::Version, Common::default())),
@@ -83,6 +91,8 @@ pub fn parse(args: &[String]) -> Result<(Command, Common), ArgError> {
         "scan" => Kind::Scan,
         "status" => Kind::Status,
         "sources" => Kind::Sources,
+        "explain" => Kind::Explain,
+        "otel-debug" => Kind::OtelDebug,
         other => return Err(usage(format!("unknown command '{other}'"))),
     };
 
@@ -91,6 +101,7 @@ pub fn parse(args: &[String]) -> Result<(Command, Common), ArgError> {
     let mut summary = false;
     let mut since = None;
     let mut format = Format::Emoji;
+    let mut target: Option<String> = None;
     let mut rest = args[1..].iter();
     while let Some(arg) = rest.next() {
         // Split `--flag=value`; a bare `--flag` takes its value from the next argument.
@@ -106,7 +117,17 @@ pub fn parse(args: &[String]) -> Result<(Command, Common), ArgError> {
         };
         match flag {
             "--help" | "-h" if inline.is_none() => return Ok((Command::Help, common)),
-            "--json" if kind != Kind::Status && inline.is_none() => json = true,
+            _ if kind == Kind::Explain && !arg.starts_with('-') => {
+                if target.replace(arg.clone()).is_some() {
+                    return Err(usage(format!("unexpected argument '{arg}'")));
+                }
+            }
+            _ if kind == Kind::OtelDebug => {
+                return Err(usage(format!("unknown option '{arg}'")));
+            }
+            "--json" if matches!(kind, Kind::Scan | Kind::Sources) && inline.is_none() => {
+                json = true
+            }
             "--summary" if kind == Kind::Scan && inline.is_none() => summary = true,
             "--since" if kind == Kind::Scan => since = Some(value()?),
             "--format" if kind == Kind::Status => {
@@ -169,6 +190,10 @@ pub fn parse(args: &[String]) -> Result<(Command, Common), ArgError> {
         },
         Kind::Status => Command::Status { format },
         Kind::Sources => Command::Sources { json },
+        Kind::Explain => Command::Explain {
+            target: target.ok_or_else(|| usage("explain needs a finding id or key"))?,
+        },
+        Kind::OtelDebug => Command::OtelDebug,
     };
     Ok((command, common))
 }
@@ -209,6 +234,31 @@ mod tests {
             }
         );
         assert_eq!(p(&["sources"]).unwrap().0, Command::Sources { json: false });
+    }
+
+    #[test]
+    fn explain_and_otel_debug() {
+        let (c, common) = p(&["explain", "claude-5", "--no-color", "--tool", "claude"]).unwrap();
+        assert_eq!(
+            c,
+            Command::Explain {
+                target: "claude-5".into()
+            }
+        );
+        assert!(common.no_color);
+        let (c, _) = p(&["explain", "--fixture", "fx", "abc123"]).unwrap();
+        assert_eq!(
+            c,
+            Command::Explain {
+                target: "abc123".into()
+            }
+        );
+        assert!(err(&["explain"]).contains("needs a finding"));
+        assert!(err(&["explain", "a", "b"]).contains("'b'"));
+        assert!(err(&["explain", "a", "--json"]).contains("--json"));
+        assert_eq!(p(&["otel-debug"]).unwrap().0, Command::OtelDebug);
+        assert!(err(&["otel-debug", "--port", "1"]).contains("--port"));
+        assert!(err(&["otel-debug", "x"]).contains("'x'"));
     }
 
     #[test]

@@ -1,0 +1,216 @@
+  LOW        Claude Code sends usage data and your identity to otel.example-corp.com
+             Claude Code's log export is on. Every event is tagged with your account email (when you sign in with a Claude account), your account and organization IDs and the session ID.
+             sends: usage, identity · set by: organization (MDM profile)
+             config: /Library/Managed Preferences/com.anthropic.claudecode.plist
+               CLAUDE_CODE_ENABLE_TELEMETRY = 1
+               OTEL_LOGS_EXPORTER = otlp
+               OTEL_EXPORTER_OTLP_ENDPOINT = https://otel.example-corp.com:4318
+               OTEL_EXPORTER_OTLP_HEADERS = Authorization
+             docs: https://code.claude.com/docs/en/monitoring-usage
+
+What the log export carries (catalog claude-code 2.1.316; https://code.claude.com/docs/en/monitoring-usage#events)
+
+Flags
+  Prompt text: sent as <REDACTED>, because OTEL_LOG_USER_PROMPTS is unset
+  Claude's response text: sent as <REDACTED>, because OTEL_LOG_ASSISTANT_RESPONSES is unset, so it follows OTEL_LOG_USER_PROMPTS, which is unset
+  Full shell commands, tool input, and MCP, skill and plugin names: sent, because OTEL_LOG_TOOL_DETAILS = 1 (set by environment variable)
+  Full model requests and responses, the whole conversation: not sent, because OTEL_LOG_RAW_API_BODIES is unset
+  Your managed settings (redacted) and their SHA-256: not sent, because OTEL_LOG_MANAGED_SETTINGS is unset
+
+Identity (on every record)
+  user.email               your account email (when signed in with a Claude account)
+  user.account_uuid        your account UUID
+  user.account_id          your tagged account ID
+  organization.id          your organization's UUID
+  user.id                  a random ID for this installation
+  session.id               this session's ID
+  ccr.session.id           the cloud session's ID
+  terminal.type            your terminal, such as iTerm.app, VS Code or tmux
+  app.version              the Claude Code version (may)
+  app.entrypoint           how Claude Code was started (may)
+  vcs.repository.url.full  the repository's URL
+  vcs.owner.name           the repository owner
+  vcs.repository.name      the repository name
+  vcs.provider.name        the repository's host
+  user.groups              your identity provider's groups (may)
+  identity.source          your identity provider, such as gateway-oidc (may)
+
+Resource
+  service.name     "claude-code"
+  service.version  the Claude Code version
+  os.type          your operating system type
+  os.version       your operating system version
+  host.arch        your computer's architecture
+  wsl.version      your WSL version
+
+Events (28; * seen on the wire in claude-code 2.1.316; (may) = not in the vendor docs)
+  claude_code.user_prompt *
+    You sent a prompt
+    keys: prompt_length, message.uuid, command_source
+    content: prompt (redacted), prompt_text (redacted), command_name (sent)
+  claude_code.assistant_response *
+    Claude replied
+    keys: response_length, model, request_id, message.uuid, query_source
+    content: response (redacted)
+  claude_code.tool_result *
+    A tool finished: name, result, timing, sizes
+    keys: tool_name, tool_use_id, request_id, success, duration_ms, error_type, decision_type,
+          decision_source, tool_input_size_bytes, tool_result_size_bytes, mcp_server_scope
+    content: tool_parameters (sent), tool_input (sent), error (sent), vcs.ref.head.* (sent)
+  claude_code.api_request *
+    A model request: model, tokens, cost, latency
+    keys: model, cost_usd, cost_usd_micros, duration_ms, input_tokens, output_tokens,
+          cache_read_tokens, cache_creation_tokens, cache_creation_5m_tokens,
+          cache_creation_1h_tokens, request_id, client_request_id, speed, query_source, effort,
+          ttft_ms (may)
+    content: agent.name (sent), skill.name (sent), plugin.name (sent), marketplace.name (sent),
+             mcp_server.name (sent), mcp_tool.name (sent)
+  claude_code.api_error
+    A model request failed
+    keys: model, error, status_code, duration_ms, attempt, request_id, client_request_id, speed,
+          query_source, effort
+    content: agent.name (sent), skill.name (sent), plugin.name (sent), marketplace.name (sent),
+             mcp_server.name (sent), mcp_tool.name (sent)
+  claude_code.api_refusal *
+    The model refused a request
+    keys: model, request_id, query_source, speed, attempt, effort, server_fallback_hop,
+          has_category, has_explanation
+    content: category (sent), agent.name (sent), skill.name (sent), plugin.name (sent),
+             marketplace.name (sent), mcp_server.name (sent), mcp_tool.name (sent)
+  claude_code.api_request_body (OTEL_LOG_RAW_API_BODIES: not sent)
+    The full request sent to the model
+    keys: body_length, body_truncated, model, query_source, request_body_id
+    content: body (not sent), body_ref (not sent)
+  claude_code.api_response_body (OTEL_LOG_RAW_API_BODIES: not sent)
+    The full response from the model
+    keys: body_length, body_truncated, model, query_source, request_body_id, request_id, message.id,
+          message.uuid
+    content: body (not sent), body_ref (not sent)
+  claude_code.tool_decision *
+    A tool use was allowed or denied, and by whom
+    keys: tool_name, tool_use_id, request_id, decision, tool_source, source, classifier_verdict,
+          permission_mode
+    content: classifier_category (sent), tool_parameters (sent)
+  claude_code.safety_event
+    A rule, policy, hook or sandbox allowed or blocked an action
+    keys: category, decision, decision_source, reason_code, reason_type, rule_source, grant_scope,
+          circuit_breaker, hook_event, tool_class, tool_name, tool_source, permission_mode,
+          tool_use_id, sandbox_violation_count, sandbox_enabled
+    content: classifier_category (sent)
+  claude_code.permission_mode_changed
+    You switched permission mode
+    keys: from_mode, to_mode, trigger
+  claude_code.auth
+    You logged in or out
+    keys: action, success, auth_method, error_category, status_code
+  claude_code.mcp_server_connection *
+    An MCP server connected, failed or disconnected
+    keys: status, transport_type, server_scope, duration_ms, error_code, is_plugin, plugin_id_hash
+    content: plugin.name (sent), server_name (sent), error (sent)
+  claude_code.internal_error
+    Claude Code hit an internal error
+    keys: error_name, error_code
+  claude_code.plugin_installed
+    A plugin was installed
+    keys: marketplace.is_official, install.trigger
+    content: plugin.name (sent), plugin.version (sent), marketplace.name (sent)
+  claude_code.plugin_loaded *
+    A plugin was loaded
+    keys: plugin.version, plugin.scope, enabled_via, plugin_id_hash, has_hooks, has_mcp,
+          host_owned_mcp, skill_path_count, command_path_count, agent_path_count, safe_mode
+    content: plugin.name (sent), marketplace.name (sent)
+  claude_code.skill_activated
+    A skill ran
+    keys: invocation_trigger, skill.source, skill.kind
+    content: skill.name (sent), plugin.name (sent), marketplace.name (sent)
+  claude_code.at_mention
+    You mentioned a file, folder, agent or resource
+    keys: mention_type, success
+  claude_code.api_retries_exhausted
+    A model request gave up after retries
+    keys: model, error, status_code, total_attempts, total_retry_duration_ms, speed
+  claude_code.hook_registered *
+    A hook is configured
+    keys: hook_event, hook_type, hook_source, safe_mode, plugin_id_hash
+    content: plugin.name (sent), hook_matcher (sent)
+  claude_code.hook_execution_start *
+    Hooks started for an event
+    keys: hook_event, hook_name, num_hooks, managed_only, hook_source, safe_mode
+  claude_code.hook_execution_complete *
+    Hooks finished: counts, timing, output sizes
+    keys: hook_event, hook_name, num_hooks, num_success, num_blocking, num_non_blocking_error,
+          num_cancelled, total_duration_ms, stdout_chars, additional_context_chars,
+          system_message_chars, initial_user_message_chars, num_outputs_persisted, managed_only,
+          hook_source, safe_mode
+  claude_code.hook_plugin_metrics
+    Metrics from an official plugin's hooks
+    keys: plugin_id, hook_event
+  claude_code.compaction
+    The conversation was compacted
+    keys: trigger, success, duration_ms, pre_tokens, post_tokens, error, precompute_reuse
+  claude_code.subagent_completed
+    A subagent finished
+    keys: agent.source, is_built_in, is_async, total_tokens, total_tool_uses, duration_ms, model,
+          final_model, model_swapped, plugin_id_hash
+    content: plugin.name (sent), agent_type (sent)
+  claude_code.feedback_survey
+    You saw or answered a feedback survey
+    keys: event_type, appearance_id, survey_type, response, enabled_via_override
+  claude_code.retention_sweep
+    Old local transcripts were cleaned up
+    keys: result, period_days, used_default, skip_reason, transcripts_deleted,
+          transcripts_exempted_desktop, session_files_deleted, artifacts_deleted,
+          files_retained_fresh, files_past_cutoff, error_count
+  claude_code.managed_settings_resolved *
+    Managed settings were applied: sources and helper state
+    keys: managed_settings.trigger, error.type, managed_settings.sources,
+          managed_settings.source_behavior, managed_settings.helper.state,
+          managed_settings.helper.applied, managed_settings.helper.entry,
+          managed_settings.helper.path, managed_settings.settings_truncated
+    content: managed_settings.resolved_sha256 (not sent), managed_settings.settings (not sent)
+
+Sample record
+  resource:
+    service.name = "claude-code"
+    service.version = <the Claude Code version>
+    os.type = <your operating system type>
+    os.version = <your operating system version>
+    host.arch = <your computer's architecture>
+    wsl.version = <your WSL version>
+  claude_code.tool_result:
+    user.email = <your account email (when signed in with a Claude account)>
+    user.account_uuid = <your account UUID>
+    user.account_id = <your tagged account ID>
+    organization.id = <your organization's UUID>
+    user.id = <a random ID for this installation>
+    session.id = <this session's ID>
+    ccr.session.id = <the cloud session's ID>
+    terminal.type = <your terminal, such as iTerm.app, VS Code or tmux>
+    app.version = <the Claude Code version>
+    app.entrypoint = <how Claude Code was started>
+    vcs.repository.url.full = <the repository's URL>
+    vcs.owner.name = <the repository owner>
+    vcs.repository.name = <the repository name>
+    vcs.provider.name = <the repository's host>
+    user.groups = <your identity provider's groups>
+    identity.source = <your identity provider, such as gateway-oidc>
+    event.name = <the event name>
+    event.timestamp = <when the event occurred>
+    event.sequence = <the event's sequence number>
+    prompt.id = <the ID linking events from one prompt>
+    workspace.host_paths = <your workspace folders>
+    tool_name = <the tool's name>
+    tool_use_id = <the ID of this tool invocation>
+    request_id = <the model request ID>
+    success = <whether the tool succeeded>
+    duration_ms = <how long the tool took>
+    error_type = <the tool error type>
+    decision_type = <the permission decision type>
+    decision_source = <where the decision came from>
+    tool_input_size_bytes = <the size of the tool input>
+    tool_result_size_bytes = <the size of the tool result>
+    mcp_server_scope = <where the MCP server was configured>
+    tool_parameters = <the tool's parameters, including a Bash command in full>   (sent: OTEL_LOG_TOOL_DETAILS)
+    tool_input = <the tool's input>   (sent: OTEL_LOG_TOOL_DETAILS)
+    error = <the tool error message>   (sent: OTEL_LOG_TOOL_DETAILS)
+    vcs.ref.head.* = <the current version-control reference>   (sent: OTEL_LOG_TOOL_DETAILS)

@@ -1,0 +1,39 @@
+  MEDIUM     Codex sends traces of your session to traces.example-corp.com (may)
+             Codex's trace export is on. Codex doesn't document span names or fields, so what they carry may differ from the log events.
+             sends: tool-details, usage, identity · set by: you
+             config: ~/.codex/config.toml
+               endpoint = https://traces.example-corp.com:4317
+             docs: https://learn.chatgpt.com/docs/config-file/config-reference
+
+What the trace export carries (catalog codex 0.166.0; https://learn.chatgpt.com/docs/config-file/config-advanced#observability-and-telemetry)
+  Not fully documented by the vendor: this may differ from what is sent.
+
+Identity (on every record)
+  conversation.id  the conversation ID (may)
+  auth_mode        your authentication mode (may)
+  terminal.type    your terminal type (may)
+
+Resource
+  service.name            the Codex service name, usually codex_cli_rs
+  service.version         the Codex version
+  env                     the OpenTelemetry environment label, dev by default
+  telemetry.sdk.language  the telemetry SDK language (may)
+  telemetry.sdk.name      the telemetry SDK name (may)
+  telemetry.sdk.version   the telemetry SDK version (may)
+
+Spans (1; * seen on the wire in codex 0.166.0; (may) = not in the vendor docs)
+  codex.* (may)
+    Codex spans; their names and fields are undocumented
+
+Sample record
+  resource:
+    service.name = <the Codex service name, usually codex_cli_rs>
+    service.version = <the Codex version>
+    env = <the OpenTelemetry environment label, dev by default>
+    telemetry.sdk.language = <the telemetry SDK language>
+    telemetry.sdk.name = <the telemetry SDK name>
+    telemetry.sdk.version = <the telemetry SDK version>
+  codex.*:
+    conversation.id = <the conversation ID>
+    auth_mode = <your authentication mode>
+    terminal.type = <your terminal type>

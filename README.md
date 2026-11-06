@@ -199,6 +199,8 @@ cainary scan --summary    # one line per app or monitor
 cainary scan --json       # machine-readable report (used by the apps)
 cainary status            # one-line status (--format text|emoji|nerd|json)
 cainary sources           # every path read, and whether it was present
+cainary explain claude-11 # what one telemetry finding sends (ids are in `scan`; keys in `scan --json`)
+cainary otel-debug        # points at the separate local OTel debug collector, `cainary-otel-debug`
 cainary --help
 ```
 

@@ -1,6 +1,7 @@
 //! `cainary` binary (architecture.md §8): wire args → Harness → scan → render.
 
 mod args;
+mod explain;
 mod status;
 mod text;
 
@@ -15,11 +16,17 @@ use std::io::{IsTerminal, Read, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
+const OTEL_DEBUG_HINT: &str = "\
+The OTel debug collector is a separate program: run `cainary-otel-debug` (see `cainary-otel-debug --help`).
+cainary itself never listens on or connects to the network.";
+
 const USAGE: &str = "\
 usage:
   cainary scan    [--json | --summary] [--since <baseline.json|->] [COMMON]
   cainary status  [--format emoji|text|nerd|json] [COMMON]
   cainary sources [--json] [COMMON]
+  cainary explain <id|key> [COMMON]
+  cainary otel-debug
   cainary --version | --help
 
 COMMON:
@@ -30,6 +37,9 @@ COMMON:
   --no-color
 
 scan --summary prints only the status and the one-line-per-entry tables.
+explain <id|key> shows what a telemetry finding sends: its flags, identity, records and a sample.
+          Ids are the ones `scan` prints (claude-5); keys are in `scan --json`.
+otel-debug points at `cainary-otel-debug`, the separate local collector; it starts nothing itself.
 scan --since compares with an earlier `scan --json` (a file, or - for stdin) and lists the changes.
 ";
 
@@ -61,6 +71,10 @@ fn run(args: &[String]) -> u8 {
             print!("{USAGE}");
             0
         }
+        Command::OtelDebug => {
+            println!("{OTEL_DEBUG_HINT}");
+            0
+        }
         command => {
             let harness = match harness(&common) {
                 Ok(h) => h,
@@ -81,6 +95,17 @@ fn run(args: &[String]) -> u8 {
                 let baseline = read_baseline(&harness, src);
                 diff::apply_since(&mut report, baseline.as_deref().map_err(String::clone));
             }
+            if let Command::Explain { target } = &command {
+                let Some(f) = explain::find(&report, target) else {
+                    eprintln!(
+                        "cainary: no finding '{target}'; `cainary scan` lists the ids\n\n{USAGE}"
+                    );
+                    return 2;
+                };
+                let out = explain::render(f, color(&common), columns());
+                let _ = std::io::stdout().write_all(out.as_bytes());
+                return 0;
+            }
             let out = match command {
                 Command::Scan { json: true, .. } => nl(serde_json::to_string_pretty(&report)),
                 Command::Scan {
@@ -93,7 +118,9 @@ fn run(args: &[String]) -> u8 {
                     &json!({ "schema": cainary_core::model::SCHEMA, "sources": report.sources }),
                 )),
                 Command::Sources { json: false } => text::sources_tsv(&report),
-                Command::Version | Command::Help => unreachable!(),
+                Command::Explain { .. } | Command::OtelDebug | Command::Version | Command::Help => {
+                    unreachable!()
+                }
             };
             // A closed pipe (`| head`) is not an error worth reporting.
             let _ = std::io::stdout().write_all(out.as_bytes());
