@@ -195,21 +195,25 @@ const NO_TLS: &str = "this build has no TLS support (cargo feature `tls`)";
 #[cfg(feature = "tls")]
 fn ca_dir() -> Result<std::path::PathBuf, String> {
     use std::path::PathBuf;
-    let home = || {
-        std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .filter(|h| h.is_absolute())
-            .ok_or_else(|| "HOME is not set to an absolute path".to_string())
+    // A set but relative value is an error, not something to quietly skip: the directory is
+    // the one the exporter is told to read, so it must be unambiguous.
+    let absolute = |name: &str| -> Result<Option<PathBuf>, String> {
+        match std::env::var_os(name) {
+            None => Ok(None),
+            Some(v) if PathBuf::from(&v).is_absolute() => Ok(Some(PathBuf::from(v))),
+            Some(_) => Err(format!("{name} is not an absolute path")),
+        }
     };
+    let home = || absolute("HOME")?.ok_or_else(|| "HOME is not set".to_string());
     #[cfg(target_os = "macos")]
     {
         Ok(home()?.join("Library/Application Support/cAInary"))
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let base = match std::env::var_os("XDG_STATE_HOME").map(PathBuf::from) {
-            Some(p) if p.is_absolute() => p,
-            _ => home()?.join(".local/state"),
+        let base = match absolute("XDG_STATE_HOME")? {
+            Some(p) => p,
+            None => home()?.join(".local/state"),
         };
         Ok(base.join("cainary"))
     }

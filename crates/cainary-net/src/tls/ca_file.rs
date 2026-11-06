@@ -184,23 +184,31 @@ impl CaDir {
         }
         // SAFETY: `root` is a fresh descriptor we own.
         let mut fd = unsafe { OwnedFd::from_raw_fd(root) };
-        let mut todo: std::collections::VecDeque<String> = dir
-            .components()
-            .filter_map(|c| match c {
-                Component::Normal(n) => Some(n.to_string_lossy().into_owned()),
-                _ => None,
-            })
-            .collect();
+        // The names as raw bytes (no lossy conversion), and no `.` or `..`: a `..` would make the
+        // directory that is checked differ from the path the exporter is told to read.
+        let mut todo: std::collections::VecDeque<Vec<u8>> = std::collections::VecDeque::new();
+        let mut clean = PathBuf::from("/");
+        for c in dir.components() {
+            match c {
+                Component::RootDir => {}
+                Component::Normal(n) => {
+                    todo.push_back(n.as_bytes().to_vec());
+                    clean.push(n);
+                }
+                _ => return bad("contains a '.' or '..' component"),
+            }
+        }
         let total = todo.len();
         let mut links = 0usize;
         let mut depth = 0usize;
         while let Some(name) = todo.pop_front() {
-            if name == "." || name == ".." || name.contains('\0') {
+            if name == b"." || name == b".." || name.contains(&0) {
                 return bad("contains a component that isn't a plain name");
             }
-            let c = cstr(&name);
+            let shown = String::from_utf8_lossy(&name).into_owned();
+            let c = CString::new(name.clone()).expect("no NUL, checked above");
             let found = lstat_at(&fd, &c)
-                .map_err(|e| CaFileError::Failed(format!("can't inspect {name}: {e}")))?;
+                .map_err(|e| CaFileError::Failed(format!("can't inspect {shown}: {e}")))?;
             match found {
                 None if !create => return Ok(None),
                 None => {
@@ -208,7 +216,7 @@ impl CaDir {
                     let r = unsafe { libc::mkdirat(fd.as_raw_fd(), c.as_ptr(), 0o700) };
                     if r != 0 && io::Error::last_os_error().kind() != io::ErrorKind::AlreadyExists {
                         return failed(format!(
-                            "can't create {name} for the certificate directory: {}",
+                            "can't create {shown} for the certificate directory: {}",
                             io::Error::last_os_error()
                         ));
                     }
@@ -239,10 +247,10 @@ impl CaDir {
                         // SAFETY: `r` is a fresh descriptor we own.
                         fd = unsafe { OwnedFd::from_raw_fd(r) };
                     }
-                    let mut front: Vec<String> = Vec::new();
+                    let mut front: Vec<Vec<u8>> = Vec::new();
                     for comp in target.components() {
                         match comp {
-                            Component::Normal(n) => front.push(n.to_string_lossy().into_owned()),
+                            Component::Normal(n) => front.push(n.as_bytes().to_vec()),
                             Component::RootDir | Component::CurDir => {}
                             _ => {
                                 return bad("has a symlink with a '..' target; refusing to use it");
@@ -263,12 +271,12 @@ impl CaDir {
                         dir.display()
                     )
                 } else {
-                    format!("can't open {name} on the way to {}: {e}", dir.display())
+                    format!("can't open {shown} on the way to {}: {e}", dir.display())
                 })
             })?;
             depth += 1;
             let st = fstat_fd(&next)
-                .map_err(|e| CaFileError::Failed(format!("can't stat {name}: {e}")))?;
+                .map_err(|e| CaFileError::Failed(format!("can't stat {shown}: {e}")))?;
             let last = todo.is_empty();
             let group_other_write = st.mode & 0o022 != 0;
             let ok = if last && depth >= total {
@@ -284,17 +292,15 @@ impl CaDir {
                     )
                 } else {
                     format!(
-                        "{name} on the way to the certificate directory {} is not safe (owned by someone else, or writable by others without the sticky bit)",
+                        "{shown} on the way to the certificate directory {} is not safe (owned by someone else, or writable by others without the sticky bit)",
                         dir.display()
                     )
                 });
             }
             fd = next;
         }
-        Ok(Some(CaDir {
-            fd,
-            dir: dir.to_path_buf(),
-        }))
+        // The advertised path is exactly the one validated: built from the same components.
+        Ok(Some(CaDir { fd, dir: clean }))
     }
 
     pub fn open(dir: &Path) -> Result<CaDir, CaFileError> {
@@ -406,7 +412,7 @@ pub fn publish(dir: &Path, pem: &str) -> Result<Published, CaFileError> {
     let lock = d.lock()?;
     d.write_cert(pem)?;
     Ok(Published {
-        path: dir.join(CA_FILE),
+        path: d.dir.join(CA_FILE),
         _lock: lock,
         _dir: d,
     })
@@ -585,6 +591,55 @@ mod tests {
         for p in [base.join("a"), base.join("a/b"), d.clone()] {
             assert_eq!(mode(&p), 0o700, "{}", p.display());
         }
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn dot_and_dotdot_components_are_refused_and_the_path_is_the_validated_one() {
+        let base = tmp("dotdot");
+        fs::create_dir_all(base.join("a")).unwrap();
+        fs::set_permissions(&base, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(base.join("a"), fs::Permissions::from_mode(0o700)).unwrap();
+        for p in [
+            base.join("a/../state/cainary"),
+            base.join("a/cainary/.."),
+            base.join("../cainary"),
+        ] {
+            match publish(&p, "x") {
+                Err(CaFileError::Failed(m)) => assert!(m.contains("'.' or '..'"), "{m}"),
+                other => panic!("{}: {:?}", p.display(), other.err()),
+            }
+            assert!(matches!(delete(&p), Err(CaFileError::Failed(_))));
+        }
+        assert!(!base.join("a/state").exists() && !base.join("state").exists());
+        // An interior `.` and redundant slashes are harmless, and the advertised path is built from the components.
+        let messy = PathBuf::from(format!("{}//a/./b///cainary", base.display()));
+        let published = publish(&messy, "x").unwrap();
+        assert_eq!(published.path, base.join("a/b/cainary").join(CA_FILE));
+        assert!(published.path.exists());
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn names_are_kept_as_raw_bytes() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+        let base = tmp("bytes");
+        // A directory name that isn't UTF-8 must be created and opened as itself, not as its
+        // lossy rendering.
+        let odd = OsString::from_vec(b"st\xffate".to_vec());
+        let dir = base.join(&odd).join("cainary");
+        let p = publish(&dir, "x").unwrap();
+        assert_eq!(p.path, dir.join(CA_FILE));
+        assert!(
+            fs::read_dir(&base)
+                .unwrap()
+                .any(|e| e.unwrap().file_name() == odd)
+        );
+        assert!(
+            fs::read_dir(&base).unwrap().count() == 1,
+            "no lossy twin was created"
+        );
         fs::remove_dir_all(&base).unwrap();
     }
 }

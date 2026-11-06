@@ -1059,3 +1059,42 @@ fn the_endpoint_says_https_and_both_families_are_listed_by_default() {
     run.srv.shutdown();
     let _ = std::fs::remove_dir_all(&run.dir);
 }
+
+#[test]
+fn a_state_path_with_dotdot_or_a_relative_one_is_refused_with_exit_1() {
+    let base = tmp("dotdot-bin");
+    std::fs::create_dir_all(base.join("a")).unwrap();
+    std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::set_permissions(base.join("a"), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let run = |xdg: &str| {
+        Command::new(env!("CARGO_BIN_EXE_cainary-otel-debug"))
+            .env("XDG_STATE_HOME", xdg)
+            .env("HOME", &base)
+            .args([
+                "--tls",
+                "--tls-host",
+                HOST,
+                "--port",
+                "0",
+                "--listen",
+                "127.0.0.1",
+            ])
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let out = run(&format!("{}/a/../state", base.display()));
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("'..'"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!base.join("a/state").exists() && !base.join("state").exists());
+    let out = run("relative/state");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("XDG_STATE_HOME is not an absolute path")
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
