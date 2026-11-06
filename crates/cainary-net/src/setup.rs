@@ -160,20 +160,20 @@ pub struct PortNote<'a> {
 /// Where option 1 puts a root-owned copy.
 pub const COPY_PATH: &str = "/usr/local/libexec/cainary/cainary-otel-debug";
 
-/// An argument as both fish and bash read it: bare when plain, else in single quotes. An
-/// argument with a quote or a control character can't be single-quoted for both shells, so it
-/// is shown as a placeholder to edit.
-fn quote(a: &str) -> String {
+/// A word as both fish and bash read it: bare when plain, else in single quotes with each
+/// single quote written `'\''` (close, an escaped quote, reopen), which both shells accept. A
+/// control character can't be shown safely at all, so such a word becomes a placeholder.
+pub fn quote(a: &str) -> String {
     let plain = !a.is_empty()
         && a.bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"_@%+=:,./-".contains(&b));
     if plain {
         return a.to_string();
     }
-    if a.chars().any(|c| c == '\'' || c.is_control()) {
-        return "'<edit: this argument needs shell quoting>'".to_string();
+    if a.chars().any(char::is_control) {
+        return "'<edit: this word contained control characters>'".to_string();
     }
-    format!("'{a}'")
+    format!("'{}'", a.replace('\'', "'\\''"))
 }
 
 fn command(exe: &str, args: &[String]) -> String {
@@ -181,6 +181,79 @@ fn command(exe: &str, args: &[String]) -> String {
         .chain(args.iter().map(|a| quote(a)))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn digits(v: &str) -> bool {
+    !v.is_empty() && v.len() <= 5 && v.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// The arguments of this run, reduced to what is safe to show: flags that name no secret keep
+/// their (validated) values; anything that can carry a pattern, a path or free text becomes a
+/// placeholder, and anything unknown is dropped. Printed commands are copied into terminals and
+/// bug reports, so a `--red-flag hidden=<value>` must never come back out.
+pub fn safe_args(args: &[String]) -> Vec<String> {
+    // flag → how its value is shown: Some(validator) keeps it, None replaces it by the placeholder.
+    type Check = fn(&str) -> bool;
+    const KEEP: [(&str, Check); 7] = [
+        ("--port", digits),
+        ("--tls-public-port", digits),
+        ("--log-max-mib", digits),
+        ("--log-keep", digits),
+        ("--listen", |v| {
+            !v.is_empty()
+                && v.len() <= 45
+                && v.bytes()
+                    .all(|b| b.is_ascii_hexdigit() || b == b':' || b == b'.')
+        }),
+        ("--tls-host", crate::host::valid_host),
+        ("--preset", |v| {
+            !v.is_empty()
+                && v.len() <= 64
+                && v.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        }),
+    ];
+    const HIDE: [(&str, &str); 5] = [
+        ("--red-flag", "<name>=<pattern>"),
+        ("--red-flag-re", "<name>=<pattern>"),
+        ("--match-case", "<name>"),
+        ("--red-flags", "<file>"),
+        ("--log-file", "<path>"),
+    ];
+    const BARE: [&str; 8] = [
+        "--json",
+        "--show-values",
+        "--once",
+        "--tls",
+        "--exit-on-stdin-eof",
+        "--config-stdin",
+        "--no-default-red-flags",
+        "--list-presets",
+    ];
+    let mut out = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let (flag, inline) = match a.split_once('=') {
+            Some((f, v)) if f.starts_with("--") => (f, Some(v.to_string())),
+            _ => (a.as_str(), None),
+        };
+        if BARE.contains(&flag) && inline.is_none() {
+            out.push(flag.to_string());
+        } else if let Some((_, check)) = KEEP.iter().find(|(f, _)| *f == flag) {
+            let v = inline.or_else(|| it.next().cloned());
+            if let Some(v) = v.filter(|v| check(v)) {
+                out.push(flag.to_string());
+                out.push(v);
+            }
+        } else if let Some((_, placeholder)) = HIDE.iter().find(|(f, _)| *f == flag) {
+            if inline.is_none() {
+                it.next();
+            }
+            out.push(flag.to_string());
+            out.push((*placeholder).to_string());
+        }
+    }
+    out
 }
 
 /// `args` with the port set to `port` (replacing `--port <n>` / `--port=<n>`, adding it if absent).
@@ -222,27 +295,31 @@ pub fn privileged_port_note(n: &PortNote<'_>) -> Vec<String> {
         ));
         return l;
     }
-    let exe = crate::output::escape(n.exe.unwrap_or("cainary-otel-debug"));
+    let exe = n.exe.unwrap_or("cainary-otel-debug");
+    let args = safe_args(n.args);
+    let q_exe = quote(exe);
     l.push("1. A capability on a root-owned copy (the quick way to try it). Only CAP_NET_BIND_SERVICE is granted, and this program drops it right after binding. A rebuild or a copy of the file loses it. Never run this as root.".into());
     if n.exe_root_owned && n.exe.is_some() {
-        l.push(format!("   sudo setcap cap_net_bind_service=+ep {exe}"));
-        l.push(format!("   {}", command(&exe, n.args)));
-        l.push(format!("   To undo: sudo setcap -r {exe}"));
+        l.push(format!("   sudo setcap cap_net_bind_service=+ep {q_exe}"));
+        l.push(format!("   {}", command(exe, &args)));
+        l.push(format!("   To undo: sudo setcap -r {q_exe}"));
     } else {
         l.push(format!(
-            "   sudo install -D -m 755 -o root -g root {exe} {COPY_PATH}"
+            "   sudo install -D -m 755 -o root -g root {q_exe} {}",
+            quote(COPY_PATH)
         ));
         l.push(format!(
-            "   sudo setcap cap_net_bind_service=+ep {COPY_PATH}"
+            "   sudo setcap cap_net_bind_service=+ep {}",
+            quote(COPY_PATH)
         ));
-        l.push(format!("   {}", command(COPY_PATH, n.args)));
-        l.push(format!("   To undo: sudo rm {COPY_PATH}"));
+        l.push(format!("   {}", command(COPY_PATH, &args)));
+        l.push(format!("   To undo: sudo rm {}", quote(COPY_PATH)));
     }
     let alt = alternative_port(port);
     l.push(format!(
         "2. Listen on an unprivileged port and redirect {port} to it, for connections this machine makes to loopback, both address families (run these yourself; they are not run for you):"
     ));
-    l.push(format!("   {}", command(&exe, &with_port(n.args, alt))));
+    l.push(format!("   {}", command(exe, &with_port(&args, alt))));
     l.push("   sudo nft add table inet cainary_port_redirect".into());
     l.push("   sudo nft 'add chain inet cainary_port_redirect out { type nat hook output priority -100 ; }'".into());
     l.push(format!("   sudo nft add rule inet cainary_port_redirect out oifname lo ip daddr 127.0.0.1 tcp dport {port} redirect to :{alt}"));
@@ -497,14 +574,114 @@ mod port_note_tests {
         for bad in ["$(", "export ", "`", "<(", "[[", "; then", "&&"] {
             assert!(!n.contains(bad), "{bad:?} in {n}");
         }
-        assert!(n.contains("'customer=acme corp'"));
-        // A quote can't be written for both shells: a placeholder, never a broken command.
-        let q = note(443, Some("/usr/bin/x"), true, &["--red-flag", "a=it's"]);
-        assert!(q.contains("<edit: this argument needs shell quoting>"));
-        assert!(!q.contains("it's"));
+        // Placeholders contain `<` and `>`, so they are single-quoted and read as one word.
+        assert!(
+            n.contains("--red-flag '<name>=<pattern>' --listen 127.0.0.1"),
+            "{n}"
+        );
         // The path is escaped like any printed path.
         let e = note(443, Some("/tmp/evil\u{1b}]52;c;AAAA\u{7}/x"), true, &[]);
         assert!(!e.contains('\u{1b}') && !e.contains('\u{7}'));
+    }
+
+    #[test]
+    fn quoting_is_one_word_in_fish_and_bash() {
+        assert_eq!(
+            quote("/usr/bin/cainary-otel-debug"),
+            "/usr/bin/cainary-otel-debug"
+        );
+        assert_eq!(quote("/home/my user/x"), "'/home/my user/x'");
+        assert_eq!(quote("it's"), "'it'\\''s'");
+        assert_eq!(quote("a;b"), "'a;b'");
+        assert_eq!(quote("$(id)"), "'$(id)'");
+        assert_eq!(quote("`id`"), "'`id`'");
+        assert_eq!(quote("a\\b"), "'a\\b'");
+        assert_eq!(quote(""), "''");
+        assert!(quote("a\nb").contains("<edit"));
+        assert!(quote("a\u{1b}b").contains("<edit"));
+    }
+
+    #[test]
+    fn every_path_in_the_commands_is_quoted() {
+        for exe in [
+            "/home/my user/bin/x",
+            "/tmp/a;touch pwned/x",
+            "/tmp/it's/x",
+            "/tmp/$(id)/x",
+        ] {
+            let q = quote(exe);
+            // A user-owned file: install, setcap on the copy, run, and undo.
+            let n = note(443, Some(exe), false, &["--json"]);
+            assert!(n.contains(&format!("sudo install -D -m 755 -o root -g root {q} /usr/local/libexec/cainary/cainary-otel-debug")), "{exe}\n{n}");
+            assert!(
+                !n.contains(&format!("install -D -m 755 -o root -g root {exe} ")) || q == exe,
+                "{exe}"
+            );
+            // A root-owned one: setcap, run, undo, and the redirect's run command.
+            let n = note(443, Some(exe), true, &["--json"]);
+            assert!(
+                n.contains(&format!("sudo setcap cap_net_bind_service=+ep {q}\n")),
+                "{exe}\n{n}"
+            );
+            assert!(n.contains(&format!("sudo setcap -r {q}\n")), "{exe}\n{n}");
+            assert!(n.contains(&format!("   {q} --json\n")), "{exe}\n{n}");
+            assert!(
+                n.contains(&format!("   {q} --json --port 8443\n")),
+                "{exe}\n{n}"
+            );
+        }
+    }
+
+    #[test]
+    fn secrets_in_the_arguments_never_come_back_out() {
+        let a = [
+            "--red-flag",
+            "hidden=SECRET-VALUE",
+            "--red-flag-re=db=SECRET-REGEX",
+            "--match-case",
+            "SECRET-NAME",
+            "--red-flags",
+            "/home/u/SECRET-FILE.toml",
+            "--log-file=/home/u/SECRET-LOG.jsonl",
+            "--port",
+            "443",
+            "--listen",
+            "127.0.0.1",
+            "--tls",
+            "--tls-host",
+            "otel.example-corp.test",
+            "--json",
+            "--tls-host",
+            "SECRET-NOT-A-HOST",
+            "--preset",
+            "SECRET_PRESET",
+            "stray-SECRET-positional",
+            "--unknown=SECRET-UNKNOWN",
+        ];
+        // Both branches replay the arguments: the root-owned file, and the install-a-copy one.
+        let n = format!(
+            "{}{}",
+            note(443, Some("/usr/bin/x"), true, &a),
+            note(443, Some("/home/u/x"), false, &a)
+        );
+        assert!(!n.contains("SECRET"), "{n}");
+        // The safe flags are kept verbatim; the secret-bearing ones are placeholders.
+        assert!(
+            n.contains(
+                "--port 443 --listen 127.0.0.1 --tls --tls-host otel.example-corp.test --json"
+            ) || n.contains("--tls-host otel.example-corp.test"),
+            "{n}"
+        );
+        assert!(
+            n.contains("'<name>=<pattern>'")
+                && n.contains("'<file>'")
+                && n.contains("'<path>'")
+                && n.contains("'<name>'"),
+            "{n}"
+        );
+        let kept = safe_args(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert!(kept.contains(&"--port".to_string()) && kept.contains(&"443".to_string()));
+        assert!(!kept.iter().any(|k| k.contains("SECRET")));
     }
 
     #[test]
