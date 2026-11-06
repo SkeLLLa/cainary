@@ -8,13 +8,25 @@ status-bar setups in [integrations.md](integrations.md).
 ## 1. Goals and non-goals
 
 cAInary shows a developer what their employer enforces on, watches and collects from the AI
-coding tools on their machine. It is free (GPL-3.0-or-later), **read-only** and **makes no
-network requests**.
+coding tools on their machine. It is free (GPL-3.0-or-later), **read-only** and `cainary` itself
+**makes no network requests** (the one opt-in exception is a separate program, below).
 
 Design rules, in priority order:
 
 1. **Safe.** It never writes outside its own preferences, never uses the network, and never
    opens credential files (§6.3).
+
+   **One exception, in a separate program.** `cainary` itself never uses the network and never
+   runs in the background. The separate `cainary-otel-debug` binary (crate `cainary-net`, §12) is
+   a local OTLP/HTTP receiver for checking what an AI tool's telemetry export contains. It
+   listens only on loopback (127.0.0.1 and ::1) and never opens an outbound connection. It
+   refuses requests whose `Host` isn't a loopback name with its port and any request that carries
+   an `Origin` or `Sec-Fetch-*` header, so a web page can't reach it. It is unauthenticated, as
+   any loopback listener is: any local process can post to it. It writes only to a log file the
+   user names, and runs only while the user runs it: from a terminal, or through the explicit
+   "OTel debug collector" toggle in the macOS app or the Linux tray, which start it as a child
+   process and stop it with the app. `cainary scan` and `status` never start or contact it.
+   Guards (§10) keep network code out of `cainary-core` and `cainary-cli`.
 2. **Truthful.** Every rule cites an official vendor doc. A rule that isn't confirmed by one is
    marked best effort (`maybe`) and worded "may". A source that could not be read, was refused,
    or was cut off by a cap makes the scan *incomplete*, never *clear*. A wrong result is the
@@ -29,8 +41,8 @@ Design rules, in priority order:
    analysis code.
 
 Non-goals: verifying code signatures, attributing who installed a binary beyond two simple
-rules, heavy redaction hardening, caching, a daemon or watch mode, auto-update, and any
-server-side visibility.
+rules, heavy redaction hardening, caching, a daemon or watch mode (the opt-in collector is not a
+daemon: no autostart, pidfile or service), auto-update, and any server-side visibility.
 
 ## 2. Repository layout
 
@@ -56,6 +68,9 @@ server-side visibility.
       src/harness/deny.rs    AccessPolicy: the credential deny-list bound to this scan's homes
       src/harness/platform.rs  Os, EnvKind, MDM plist paths, the scutil subprocess
       src/rules/otel.rs      OTEL_* / exporter classification
+      src/rules/otel_catalog.rs   static, versioned tables of the records each vendor's OTel export carries
+      src/rules/otel_classify.rs  OTLP/JSON → classified batch (used by cainary-net)
+      src/rules/otel_preview.rs   catalog + resolved flags → `Payload` (§3.7)
       src/rules/hooks.rs     classify a hook / notify command (network, interpreter, binary)
       src/rules/mcp.rs       MCP server entry → finding
       src/rules/vendor.rs    vendor-default telemetry findings and opt-out env vars
@@ -76,11 +91,26 @@ server-side visibility.
       tests/golden/<name>.json
       tests/resolve/<name>/  resolver fixtures: same layout, no goldens; asserted by unit tests
       tests/golden.rs        fixture → Report JSON == golden
+      tests/otel-payloads/<vendor>-<version>/  sanitized OTLP/JSON captures the catalog is checked against
       tests/guards.rs        source-level safety guards (§10)
       tests/canary.rs        guard 5: credentials never reach the report (§10)
     cainary-cli/             binary `cainary`
-      src/main.rs  src/args.rs  src/text.rs  src/status.rs
-      tests/cli.rs           runs the binary on fixtures; text/status/sources goldens in tests/golden/
+      src/main.rs  src/args.rs  src/text.rs  src/status.rs  src/explain.rs
+      tests/cli.rs           runs the binary on fixtures; text/status/sources/explain goldens in tests/golden/
+    cainary-net/             binary `cainary-otel-debug` (§12); `publish = false`; never linked by the core or CLI
+      src/main.rs            args, `--config-stdin` / stdin lifeline thread, exit codes; the only `std::env`/`std::process`
+      src/lib.rs             `pub mod args, config, http, logfile, otlp, output, queue, redflag, server, setup`
+      src/args.rs            hand-written parser → `Options`; exit-2 usage errors
+      src/config.rs          `--config-stdin`: the one JSON config line (≤ 1 MiB), strict
+      src/server.rs          the only `std::net`: bind, accept, per-connection threads, limits, Host/Origin checks
+      src/http.rs            pure HTTP/1.1 parsing and response bytes (strict framing)
+      src/otlp.rs            routes, content checks, OTLP/JSON walk, naming policy, alerts → events
+      src/output.rs          the output thread: JSON lines, text rendering, escaping
+      src/queue.rs           the job semaphore and the output queue (bounded by items and bytes)
+      src/logfile.rs         the only file writer: 0600 log, rotation, descriptor-validated open
+      src/redflag/           `mod.rs` (patterns, `Matcher`), `presets.rs`, `file.rs` (the `--red-flags` TOML reader)
+      src/setup.rs           the "point an agent at it" lines (text and `hello.setup`)
+      tests/server.rs  tests/redflag.rs  tests/redflag_timing.rs
   macos/                     SwiftUI menu bar app (macos.md)
     Info.plist  Sources/*.swift  Tests/
   linux/                     Qt 6 tray app: its own workspace, Cargo.lock and guards (linux.md)
@@ -100,12 +130,19 @@ Dependencies, all in `[workspace.dependencies]`:
 | `serde_json` | JSON in and out; the universal `Value` | `preserve_order` feature, so evidence keeps the file's key order |
 | `toml` | Codex config, requirements, managed_config | parse to `toml::Value` → `serde_json::Value` |
 | `plist` | macOS managed preferences, PPPC, app `Info.plist` (binary and XML) | read through its event stream (§5.1) |
-| `libc` | `O_NOFOLLOW`/`O_NONBLOCK`/`O_CLOEXEC` for the guarded open and `fcntl(F_GETPATH)` on macOS (§6.3) | `default-features = false`; used only in `harness/fs.rs`. The flag values differ between macOS and Linux targets, so they aren't hand-written |
+| `libc` | `O_NOFOLLOW`/`O_NONBLOCK`/`O_CLOEXEC` for the guarded open and `fcntl(F_GETPATH)` on macOS (§6.3) | `default-features = false`; used only in `harness/fs.rs` (and in `cainary-net/src/logfile.rs` for the same open flags and the effective uid). The flag values differ between macOS and Linux targets, so they aren't hand-written |
+| `regex` | user red-flag patterns in the collector (§12.5) | **`cainary-net` only.** Linear-time matching, so a hostile pattern or input can't ReDoS, and compile-size limits (1 MiB per regex, 16 MiB in all) |
 
 Nothing else: no `clap` (a small hand-written parser), no `chrono`/`time` (one RFC 3339
-formatter), no `regex` (substring and token checks), no `dirs`, and no async. `tests/guards.rs`
+formatter), no `regex` in the core or CLI (substring and token checks), no `dirs`, and no async. `tests/guards.rs`
 parses `Cargo.lock` and fails if a package outside an allowlist appears, so adding a crate is a
-visible, reviewed change. That guard is a regression check, not a proof. What keeps the product
+visible, reviewed change. `regex` pulls in `regex-automata`, `regex-syntax` and `aho-corasick`
+(the direct `aho-corasick` use was dropped after a timing test, §12.5); with `cainary-net` itself
+they are the `NET_ONLY` set. `memchr` is also a dependency of those, but it is already in the
+core's closure through `serde_json`, so it is not net-only. Guard 4 requires the lock to stay
+inside the allowlist **and** the dependency closure of `cainary` and `cainary-core` to miss every
+`NET_ONLY` package, so the network program's dependencies can't reach the read-only product (§10).
+That guard is a regression check, not a proof. What keeps the product
 read-only and offline is that the only call sites that open files or start a process are
 `harness/fs.rs` and the one `Command::new` in `harness/platform.rs`, and fixture-mode tests show
 both are bypassed (§10).
@@ -232,11 +269,12 @@ struct Finding {
     best_effort: bool,      // rule rests on an unverified item → UI says "may"
     in_effect: bool,        // false = shadowed by a higher tier, or a hook that never runs
     counts: bool,           // counts toward alerts at report.alert (§3.5)
+    payload: Option<Box<Payload>>, // in-effect telemetry findings: what the export carries (§3.7)
 }
 ```
 
 Scanners build findings with `FindingBuilder::new(title).signals(..).detail(..).source(..)
-.evidence(..).reference(url).best_effort(b).in_effect(b).agent(name)`. `ScanCtx::emit` fills in
+.evidence(..).reference(url).best_effort(b).in_effect(b).agent(name).payload(p)`. `ScanCtx::emit` fills in
 the tool, clears the signals when `!in_effect`, and runs the final `redact::text` pass.
 
 `analysis::sort_and_number` sorts findings by (app, tool, exposure desc, in_effect desc, origin
@@ -312,7 +350,26 @@ struct Entry {
         "config": {"path": "/Library/Managed Preferences/com.anthropic.claudecode.plist",
                    "kind": "file",
                    "evidence": ["events = UserPromptSubmit", "url = https://hooks.example-corp.com/prompts"]},
-        "docs": "https://code.claude.com/docs/en/hooks"}
+        "docs": "https://code.claude.com/docs/en/hooks"},
+       {"id": "claude-5", "key": "9c1e0a47b2d35f68", "level": "low",
+        "title": "Claude Code sends usage data and your identity to otel.example-corp.com", "detail": "…",
+        "surface": "claude-code", "sends": ["usage", "identity"], "setBy": "mdm",
+        "inEffect": true, "maybe": false, "counts": false,
+        "config": {"path": "/Library/Managed Preferences/com.anthropic.claudecode.plist", "kind": "file",
+                   "evidence": ["OTEL_LOGS_EXPORTER = otlp"]},
+        "docs": "https://code.claude.com/docs/en/monitoring-usage",
+        "payload": {"export": "logs", "catalog": "claude-code 2.1.316",
+                    "docs": "https://code.claude.com/docs/en/monitoring-usage#events",
+                    "gates": [{"flag": "OTEL_LOG_USER_PROMPTS", "label": "Prompt text", "on": false,
+                               "sent": "redacted", "value": null, "setBy": null, "path": null,
+                               "text": "Prompt text: sent as <REDACTED>, because OTEL_LOG_USER_PROMPTS is unset"}],
+                    "identity": [{"key": "user.email", "what": "your account email (when signed in with a Claude account)", "group": "identity"}],
+                    "resource": [{"key": "service.name", "what": "\"claude-code\"", "group": "resource"}],
+                    "records": [{"name": "claude_code.user_prompt", "kind": "event", "what": "You sent a prompt",
+                                 "unit": null, "observed": true,
+                                 "attrs": [{"key": "prompt", "what": "…", "group": "content",
+                                            "flag": "OTEL_LOG_USER_PROMPTS", "sent": "redacted"}]}],
+                    "sample": ["resource:", "  service.name = \"claude-code\"", "…"]}}
      ],
      "notes": []}
   ],
@@ -332,6 +389,14 @@ Versioning contract:
   only: new optional keys and new enum slugs. Removing or renaming a key, making an optional key
   required, or changing a slug's meaning bumps `schema`. Consumers refuse a `schema` they don't
   know.
+- `payload` (schema 3, optional) is present only on in-effect telemetry findings; see §3.7. It is
+  an additive optional key, so the schema stays 3: §3.6 allows new optional keys within a major,
+  and every consumer already ignores unknown keys (Swift `Codable` and the tray's serde have no
+  `deny_unknown_fields`). The core's own baseline reader (`FindingIn`) ignores it, so `payload`
+  is `None` on the baseline side. The UIs decode it leniently (`decodeIfPresent` with a `try?`
+  fallback to `nil`; a lenient serde adapter in the tray), so a malformed payload hides the
+  preview and never turns into "Couldn't scan". Bumping to 4 would force both apps and every
+  script to update for a purely additive field.
 - Consumers ignore unknown keys. A missing required key or a wrong type fails the decode, which
   a UI shows as "Couldn't scan", never as clear.
 - Every enum is open. An unknown value must never make things look safer than the core said:
@@ -342,6 +407,40 @@ Versioning contract:
   The four app ids are always present, so pointers like `/entries/openai/level` are always valid.
 - `cainary sources --json` prints `{"schema":3,"sources":[…]}` (the `sources` array has the same
   shape as in the report).
+
+### 3.7 Payload preview
+
+A telemetry finding in effect (rules CC.3, CX.4, CX.5) carries `payload`: what that export sends,
+built statically from the catalog in `rules/otel_catalog.rs` and the resolved config
+(`rules/otel_preview.rs`). Nothing is captured or read beyond the scanned config. Record
+descriptions and attribute groups (identity on every record, resource, per event, content gated
+by a flag) come from the vendor docs. Entries seen only on the wire are `maybe`. `catalog` names
+the vendor version the fixtures were captured from. Each gate states whether its flag is on in
+this scan and where that came from, as one plain line (`text`). `sample` is a minimal record
+with descriptions in place of values; it never holds a real value. The UIs draw it as is.
+
+- **Which findings carry one.** Only the in-effect finding whose contribution group holds the
+  destination's base variable: `OTEL_LOGS_EXPORTER` (`logs`), `OTEL_METRICS_EXPORTER`
+  (`metrics`), `OTEL_TRACES_EXPORTER` (`traces`) or `BETA_TRACING_ENDPOINT` (`beta`, `maybe`) for
+  Claude Code; `otel.exporter` (`logs`), `otel.trace_exporter` (`traces`, `maybe`) and
+  `otel.metrics_exporter` (`metrics`) for Codex. A content-flag finding from another source
+  carries none, because the base finding's `gates` already shows the flag and its origin.
+- **Shape.** `payload` is `{export, catalog, docs, maybe?, gates[], identity[], resource[],
+  records[], sample[]}`. A gate is `{flag, label, on, sent, value, setBy, path, text}` with
+  `sent` one of `yes`, `redacted`, `generic`, `no`, `local`, and `value` redacted like evidence.
+  `identity`/`resource` entries and a record's `attrs` are `{key, what, group, maybe?, flag?,
+  sent?}`; a record is `{name, kind, what, unit, maybe?, observed, flag?, sent?, attrs[]}`.
+- **Gate text** is built in the core, `<label>: <state>, because <why>`, and every UI prints it
+  verbatim. The state is "sent", "sent as `<REDACTED>`", `replaced by "custom"`, "not sent" or
+  "kept on this machine (`<dir>`); only a pointer is sent". The reason is `<FLAG> = <value> (set
+  by <origin>)`, `<FLAG> is unset` (`… (on by default)` for a default-on flag) or, for a flag that
+  follows another, `<FLAG> is unset, so it follows <OTHER> = 1 (set by …)`.
+- **Resolution.** Claude Code gates come from the in-effect `CcConfig.env` values only, so a
+  dropped or replaced value never counts. Codex gates come from `CxConfig.cfg`: the value is the
+  TOML scalar as text, and a gate is on only for a real TOML `true`. The key names of
+  `OTEL_RESOURCE_ATTRIBUTES` (never the values) are listed as identity attributes.
+- **Catalog rule.** An entry is documented by the vendor (cited) or observed in a fixture
+  (`maybe`, worded "may"). Vendor source code alone doesn't count.
 
 ## 4. Change detection
 
@@ -385,6 +484,12 @@ instead of `raised`. That is still true, and the entry-level change is exact.
   `refused` or `capped`. A managed plist appearing is worth a line; the user's own settings file
   appearing is noise.
 - No content hashes and no mtimes. Notes and the overall `status` are not diffed.
+- **`payload` is not part of the key and is not compared.** It follows the catalog, which changes
+  between releases, so comparing it would mark every telemetry finding `changed` on upgrade; and
+  every flag that changes what is sent already changes `sends` or `evidence` (or adds a
+  contribution finding). The `OTEL_METRICS_INCLUDE_*` flags only change which identity keys are
+  sent, not the signal set. A test in `diff.rs` pins that two reports differing only in `payload`
+  produce no changes. Wording changes to a title do show as a `changed` finding once.
 - **Order:** notifying changes first, then report entry order, then scope (entry, finding,
   source, report).
 
@@ -651,6 +756,8 @@ layering, hook origin, network hint, local-notifier test, grouping), `mcp.rs` (M
 cainary scan    [--json | --summary] [--since <baseline.json|->] [COMMON]
 cainary status  [--format emoji|text|nerd|json] [COMMON]
 cainary sources [--json] [COMMON]
+cainary explain <id|key> [COMMON]
+cainary otel-debug
 cainary --version | --help
 
 COMMON: [--alert org|org-unknown|everything]   (aliases relaxed|balanced|paranoid; default org-unknown)
@@ -711,7 +818,12 @@ Claude — HIGH · Conversations are sent
 - Colours: high red, medium orange (256-colour 208), low yellow, opted-out blue, ok green,
   not-installed dim.
 
-### 8.2 `status` and `sources`
+A finding with a `payload` gets payload lines after its evidence and before `docs:`: a header
+(`payload: 28 events · catalog claude-code 2.1.316 · more: cainary explain claude-11`, the noun
+being events, metrics or spans), one line of the identity keys sent on every record, and one dim
+line per gate (`gate.text` verbatim). `--summary` prints none of it.
+
+### 8.2 `status`, `sources`, `explain` and `otel-debug`
 
 `status` prints one line from the overall level, using the same scan as `scan` (no cache; a scan
 takes tens of milliseconds, fast enough for every prompt):
@@ -731,6 +843,18 @@ two or more. An incomplete scan with alerts appends ` ⚠` (` !incomplete` in te
 Nerd Font glyphs, and `json` is the document in §3.6. See [integrations.md](integrations.md).
 
 `sources` prints a TSV of `tool  origin  state  path`, or JSON with `--json`.
+
+`explain <id|key>` runs the same scan, finds the finding by `id` (`claude-11`) or `key`, and
+prints the finding block, then "What the <export> export carries (catalog …; <docs>)", `Flags`
+(the gate lines), `Identity (on every record)`, `Resource`, the records (`Events`, `Metrics` or
+`Spans`, each with `*` if seen on the wire and `(may)` if not in the vendor docs, its per-event
+keys, and its content attributes with their sent state) and a `Sample record`. An unknown id
+exits 2 (`no finding 'x'; `cainary scan` lists the ids`); a finding without a payload prints its
+block plus "This finding has no payload preview." `explain` takes the COMMON flags.
+
+`otel-debug` prints two lines and exits 0: that the collector is a separate program
+(`cainary-otel-debug`), and that `cainary` itself never listens on or connects to the network.
+It never runs anything.
 
 ## 9. User interfaces
 
@@ -820,12 +944,33 @@ state.
   a home that is itself a symlink, and upper-case aliases.
 - **Safety guards** (`tests/guards.rs`):
   1. No `std::fs`, `std::process`, `std::net` or `std::env` in `crates/*/src` outside
-     `cainary-core/src/harness/` (the CLI `main.rs` may read args, `NO_COLOR` and stdin).
+     `cainary-core/src/harness/` (the CLI `main.rs` may read args, `NO_COLOR` and stdin). Guards
+     1–3 leave `cainary-net/src/` to its own rules N1–N3 below.
   2. `OpenOptions` only in `harness/fs.rs`, and no write, create, append, truncate or remove calls
      anywhere outside tests.
   3. `Command::new` exactly once, in `harness/platform.rs`, with the literal `/usr/sbin/scutil`;
      `libc::` only in `harness/fs.rs`.
-  4. `Cargo.lock` packages ⊆ the allowlist.
+  4. `Cargo.lock` packages ⊆ the allowlist, which is two sets: `CORE_ALLOWED` (the core's
+     closure) and `NET_ONLY` (`cainary-net`, `regex`, `regex-automata`, `regex-syntax`,
+     `aho-corasick`). The **dependency closure** of `cainary` and `cainary-core` (walked through
+     `[[package]].dependencies` in `Cargo.lock`) must not reach any `NET_ONLY` package. A further
+     set (goal 3's `MITM_ONLY`) is one more row in the closure table.
+
+  The collector crate has its own source guards, over `crates/cainary-net/src/`:
+
+  - **N1:** `std::net` only in `server.rs`; no outbound or resolving call anywhere in the crate
+    (`TcpStream::connect`, `.connect(`, `connect_timeout`, `UdpSocket`, `ToSocketAddrs`,
+    `to_socket_addrs`, `lookup_host`, Unix sockets), the identifier `connect` is banned outright,
+    and renaming `std`/`core`/`alloc`/`net` in a `use` is refused so an alias can't hide a dial.
+  - **N2:** `std::fs` only in `logfile.rs` (write) and `redflag/file.rs` (read); `OpenOptions` and
+    write-shaped calls only in `logfile.rs`; `std::env` and `std::process` only in `main.rs`.
+  - **N3:** no `Command` anywhere in the crate; `libc::` only in `logfile.rs` (the open flags and
+    the effective uid). Guard 3's "`Command::new` exactly once" counts the whole workspace.
+  - **N4 (manifests):** the `cainary-core` and `cainary-cli` manifests never mention
+    `cainary-net`; the net manifest declares only `cainary-core`, `libc`, `regex`, `serde`,
+    `serde_json` and `toml` (in any dependency table) and sets `publish = false`.
+
+  Every new guard has a `fires` test that feeds a violation in memory.
 
   Guard 5, the canary (`tests/canary.rs`): a temp fixture plants a marker in credential files
   from the deny-list and symlinks tool configs (`~/.claude/settings.json`, `~/.codex/config.toml`,
@@ -837,6 +982,10 @@ state.
 - **CLI tests** (`cainary-cli/tests/cli.rs`) run the built binary against fixtures and compare
   text, `--summary`, `--since`, status (all formats) and sources output with
   `cainary-cli/tests/golden/`, and check exit codes.
+- **Collector tests** (`cainary-net`): unit tests for the HTTP parser, args, red-flag presets (hits
+  and near-misses), the naming policy and the escaping; `tests/server.rs` runs the library server
+  on port 0 and posts to it over `std::net::TcpStream` (limits, timeouts, Host/Origin refusal,
+  masking, log file, `--once`, stdin lifeline). `tests/redflag_timing.rs` is `#[ignore]`.
 - **App tests:** `make ui-test` decodes every Rust golden through the Swift model, runs the app's
   unit checks against stub helpers and the real binary, and renders snapshots (macos.md §5).
 - **Smoke:** `make scan` runs the real scan on the dev machine. It is not golden-checked.
@@ -885,3 +1034,278 @@ state.
   bundle is signed there with the project's pinned self-signed certificate (no notarization);
   local bundles are signed ad hoc. The jobs
   are in [distribution.md](distribution.md).
+
+## 12. OTel debug collector (`cainary-otel-debug`)
+
+A separate, opt-in program (crate `cainary-net`, `publish = false`) that receives OTLP/JSON
+exports on loopback and prints what they carry, so a user can see what a tool's telemetry
+actually contains, as opposed to what the payload preview (§3.7) predicts from config. It is the
+one place in the repository that listens on a socket (§1). It is inbound-only: it never opens an
+outbound connection, never resolves a name, starts no process, and reads only the red-flags file
+the user names. `cainary` never starts or contacts it. It is not a daemon: it runs while the user
+runs it (a terminal, or a child of a GUI toggle), and leaves no pidfile, service or autostart.
+
+The collector is **unauthenticated**. Any local process can post to it, so the stream shows what
+was *received*, and the vendor is inferred from the payload, not proven by the sender.
+
+### 12.1 Command line
+
+```
+cainary-otel-debug [--port <n>] [--listen <ip>]... [--json] [--show-values] [--once]
+                   [--log-file <path> [--log-max-mib <n>] [--log-keep <n>]]
+                   [--red-flag <name>=<text>]... [--red-flag-re <name>=<regex>]... [--match-case <name>]...
+                   [--red-flags <file>] [--preset <name>]... [--no-default-red-flags] [--list-presets]
+                   [--exit-on-stdin-eof] [--config-stdin]
+cainary-otel-debug --version | --help
+```
+
+| Flag | Rule |
+| --- | --- |
+| `--port` | 0–65535, default 4318; `0` picks a free port |
+| `--listen` | repeatable IP literal; each must satisfy `IpAddr::is_loopback()` (so `::ffff:127.0.0.1` is refused); replaces the default 127.0.0.1 then ::1 |
+| `--json` | JSON lines on stdout (§12.6); without it, a text rendering |
+| `--show-values` | print and log values raw (§12.3) |
+| `--once` | exit 0 after the first batch (and its alerts) |
+| `--log-file`, `--log-max-mib` (1–1024, default 10), `--log-keep` (0–9, default 3) | §12.4 |
+| `--red-flag`, `--red-flag-re` | `<name>=<pattern>` split at the first `=`; text or regex |
+| `--match-case` | names a pattern; patterns are case-insensitive by default |
+| `--red-flags` | a TOML file (§12.5) |
+| `--preset`, `--no-default-red-flags`, `--list-presets` | enable a preset (also a default-off one), start from none, list the built-ins |
+| `--exit-on-stdin-eof` | a thread reads stdin and exits 0 at EOF or a read error (§12.7) |
+| `--config-stdin` | the first stdin line is a JSON config (§12.7); implies `--exit-on-stdin-eof` |
+
+`--flag=value` works as in `cainary`. A pattern name matches `^[a-z0-9][a-z0-9_-]{0,63}$`. A
+duplicate name, a name equal to a preset, or an unknown `--match-case` name is a usage error.
+`--help` and, in text mode, startup (on stderr) print the "point an agent at it" lines (§12.8).
+`--red-flag` values land in shell history; the GUIs use `--config-stdin` instead.
+
+**Exit codes:** `0` normal, `--once`, stdin EOF, or the reader of stdout went away (a broken
+pipe); `1` setup (port in use, log file or red-flags file unusable, a failed bind); `2` usage
+(including an invalid or oversized pattern and a non-loopback `--listen`); `3` a panic.
+
+### 12.2 Server
+
+- **Bind.** Default `127.0.0.1:<port>`, then `[::1]:<port>` on the same port (Node resolves
+  `localhost` to `::1` first, and Claude Code's default endpoint is `localhost:4318`). A failed
+  IPv6 bind is not fatal and is noted in `hello.listen`. Sockets are bound from `SocketAddr`
+  values, never strings, so there is no DNS; after `bind`, `local_addr().ip().is_loopback()` is
+  asserted again. A port in use exits 1 (`port 4318 is in use (another collector?); try --port 4319`).
+- **Threads.** One acceptor per listener; at most **16** connection threads (over the limit the
+  acceptor writes `503` and closes); one output thread that owns stdout and the log file; and the
+  stdin thread. At most **2** requests are in their read-body/parse/classify/match stage at once
+  (a semaphore taken *before* the body is allocated; others wait under the request deadline and
+  get `503` if they time out).
+- **Timeouts and limits.** Read and write timeout 10 s; a per-request deadline of 30 s from the
+  first byte (slowloris), checked before every read; keep-alive idle 10 s. Request line ≤ 8 KiB;
+  headers ≤ 16 KiB and ≤ 64 (`431`); body ≤ **16 MiB** (`413` from `Content-Length` before any
+  body is read; chunked bodies are counted); chunk-size line ≤ 1 KiB; trailers ≤ 8 KiB and 32
+  fields, ignored; **20 MiB** total on the wire per request. After parsing, a request with more
+  than **10,000 records** or **20,000 attributes** is `413`.
+- **HTTP.** HTTP/1.1 keep-alive; HTTP/1.0 closes; `Expect: 100-continue` is answered after the
+  Host/Origin and content checks. Framing is strict (RFC 9112): CRLF only; obs-fold, whitespace
+  before a colon, bad token characters and control characters are `400`; duplicate
+  `Content-Length` (even equal), both `Content-Length` and `Transfer-Encoding`, any transfer
+  coding other than exactly `chunked`, and a POST without explicit framing are `400`. Every
+  non-200 sets `Connection: close`.
+- **Host and Origin** are checked before any body is read: exactly one `Host` equal to
+  `127.0.0.1:<port>`, `[::1]:<port>` or `localhost:<port>` (or a bound address with its port);
+  another value is `421`, none or several `400`. Any `Origin` header (including `null`) or any
+  `Sec-Fetch-*` header is `403`. There are no CORS headers, and `OPTIONS` is `405`. This stops a
+  web page, or a DNS-rebinding name, from posting to it.
+
+| Request | Answer |
+| --- | --- |
+| `POST /v1/logs`, `/v1/metrics`, `/v1/traces` | `200` `{}` (`application/json`), written **before** the batch is emitted, after room in the output queue is reserved |
+| other path | `404` |
+| known path, other method | `405` with `Allow: POST` |
+| `Content-Type` not `application/json` (parameters ignored) | `415`, saying to set `OTEL_EXPORTER_OTLP_PROTOCOL=http/json` (or `protocol = "json"` for Codex) |
+| `Content-Encoding` other than `identity` | `415`, saying to unset `OTEL_EXPORTER_OTLP_COMPRESSION` |
+| body not JSON | `400` `invalid JSON (line L, column C)` |
+| not an OTLP document of that signal | `400` `not an OTLP <signal> document` |
+| over the record or attribute limit | `413` |
+| the batch can't fit one output line or the queue | `413` / `503` |
+| the 17th connection, or a stalled queue or job semaphore | `503` |
+
+Error bodies are `{"code":3,"message":"…"}` with fixed messages. Exporters retry only 429 and
+5xx, so a 4xx doesn't cause a retry storm. Each rejection also emits an `error` line, rate-limited
+to **10 per second**, then one summary line with `dropped`.
+
+Protobuf and gzip are not supported (the default OTLP protocol is protobuf; the setup lines ask
+for `http/json`).
+
+### 12.3 What is printed (one policy for every payload-derived string)
+
+Applies to JSON lines, text, the log file, alerts and any GUI notification.
+
+- **Values** are masked as `<string, 22 chars>`, `<int>`, `<double>`, `<bool>`, `<array, 3 items>`,
+  `<kvlist, 2 keys>`, `<bytes, 12 chars>` or `<empty>`. `--show-values` prints them raw (and
+  writes them to the log file): a warning is printed once on stderr naming the file if there is
+  one. Size limits and terminal escaping still apply with it.
+- **Names** (attribute keys, record, metric and span names, scope names and versions,
+  `service.*`) are printed verbatim when they match `^[A-Za-z0-9_.:/-]{1,128}$` **and** no red
+  flag matches them after a complete scan; otherwise a request-local label `<unknown-key-N>` or
+  `<unknown-name-N>` stands in. A secret used as a key never prints.
+- **Alert `match`** is the first 3 characters plus `…(<n> chars)` when n ≥ 8, otherwise only
+  `…(<n> chars)` (`AKI…(20 chars)`).
+- **Errors** are fixed categories (plus a line and column for bad JSON). Serde messages, JSON
+  pointers, header values and body fragments are never echoed. Methods other than the standard
+  ones print as `<other>`; paths print only when they are a known route.
+- **Terminal escaping.** Every attacker-derived string is escaped before it reaches a terminal:
+  C0 and C1 controls, ESC, CR, LF, DEL and bidi format controls (U+202A–U+202E, U+2066–U+2069,
+  U+200E/F, U+061C) become `\u{…}`. JSON lines use serde_json. Text output per batch is capped
+  (256 KiB, 512 characters per value).
+
+### 12.4 Log file (`logfile.rs`)
+
+`--log-file` is the only thing the collector writes. Without it the collector is stream-only.
+
+- Missing parent directories are created `0700`; an existing parent must be owned by the user
+  and not group- or other-writable, else exit 1.
+- The file is opened with `O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC`, `create`, `append`, mode `0600`,
+  then validated **on the descriptor** (`fstat`): a regular file, owned by the effective user,
+  one hard link; permissions are set to `0600` through the descriptor. A symlink is refused. No
+  path-based check follows the open, so there is no check-then-use window.
+- It always receives the JSON lines, whatever the stdout format.
+- **Rotation** before a write when `size + len > max` and `size > 0`: `path.(k-1)` → `path.k` down
+  to `path` → `path.1`, then the new file is created with `create_new` and validated again (an
+  unexpected entry at the path stops file logging). `--log-keep 0` truncates through the
+  validated descriptor. A line larger than the maximum still goes into a fresh file.
+- A write error emits one `error` line (`source: "log-file"`), stops file logging and keeps
+  streaming.
+
+### 12.5 Red flags (`redflag/`)
+
+Patterns that raise an `alert` line when a value, key or name contains them. Matching sees the
+raw text before masking: every attribute key and every string or number value (recursively,
+depth ≤ 32), log bodies, resource attributes, scope names and versions, and record names.
+
+- **Kinds.** `text` (a literal, ASCII case folding only: non-ASCII letters match exactly) and
+  `regex` (the `regex` crate, linear time, no look-around or backreferences). Text patterns are
+  escaped into regexes, so there is one engine.
+- **Limits.** A pattern is ≤ 1024 bytes; at most **64** patterns; each regex compiles under a
+  1 MiB size limit and 64 nesting levels, all of them under a 16 MiB budget. Per request at most
+  **4 MiB** of text is matched and at most **256 KiB** of any single value; beyond that, or past
+  1,024 alert groups, the batch is marked `"scanIncomplete": true` and an `error` line
+  (`source: "red-flags"`) says so. Matching is never silently truncated. An over-large regex is
+  `red flag 'x': regex is too big to compile (limit 1 MiB)`.
+- **Presets** (`--list-presets`; all case-sensitive regexes, all on by default except `ipv4`):
+  `email`, `private-key`, `jwt`, `aws-access-key`, `github-token`, `anthropic-key`, `openai-key`,
+  `slack-token`, and `ipv4` (off). IPv6 is left out because IPv6 regexes match hex-and-colon
+  strings such as timestamps; `ipv4` is opt-in because false positives can't be measured on the
+  sanitized fixtures. The `email` preset also matches `git@github.com:org/repo`, by design.
+- **Selection order.** Default presets (unless `--no-default-red-flags`), then each config's
+  `[presets]` table (the file, then `--config-stdin`), then `--preset`; then CLI patterns, then
+  the configs' patterns.
+- **Alerts** are aggregated per batch by (pattern, attribute key, where) with a `count` and up to
+  8 sample event names, at most 1,024 groups; identifiers are cut to 256 bytes. This is
+  aggregation, not throttling: throttling belongs to the GUIs.
+- **The TOML file** (`--red-flags`, ≤ 1 MiB, read once, strict; an unknown key is exit 2 naming
+  the key):
+
+```toml
+[presets]                 # optional: true or false per preset name
+ipv4 = true
+email = false
+
+[red_flags]
+customer = "acme-internal"                                   # text, case-insensitive
+prod-db  = { kind = "regex", pattern = '\bdb-[0-9]+\.prod\.example-corp\.com\b' }
+api-host = { pattern = "api.example-corp.com", case_sensitive = true }
+```
+
+- **Text path decision.** The design started with Aho-Corasick for text patterns. A timing test
+  (`tests/redflag_timing.rs`, `#[ignore]`; `cargo test -p cainary-net --release -- --ignored
+  --nocapture`: 505,000 synthetic values, 20 literals) measured 307 ns per value for the
+  Aho-Corasick `Matcher` against 268 ns for one case-insensitive `RegexSet` of the escaped
+  literals, a ratio of 0.87× against a required 1.5×. The direct dependency and its path were
+  dropped; text goes through `regex::escape`. Adversarial single values at the 256 KiB cap
+  (repeated characters against 40 overlapping literals, presets plus literals, a mostly-matching
+  set) take 1.3–2.6 ms.
+- `redflag` is `pub` in the library so goal 3 (below) can reuse it.
+
+### 12.6 JSON lines (`--json`), version 1
+
+A public contract like `scan --json` (§3.6), for the GUIs and for scripts. One JSON object per
+line on stdout (and in the log file), with keys in this order: `v` (integer major, 1), `type`,
+`ts` (RFC 3339 UTC), then the type's keys. A `batch` and its `alert` lines share a `seq`.
+
+**Versioning.** `v` is an integer major. Within a major, changes are additive only: new optional
+keys, new `type`s and new values of open strings. Consumers ignore unknown `type`s and unknown
+keys, and refuse a `v` they don't know (the GUIs stop with "Update cAInary"). `error.source` is
+an **open string** (today `http`, `log-file`, `red-flags`); consumers tolerate others. A line is
+at most **1 MiB**: when a batch would exceed it, `resources` is dropped and `resourcesOmitted:
+true` is set, and the `summary` always stays.
+
+| `type` | Keys after `v`, `type`, `ts` |
+| --- | --- |
+| `hello` (first line) | `generator` (`cainary-otel-debug <version>`), `listen` (bound addresses, plus a note for any that couldn't bind), `endpoint` (`http://127.0.0.1:4318`), `showValues`, `logFile` (path or `null`), `redFlags` (`[{name, kind, preset, caseSensitive}]`), `setup` (`{claudeCode: [...], codex: [...], notes: [...]}`, the §12.8 lines with the real endpoint) |
+| `batch` | `seq`, `signal` (`logs`, `metrics`, `traces`), `path`, `bytes`, `vendor` (`claude-code`, `codex` or `null`), `service` (`{name, version}` or `null`), `catalog` (the catalog label or `null`), `records`, `notInCatalog`, `summary`, `resources` or `resourcesOmitted`, and `scanIncomplete` when set |
+| `alert` | `seq`, `pattern`, `preset`, `signal`, `event` (record name or `null`), `events` (up to 8 names), `attribute` (key label or `null`), `where` (`key`, `value`, `body`, `resource`, `scope` or `name`), `count`, `match` |
+| `error` | `source`, then either `status`, `method`, `path`, `message` (for `http`) or `dropped`, `message`, or `message` alone |
+
+- `summary` is `{identity: [keys], resource: [keys], records: [{name, kind, count, known, attrs:
+  [{key, group, known}]}]}`: what a GUI draws. `resources` is the raw tree, shown only under "Raw
+  records": `[{attrs: [F], scopes: [{name, version, records: [{name, kind, known, attrs: [F]}]}]}]`.
+  `kind` is `event`, `metric` (one record per data point), `span` or `span-event`.
+- `F` is `{key, group, known, type, len?, value}`: `type` is `string`, `int`, `double`, `bool`,
+  `array`, `kvlist`, `bytes` or `empty`; `len` is the character, item or key count when there is
+  one; `value` is always a string, masked unless `showValues` (§12.3). `group` is `null` when the
+  key isn't classified.
+- A rejected request emits no `batch`, only an `error` line.
+
+> **Status of the catalog fields.** The classifier that matches records against the vendor
+> catalog (`rules/otel_classify.rs`, design §5) isn't merged yet, so the net crate's structure
+> walk stands in for it. Until it lands, `vendor` is inferred from `service.name` only,
+> `catalog` is `null`, `notInCatalog` is `0`, `known` is `false` and `group` is `null`
+> everywhere, `summary.identity` is empty, and attributes carry no `flag`. These keys are part of
+> v1 now, so filling them in later is an additive change.
+
+**Text mode** (no `--json`) prints per batch a header line (`── logs · claude-code · 12 records ·
+12:17:49Z`), one `resource` line, one line per record name with its count and its attribute
+keys, and one `⚠ red flag <name>: …` line per alert. The setup lines go to stderr at startup.
+
+### 12.7 Running it from the apps, and `--config-stdin`
+
+The macOS app and the Linux tray start the collector as a child through an explicit "OTel debug
+collector" toggle, with `--json --exit-on-stdin-eof --config-stdin` (and `--port`, `--log-file`
+in argv).
+
+- **Lifeline.** The child's stdin is a pipe the app holds and never writes after the config. When
+  the app dies for any reason, SIGKILL included, the kernel closes the write end, the stdin thread
+  sees EOF and calls `process::exit(0)` independently of stdout locks and queues. A stdout write
+  by an orphan fails (`BrokenPipe`, since SIGPIPE is ignored) and also exits 0. Toggling off or
+  quitting closes stdin, then SIGTERM, then SIGKILL after a grace period.
+- **`--config-stdin`.** The first stdin line is one JSON object, at most 1 MiB, read within 5 s
+  (else exit 2): `{"v":1,"redFlags":[{"name","kind":"text|regex","pattern","caseSensitive"}],
+  "presets":{"<name>":true|false}}`. The check is strict: unknown keys, wrong types, bad names,
+  unknown presets and patterns that don't compile are exit 2. Errors name the key or pattern,
+  never its text. It keeps pattern text out of argv, where any process of the same user can read
+  it. After the config line, stdin stays open as the lifeline.
+- The apps' stream handling (line cap, retention, alerts, notifications) and their toggle UI are
+  specified in `docs/design/otel-payload-preview.md` §9 and each app's own document.
+
+### 12.8 "Point an agent at it"
+
+`--help`, the text-mode startup note and `hello.setup` carry the same lines, with the real
+endpoint:
+
+- **Claude Code**, from the shell that starts it: `CLAUDE_CODE_ENABLE_TELEMETRY=1`,
+  `OTEL_LOGS_EXPORTER=otlp`, `OTEL_METRICS_EXPORTER=otlp`,
+  `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:<port>`,
+  `OTEL_LOGS_EXPORT_INTERVAL=1000` and `OTEL_METRIC_EXPORT_INTERVAL=10000`.
+- **Codex**, in `~/.codex/config.toml` `[otel]` or one `-c` per line: `otel.exporter`,
+  `otel.metrics_exporter` and `otel.trace_exporter`, each `{otlp-http={endpoint="http://127.0.0.1:<port>/v1/<signal>",protocol="json"}}`.
+- **Notes:** settings can override these. A Claude Code `env` block in `~/.claude/settings.json`
+  overwrites the same shell variable, and managed settings override both; a managed
+  `OTEL_EXPORTER_OTLP_ENDPOINT`, `_PROTOCOL` or `_HEADERS` also removes your local endpoints, so
+  Claude Code keeps sending to your organization's collector
+  (<https://code.claude.com/docs/en/monitoring-usage#how-managed-settings-lock-the-otlp-destination>).
+  Codex `requirements.toml` `[otel]` overrides `config.toml`. `cainary scan` shows which of these
+  your organization sets. The collector is unauthenticated.
+
+### 12.9 Goal 3 compatibility
+
+The collector stays inbound-only for good. The traffic watchdog (`docs/design/ai-traffic-watchdog.md`)
+would be a separate `cainary-proxy` binary behind a non-default `mitm` feature, with its own
+`MITM_ONLY` package set; guard 4's closure rule is a table so a third set is one more row. The
+JSON-lines contract is open for a future `leak` type, and `redflag` is reusable.

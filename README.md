@@ -4,7 +4,7 @@
   <img src="linux/data/icons/hicolor/scalable/apps/ua.SkeLLLa.cAInary.svg" alt="cAInary icon" width="128" height="128">
 </p>
 
-cAInary shows what your AI tools and the device monitoring around them track and send, and where it goes. It covers Claude (Code and Desktop), ChatGPT & Codex, Cursor and GitHub Copilot. The core is written in Rust and runs on macOS and Linux. It only reads files and never uses the network.
+cAInary shows what your AI tools and the device monitoring around them track and send, and where it goes. It covers Claude (Code and Desktop), ChatGPT & Codex, Cursor and GitHub Copilot. The core is written in Rust and runs on macOS and Linux. `cainary` only reads files and never uses the network. One opt-in, separate program, the [OTel debug collector](#otel-debug-collector), listens on loopback only.
 
 It comes in two parts:
 
@@ -14,7 +14,7 @@ It comes in two parts:
   it, and you can also install it on its own.
 
 **Contents:** [Install](#install) · [Usage](#usage) · [Reading the report](#reading-the-report) ·
-[The apps](#the-apps) · [Development](#development) · [Documentation](#documentation) ·
+[The apps](#the-apps) · [OTel debug collector](#otel-debug-collector) · [Development](#development) · [Documentation](#documentation) ·
 [Support Ukraine](#support-ukraine)
 
 ## Install
@@ -267,6 +267,24 @@ Under each app or monitor, the report lists everything it tracks. For each item 
 
 For what each scanner detects, see [docs/rules.md](docs/rules.md).
 
+### OTel payload preview
+
+When Claude Code or Codex is set up to export OpenTelemetry, the finding says what that export
+carries. It lists which flags are on (and where each was set), what is sent on every record
+(your account email, IDs, terminal), and each kind of event, metric or span with the content
+that a flag turns on or off, such as prompt text or every shell command in full. It is built from
+the vendor docs and your config. Nothing is captured or sent. `cainary scan` prints a short
+summary under each such finding, and `cainary explain <id>` prints all of it plus a sample
+record (ids are in the scan output, such as `claude-11`):
+
+```fish
+cainary scan
+cainary explain claude-11
+```
+
+`(may)` and "may" mark entries that the vendor doesn't document and that were only seen on the
+wire. The preview is in the JSON as an optional `payload` key on each finding.
+
 ## The apps
 
 Both apps run the bundled `cainary` CLI and show its result. They don't scan anything themselves.
@@ -295,6 +313,58 @@ For the design and the manual test checklist, see [docs/macos.md](docs/macos.md)
 The tray app is a Qt 6 / QML app. It shows its icon in any StatusNotifier tray, such as KDE
 Plasma's, or GNOME's with the AppIndicator extension. Its settings are in
 `~/.config/cainary/tray.toml`. For details, see [docs/linux.md](docs/linux.md).
+
+## OTel debug collector
+
+`cainary-otel-debug` is a small, separate program that receives OpenTelemetry (OTLP/JSON) exports
+on this machine and prints what they carry, so you can check what an AI tool's telemetry really
+contains. Values are masked by default (`<string, 22 chars>`), and it raises an alert when a value
+looks like an email address, a private key or an API key, or contains words you chose
+(`--red-flag`, `--red-flags`).
+
+**One exception, in a separate program.** `cainary` itself never uses the network and never runs
+in the background. `cainary-otel-debug` listens only on loopback (127.0.0.1 and ::1), never opens
+an outbound connection, writes only to a log file you name, and runs only while you run it: from a
+terminal, or through the "OTel debug collector" toggle in the apps, which start it as a child
+process and stop it with the app. `cainary scan` and `status` never start or contact it.
+
+It is **unauthenticated**: any process on this machine can post to it, so what it prints is what
+it *received*. It refuses browser requests (`Origin`, `Sec-Fetch-*`) and unexpected `Host`
+values. It is stream-only by default: nothing is saved unless you pass `--log-file`.
+
+Start it in one terminal, then run the tool from another (fish syntax):
+
+```fish
+cainary-otel-debug
+```
+
+```fish
+env CLAUDE_CODE_ENABLE_TELEMETRY=1 OTEL_LOGS_EXPORTER=otlp OTEL_EXPORTER_OTLP_PROTOCOL=http/json OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 claude -p hi
+```
+
+For Codex, pass the exporters with `-c`, one per line (add `otel.metrics_exporter` and
+`otel.trace_exporter` the same way):
+
+```fish
+codex -c 'otel.exporter={otlp-http={endpoint="http://127.0.0.1:4318/v1/logs",protocol="json"}}' exec hi
+```
+
+`cainary-otel-debug --help` prints these lines with the port it will use. Useful options:
+`--port <n>` (default 4318), `--json` (one JSON object per line, for scripts and the apps),
+`--once` (exit after the first batch), `--log-file <path>` (a `0600` file, rotated), and
+`--show-values` (print values unmasked; use with care, they can hold secrets). It reads OTLP/JSON
+only: set `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`.
+
+**Managed settings can win.** If your organization manages Claude Code's OpenTelemetry settings,
+a managed `OTEL_EXPORTER_OTLP_ENDPOINT`, `_PROTOCOL` or `_HEADERS` also removes your local
+endpoints, so Claude Code keeps sending to your organization's collector and nothing reaches the
+debug collector. See [how managed settings lock the OTLP
+destination](https://code.claude.com/docs/en/monitoring-usage#how-managed-settings-lock-the-otlp-destination).
+`cainary scan` shows what your organization sets. Codex's `requirements.toml` `[otel]` overrides
+`config.toml` the same way.
+
+The design, limits and the JSON-lines format are in
+[docs/architecture.md](docs/architecture.md#12-otel-debug-collector-cainary-otel-debug).
 
 ## Development
 
