@@ -23,6 +23,10 @@ case "$*" in
   printf '{"v":1,"type":"trust","ts":"%s","target":"codex","action":"undone","message":"Removed the bundle"}\n' "$ts"
   ;;
 "--trust codex --json")
+  if [ -f "$dir/codex-refuse" ]; then
+    printf '{"v":1,"type":"trust","ts":"%s","target":"codex","action":"refused","message":"Start the takeover once (cainary-otel-debug --tls …) so the collector certificate exists, then try again.","settingsPath":null,"backupPath":null,"key":null,"from":null,"to":null,"bundlePath":null,"command":null}\n' "$ts"
+    exit 1
+  fi
   echo ready > "$dir/codex"
   printf '{"v":1,"type":"trust","ts":"%s","target":"codex","action":"applied","message":"Wrote the bundle","bundlePath":"/home/u/bundle.pem","command":"env CODEX_CA_CERTIFICATE=/home/u/bundle.pem codex"}\n' "$ts"
   ;;

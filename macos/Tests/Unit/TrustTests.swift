@@ -19,6 +19,8 @@ func trustTests() async {
     await oneShotChecks()
     await flowChecks()
     listenNoteChecks()
+    realOutputChecks()
+    await codexRefusalCheck()
 }
 
 @MainActor
@@ -185,4 +187,43 @@ private func listenNoteChecks() {
     let other = CollectorStore(defaults: MemoryStore(), helper: stub("collector-hello.sh"))
     other.handle(.exited(1, stderr: "boom\nmore"), generation: other.generation)
     check("listen note: only after a listen error", other.failureNote == nil)
+}
+
+/// Every real line decodes to the expected outcome, exit 1 (refused) included.
+@MainActor
+private func realOutputChecks() {
+    var reports: [TrustReport] = []
+    var statuses: [TrustStatus] = []
+    for (i, sample) in TrustSamples.all.enumerated() {
+        let result = OneShotResult(status: sample.exit, stdout: Data((sample.line + "\n").utf8), stderr: "")
+        switch TrustClient.outcome(result) {
+        case .report(let r): reports.append(r)
+        case .status(let s): statuses.append(s)
+        case .failed(let why): check("trust real: line \(i) decodes (\(why))", false)
+        }
+    }
+    check("trust real: 2 statuses and 7 reports", statuses.count == 2 && reports.count == 7)
+    check("trust real: actions in order", reports.map(\.action) == [
+        "preview", "applied", "already", "refused", "undone", "nothing-to-undo", "nothing-to-undo",
+    ])
+    check("trust real: absent status with nulls", statuses.first?.claudeCode?.state == "absent" && statuses.first?.claudeCode?.value == nil
+        && statuses.first?.codex?.command == nil && statuses.first?.caPath == "/home/u/.local/state/cainary/otel-debug-ca.pem")
+    check("trust real: applied status", statuses.last?.claudeCode?.state == "applied" && statuses.last?.claudeCode?.value != nil)
+    check("trust real: preview fields", reports[0].from == nil && reports[0].to?.hasSuffix("otel-debug-ca.pem") == true && reports[0].backupPath?.hasSuffix(".bak") == true)
+    check("trust real: already has no backup", reports[2].backupPath == nil && reports[2].from == reports[2].to)
+    check("trust real: codex refusal has nothing else", reports[3].target == "codex" && reports[3].settingsPath == nil && reports[3].message?.contains("Start the takeover") == true)
+    check("trust real: undo restores", reports[4].to == nil && reports[4].from != nil)
+}
+
+/// The Codex refusal before any takeover ran tells the user what to do, and offers no command.
+@MainActor
+private func codexRefusalCheck() async {
+    let dir = scratchDirectory("trust-codex")
+    setenv("CAINARY_STUB_DIR", dir.path, 1)
+    defer { unsetenv("CAINARY_STUB_DIR") }
+    FileManager.default.createFile(atPath: dir.appendingPathComponent("codex-refuse").path, contents: Data())
+    let store = TrustStore(client: TrustClient(helper: stub("trust.sh")))
+    await store.prepareCodex()
+    check("trust codex: refusal is shown", store.failed && store.message?.hasPrefix("Start the takeover once") == true)
+    check("trust codex: no command offered", store.codexCommand == nil)
 }
