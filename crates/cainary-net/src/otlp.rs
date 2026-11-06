@@ -9,7 +9,7 @@ use crate::http::Head;
 use crate::output::{AlertEvent, BatchEvent, ErrorEvent, escape};
 use crate::redflag::{Hit, Matcher, Scanner};
 use cainary_core::rules::otel_catalog::{self, Export, Group, Item, ItemKind};
-use cainary_core::rules::otel_classify::{self, Field};
+use cainary_core::rules::otel_classify::{self, Field, TextPart, Walk};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
@@ -21,7 +21,8 @@ pub const MAX_EVENT_SAMPLES: usize = 8;
 pub const MAX_IDENT: usize = 256;
 /// A raw `--show-values` match is cut here; the limits of §14 still apply.
 const MAX_RAW_MATCH: usize = 1024;
-const MAX_DEPTH: usize = 32;
+/// Leaves (strings, numbers, nested keys) examined per attribute value.
+const MAX_LEAVES_PER_VALUE: usize = 20_000;
 /// Text-mode output kept per batch, and per value (design §14.1: retained output is bounded).
 const MAX_TEXT_BODY: usize = 256 << 10;
 const MAX_TEXT_VALUE: usize = 512;
@@ -263,23 +264,6 @@ fn raw(v: &Value) -> String {
     String::new()
 }
 
-/// Whether an AnyValue nests deeper than `text_of` looks (it stops silently at 32).
-fn too_deep(v: &Value, depth: usize) -> bool {
-    if depth >= MAX_DEPTH {
-        return v.get("arrayValue").is_some() || v.get("kvlistValue").is_some();
-    }
-    let kids = |k: &str| {
-        v.get(k)
-            .and_then(|a| a.get("values"))
-            .and_then(Value::as_array)
-    };
-    kids("arrayValue").is_some_and(|a| a.iter().any(|c| too_deep(c, depth + 1)))
-        || kids("kvlistValue").is_some_and(|a| {
-            a.iter()
-                .any(|c| c.get("value").is_some_and(|c| too_deep(c, depth + 1)))
-        })
-}
-
 fn group_str(g: Group) -> &'static str {
     match g {
         Group::Identity => "identity",
@@ -519,22 +503,23 @@ impl<'m> Proc<'m> {
         if self.scanner.is_empty() {
             return;
         }
-        if too_deep(v, 0) {
-            self.scanner.incomplete = true;
-        }
+        // Streamed: borrowed text goes straight to the scanner, nothing is built per leaf, and
+        // the walk stops as soon as a budget is spent (design §14.1, §14.6).
         let mut hits = std::mem::take(&mut self.hits);
-        for (path, text) in otel_classify::text_of(v) {
-            hits.clear();
-            self.scanner.scan(&text, &mut hits);
-            self.record(&text, &hits, where_, attribute, event);
-            // A nested key is part of the path.
-            if let Some(key) = path.rsplit_once('.').map(|(_, k)| k)
-                && !key.is_empty()
-            {
-                hits.clear();
-                self.scanner.scan(key, &mut hits);
-                self.record(key, &hits, where_, attribute, event);
+        let mut leaves = 0usize;
+        let end = otel_classify::visit_text(v, &mut |part| {
+            let (TextPart::Value(text) | TextPart::Key(text)) = part;
+            leaves += 1;
+            if leaves > MAX_LEAVES_PER_VALUE || self.scanner.exhausted() {
+                return false;
             }
+            hits.clear();
+            self.scanner.scan(text, &mut hits);
+            self.record(text, &hits, where_, attribute, event);
+            true
+        });
+        if end != Walk::Done {
+            self.scanner.incomplete = true;
         }
         self.hits = hits;
     }
@@ -1360,5 +1345,47 @@ mod tests {
             .find(|a| a["known"] == true && a["key"].as_str().unwrap().starts_with("<unknown-key"))
             .expect("classified but labelled");
         assert_eq!(f["flag"], "OTEL_LOG_TOOL_DETAILS");
+    }
+
+    #[test]
+    fn a_long_ancestor_key_costs_nothing_per_leaf() {
+        // One kvlist entry with a 4 MiB key over 10,000 short strings: a path per leaf would
+        // copy that key 10,000 times (about 40 GiB).
+        let c = secret_ctx();
+        let leaves: Vec<Value> = (0..10_000).map(|_| sv("x")).collect();
+        let value = json!({"kvlistValue": {"values": [
+            {"key": "k".repeat(4 << 20), "value": {"arrayValue": {"values": leaves}}}]}});
+        let doc = logs(
+            vec![],
+            json!({"name": "s"}),
+            vec![json!({"attributes": [attr("a", value)]})],
+        );
+        let t = std::time::Instant::now();
+        let p = process(Signal::Logs, 1, &doc, &c).unwrap();
+        assert!(
+            t.elapsed() < std::time::Duration::from_secs(30),
+            "{:?}",
+            t.elapsed()
+        );
+        assert!(p.batch.tail.len() < 1 << 20);
+        // The key was only partly scanned, so the batch says so.
+        assert!(p.batch.tail.contains("\"scanIncomplete\":true"));
+    }
+
+    #[test]
+    fn nested_secrets_in_keys_and_values_are_still_found() {
+        let c = secret_ctx();
+        let value = json!({"kvlistValue": {"values": [
+            {"key": "SECRET-TOKEN", "value": {"arrayValue": {"values": [sv("a"), sv("b SECRET-TOKEN")]}}}]}});
+        let doc = logs(
+            vec![],
+            json!({"name": "s"}),
+            vec![json!({"attributes": [attr("a", value)]})],
+        );
+        let p = process(Signal::Logs, 1, &doc, &c).unwrap();
+        assert_eq!(p.batch.alerts.len(), 1);
+        let a: Value = serde_json::from_str(&p.batch.alerts[0].tail).unwrap();
+        assert_eq!(a["count"], 2);
+        assert!(!p.batch.tail.contains("SECRET-TOKEN"));
     }
 }

@@ -341,6 +341,11 @@ impl Scanner<'_> {
         self.matcher.patterns.is_empty()
     }
 
+    /// Whether the request's text budget is spent, so further scanning cannot happen.
+    pub fn exhausted(&self) -> bool {
+        self.bytes_left == 0
+    }
+
     pub fn patterns(&self) -> &[Pattern] {
         &self.matcher.patterns
     }

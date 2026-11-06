@@ -753,8 +753,135 @@ pub fn mask(value: &Value) -> String {
     }
 }
 
+/// What [`visit_text`] hands its callback: borrowed text, never an owned path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextPart<'t> {
+    /// A string or number leaf.
+    Value(&'t str),
+    /// A key of a nested `kvlistValue`.
+    Key(&'t str),
+}
+
+/// How [`visit_text`] ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Walk {
+    Done,
+    /// A container sat deeper than 32 levels and was not entered.
+    TooDeep,
+    /// The callback returned `false`.
+    Stopped,
+}
+
+/// Streams the strings, numbers and nested keys of an AnyValue to `f` without building
+/// anything per leaf: text is borrowed from the document (numbers use a short temporary), and
+/// there are no paths, so a long ancestor key costs nothing per descendant. `f` returns
+/// `false` to stop (a budget ran out). Stops descending below 32 levels.
+pub fn visit_text(value: &Value, f: &mut dyn FnMut(TextPart<'_>) -> bool) -> Walk {
+    visit_inner(value, 0, f)
+}
+
+fn visit_inner(value: &Value, depth: usize, f: &mut dyn FnMut(TextPart<'_>) -> bool) -> Walk {
+    let array = value
+        .get("arrayValue")
+        .and_then(|a| a.get("values"))
+        .and_then(Value::as_array);
+    let kvlist = value
+        .get("kvlistValue")
+        .and_then(|a| a.get("values"))
+        .and_then(Value::as_array);
+    if depth >= 32 {
+        let nested = array.is_some() || kvlist.is_some() || value.is_array();
+        return if nested { Walk::TooDeep } else { Walk::Done };
+    }
+    let mut leaf = |text: &str| -> bool { f(TextPart::Value(text)) };
+    for k in ["stringValue", "intValue", "doubleValue"] {
+        match value.get(k) {
+            Some(Value::String(t)) => {
+                return if leaf(t) { Walk::Done } else { Walk::Stopped };
+            }
+            Some(Value::Number(n)) => {
+                return if leaf(&n.to_string()) {
+                    Walk::Done
+                } else {
+                    Walk::Stopped
+                };
+            }
+            _ => {}
+        }
+    }
+    let mut end = Walk::Done;
+    let step = |w: Walk, end: &mut Walk| -> bool {
+        match w {
+            Walk::Stopped => {
+                *end = Walk::Stopped;
+                false
+            }
+            Walk::TooDeep => {
+                *end = Walk::TooDeep;
+                true
+            }
+            Walk::Done => true,
+        }
+    };
+    if let Some(items) = array {
+        for item in items {
+            let w = visit_inner(item, depth + 1, f);
+            if !step(w, &mut end) {
+                break;
+            }
+        }
+        return end;
+    }
+    if let Some(items) = kvlist {
+        for entry in items {
+            let (Some(key), Some(inner)) =
+                (entry.get("key").and_then(Value::as_str), entry.get("value"))
+            else {
+                continue;
+            };
+            if !f(TextPart::Key(key)) {
+                return Walk::Stopped;
+            }
+            let w = visit_inner(inner, depth + 1, f);
+            if !step(w, &mut end) {
+                break;
+            }
+        }
+        return end;
+    }
+    match value {
+        Value::String(t) => {
+            if f(TextPart::Value(t)) {
+                Walk::Done
+            } else {
+                Walk::Stopped
+            }
+        }
+        Value::Number(n) => {
+            if f(TextPart::Value(&n.to_string())) {
+                Walk::Done
+            } else {
+                Walk::Stopped
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                let w = visit_inner(item, depth + 1, f);
+                if !step(w, &mut end) {
+                    break;
+                }
+            }
+            end
+        }
+        _ => Walk::Done,
+    }
+}
+
 /// Extracts scalar strings and numbers recursively, stopping after 32 levels.
 /// Paths are relative to the supplied AnyValue: `""`, `"[0]"`, or `".key"`.
+///
+/// This builds an owned path per leaf, so it is for small, already-bounded values (tests,
+/// drift checks). Anything fed untrusted input should use [`visit_text`].
 pub fn text_of(value: &Value) -> Vec<(String, Cow<'_, str>)> {
     let mut found = Vec::new();
     text_of_inner(value, String::new(), 0, &mut found);
@@ -910,12 +1037,41 @@ mod tests {
             ] }
         });
         assert_eq!(mask(&value), "<kvlist, 1 keys>");
+        let mut seen = Vec::new();
+        let end = visit_text(&value, &mut |p| {
+            seen.push(format!("{p:?}"));
+            true
+        });
+        assert_eq!(end, Walk::Done);
+        assert_eq!(
+            seen,
+            ["Key(\"nested\")", "Value(\"token\")", "Value(\"12\")"]
+        );
         let texts = text_of(&value);
         assert_eq!(texts.len(), 2);
         assert_eq!(texts[0].0, ".nested[0]");
         assert_eq!(texts[0].1, "token");
         assert_eq!(texts[1].0, ".nested[1]");
         assert_eq!(texts[1].1, "12");
+    }
+
+    #[test]
+    fn visit_text_stops_when_asked_and_reports_depth() {
+        let leaves: Vec<_> = (0..100)
+            .map(|i| serde_json::json!({"stringValue": format!("v{i}")}))
+            .collect();
+        let value = serde_json::json!({"arrayValue": {"values": leaves}});
+        let mut n = 0;
+        let end = visit_text(&value, &mut |_| {
+            n += 1;
+            n < 5
+        });
+        assert_eq!((end, n), (Walk::Stopped, 5));
+        let mut deep = serde_json::json!({"stringValue": "x"});
+        for _ in 0..40 {
+            deep = serde_json::json!({"arrayValue": {"values": [deep]}});
+        }
+        assert_eq!(visit_text(&deep, &mut |_| true), Walk::TooDeep);
     }
 
     #[test]
