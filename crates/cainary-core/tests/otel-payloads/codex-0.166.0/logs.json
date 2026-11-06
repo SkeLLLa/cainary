@@ -1,0 +1,1400 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "env",
+            "value": {
+              "stringValue": "<string>"
+            }
+          },
+          {
+            "key": "host.name",
+            "value": {
+              "stringValue": "<string>"
+            }
+          },
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "codex_exec"
+            }
+          },
+          {
+            "key": "service.version",
+            "value": {
+              "stringValue": "0.166.0"
+            }
+          },
+          {
+            "key": "telemetry.sdk.language",
+            "value": {
+              "stringValue": "<string>"
+            }
+          },
+          {
+            "key": "telemetry.sdk.name",
+            "value": {
+              "stringValue": "<string>"
+            }
+          },
+          {
+            "key": "telemetry.sdk.version",
+            "value": {
+              "stringValue": "<string>"
+            }
+          }
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": {
+            "name": "codex_otel.log_only",
+            "version": ""
+          },
+          "logRecords": [
+            {
+              "timeUnixNano": "0",
+              "observedTimeUnixNano": "0",
+              "severityNumber": 9,
+              "severityText": "INFO",
+              "attributes": [
+                {
+                  "key": "attempt",
+                  "value": {
+                    "intValue": "0"
+                  }
+                },
+                {
+                  "key": "auth.env_codex_api_key_enabled",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "auth.env_codex_api_key_present",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "auth.env_openai_api_key_present",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "auth.env_refresh_token_url_override_present",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "auth.header_attached",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "auth.header_name",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "auth.mode",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "duration_ms",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "endpoint",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "codex.api_request"
+                  }
+                },
+                {
+                  "key": "http.response.status_code",
+                  "value": {
+                    "intValue": "0"
+                  }
+                },
+                {
+                  "key": "success",
+                  "value": {
+                    "boolValue": false
+                  }
+                }
+              ],
+              "traceId": "",
+              "spanId": ""
+            },
+            {
+              "timeUnixNano": "0",
+              "observedTimeUnixNano": "0",
+              "severityNumber": 9,
+              "severityText": "INFO",
+              "attributes": [
+                {
+                  "key": "app.version",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "approval_policy",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "auth.env_codex_api_key_enabled",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "auth.env_codex_api_key_present",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "auth.env_openai_api_key_present",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "auth.env_refresh_token_url_override_present",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "auth_mode",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "conversation.id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "codex.conversation_starts"
+                  }
+                },
+                {
+                  "key": "event.timestamp",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "mcp_servers",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "model",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "originator",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "provider_name",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "reasoning_effort",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "reasoning_summary",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "sandbox_policy",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "slug",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "terminal.type",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "user.account_id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "user.email",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                }
+              ],
+              "traceId": "",
+              "spanId": ""
+            },
+            {
+              "timeUnixNano": "0",
+              "observedTimeUnixNano": "0",
+              "severityNumber": 9,
+              "severityText": "INFO",
+              "attributes": [
+                {
+                  "key": "app.version",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "auth_mode",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "cache_write_token_count",
+                  "value": {
+                    "intValue": "0"
+                  }
+                },
+                {
+                  "key": "cached_token_count",
+                  "value": {
+                    "intValue": "0"
+                  }
+                },
+                {
+                  "key": "conversation.id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "event.kind",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "codex.sse_event"
+                  }
+                },
+                {
+                  "key": "event.timestamp",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "input_token_count",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "model",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "model_reasoning_effort",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "originator",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "output_token_count",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "reasoning_token_count",
+                  "value": {
+                    "intValue": "0"
+                  }
+                },
+                {
+                  "key": "slug",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "terminal.type",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "tool_token_count",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "ttft_ms",
+                  "value": {
+                    "intValue": "0"
+                  }
+                },
+                {
+                  "key": "user.account_id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "user.email",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                }
+              ],
+              "traceId": "",
+              "spanId": ""
+            },
+            {
+              "timeUnixNano": "0",
+              "observedTimeUnixNano": "0",
+              "severityNumber": 9,
+              "severityText": "INFO",
+              "attributes": [
+                {
+                  "key": "app.version",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "auth_mode",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "cache_write_token_count",
+                  "value": {
+                    "intValue": "0"
+                  }
+                },
+                {
+                  "key": "cached_token_count",
+                  "value": {
+                    "intValue": "0"
+                  }
+                },
+                {
+                  "key": "conversation.id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "event.kind",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "codex.sse_event"
+                  }
+                },
+                {
+                  "key": "event.timestamp",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "input_token_count",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "model",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "originator",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "output_token_count",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "reasoning_token_count",
+                  "value": {
+                    "intValue": "0"
+                  }
+                },
+                {
+                  "key": "slug",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "terminal.type",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "tool_token_count",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "user.account_id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "user.email",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                }
+              ],
+              "traceId": "",
+              "spanId": ""
+            },
+            {
+              "timeUnixNano": "0",
+              "observedTimeUnixNano": "0",
+              "severityNumber": 9,
+              "severityText": "INFO",
+              "attributes": [
+                {
+                  "key": "app.version",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "auth_mode",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "conversation.id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "duration_ms",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "codex.startup_phase"
+                  }
+                },
+                {
+                  "key": "event.timestamp",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "model",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "originator",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "slug",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "startup.phase",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "startup.status",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "terminal.type",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "user.account_id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "user.email",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                }
+              ],
+              "traceId": "",
+              "spanId": ""
+            },
+            {
+              "timeUnixNano": "0",
+              "observedTimeUnixNano": "0",
+              "severityNumber": 9,
+              "severityText": "INFO",
+              "attributes": [
+                {
+                  "key": "app.version",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "auth_mode",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "conversation.id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "duration_ms",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "codex.startup_phase"
+                  }
+                },
+                {
+                  "key": "event.timestamp",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "model",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "originator",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "slug",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "startup.phase",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "terminal.type",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "user.account_id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "user.email",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                }
+              ],
+              "traceId": "",
+              "spanId": ""
+            },
+            {
+              "timeUnixNano": "0",
+              "observedTimeUnixNano": "0",
+              "severityNumber": 9,
+              "severityText": "INFO",
+              "attributes": [
+                {
+                  "key": "app.version",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "auth_mode",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "call_id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "conversation.id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "decision",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "codex.tool_decision"
+                  }
+                },
+                {
+                  "key": "event.timestamp",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "model",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "originator",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "slug",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "source",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "terminal.type",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "tool_name",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "tool_namespace",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "user.account_id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "user.email",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                }
+              ],
+              "traceId": "",
+              "spanId": ""
+            },
+            {
+              "timeUnixNano": "0",
+              "observedTimeUnixNano": "0",
+              "severityNumber": 9,
+              "severityText": "INFO",
+              "attributes": [
+                {
+                  "key": "agent_name",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "app.version",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "arguments",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "auth_mode",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "call_id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "conversation.id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "duration_ms",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "codex.tool_result"
+                  }
+                },
+                {
+                  "key": "event.timestamp",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "mcp_server",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "mcp_server_origin",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "model",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "originator",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "output",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "output_truncated",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "slug",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "success",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "terminal.type",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "tool_name",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "tool_namespace",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "tool_result_seq",
+                  "value": {
+                    "intValue": "0"
+                  }
+                },
+                {
+                  "key": "user.account_id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "user.email",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                }
+              ],
+              "traceId": "",
+              "spanId": ""
+            },
+            {
+              "timeUnixNano": "0",
+              "observedTimeUnixNano": "0",
+              "severityNumber": 9,
+              "severityText": "INFO",
+              "attributes": [
+                {
+                  "key": "app.version",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "auth_mode",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "conversation.id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "duration_ms",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "codex.turn_ttft"
+                  }
+                },
+                {
+                  "key": "event.timestamp",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "model",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "originator",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "slug",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "terminal.type",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "user.account_id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "user.email",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                }
+              ],
+              "traceId": "",
+              "spanId": ""
+            },
+            {
+              "timeUnixNano": "0",
+              "observedTimeUnixNano": "0",
+              "severityNumber": 9,
+              "severityText": "INFO",
+              "attributes": [
+                {
+                  "key": "app.version",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "auth_mode",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "conversation.id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "codex.user_prompt"
+                  }
+                },
+                {
+                  "key": "event.timestamp",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "model",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "originator",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "prompt",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "prompt_length",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "slug",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "terminal.type",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "user.account_id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "user.email",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                }
+              ],
+              "traceId": "",
+              "spanId": ""
+            },
+            {
+              "timeUnixNano": "0",
+              "observedTimeUnixNano": "0",
+              "severityNumber": 9,
+              "severityText": "INFO",
+              "attributes": [
+                {
+                  "key": "app.version",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "auth.connection_reused",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "auth.env_codex_api_key_enabled",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "auth.env_codex_api_key_present",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "auth.env_openai_api_key_present",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "auth.env_refresh_token_url_override_present",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "auth.header_attached",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "auth.header_name",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "auth.retry_after_unauthorized",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "auth_mode",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "conversation.id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "duration_ms",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "endpoint",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "codex.websocket_connect"
+                  }
+                },
+                {
+                  "key": "event.timestamp",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "model",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "originator",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "slug",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "success",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "terminal.type",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "user.account_id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "user.email",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                }
+              ],
+              "traceId": "",
+              "spanId": ""
+            },
+            {
+              "timeUnixNano": "0",
+              "observedTimeUnixNano": "0",
+              "severityNumber": 9,
+              "severityText": "INFO",
+              "attributes": [
+                {
+                  "key": "app.version",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "auth.connection_reused",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "auth.env_codex_api_key_enabled",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "auth.env_codex_api_key_present",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "auth.env_openai_api_key_present",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "auth.env_refresh_token_url_override_present",
+                  "value": {
+                    "boolValue": false
+                  }
+                },
+                {
+                  "key": "auth_mode",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "conversation.id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "duration_ms",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "codex.websocket_request"
+                  }
+                },
+                {
+                  "key": "event.timestamp",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "model",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "originator",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "slug",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "success",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "terminal.type",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "user.account_id",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                },
+                {
+                  "key": "user.email",
+                  "value": {
+                    "stringValue": "<string>"
+                  }
+                }
+              ],
+              "traceId": "",
+              "spanId": ""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
