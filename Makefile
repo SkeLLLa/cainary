@@ -2,7 +2,7 @@
 
 .DEFAULT_GOAL := help
 PHONY_RELEASE := release otel-debug linux-build-release linux-run-release
-.PHONY: help build test fmt lint lint-actions check-rust check core-universal app bundle ui-test scan publish-check clean \
+.PHONY: help build test test-tls fmt lint lint-actions check-rust check core-universal app bundle ui-test scan publish-check clean \
 	linux linux-cli linux-build linux-test linux-fmt linux-lint linux-check linux-ui-test linux-run $(PHONY_RELEASE)
 
 # cargo needs a writable CARGO_HOME. Normally that is the existing CARGO_HOME or ~/.cargo and
@@ -57,7 +57,8 @@ help:
 	@echo "  fmt             cargo fmt (in place)"
 	@echo "  lint            cargo fmt --check, clippy -D warnings, swift format, shellcheck"
 	@echo "  lint-actions    jactionlint on workflows and dependabot.yml (version in mise.toml)"
-	@echo "  check-rust      fmt --check, clippy -D warnings, cargo test"
+	@echo "  check-rust      fmt --check, clippy -D warnings, cargo test (also with --features tls for cainary-net)"
+	@echo "  test-tls        cargo test -p cainary-net --features tls"
 	@echo "  check           lint + test + ui-test (CI)"
 	@echo "  core-universal  release cainary and cainary-otel-debug for both Apple targets, lipo -> target/universal/"
 	@echo "  app             build the SwiftUI app (macos/Sources)"
@@ -84,18 +85,26 @@ build:
 
 test:
 	$(CARGO_CMD) test $(MANIFEST) --workspace
+	$(CARGO_CMD) test $(MANIFEST) -p cainary-net --features tls
 
 fmt:
 	$(CARGO_CMD) fmt $(MANIFEST) --all
 
+# The endpoint takeover (`--tls`) is behind a non-default feature; this covers it.
+test-tls:
+	$(CARGO_CMD) test $(MANIFEST) -p cainary-net --features tls
+
 check-rust:
 	$(CARGO_CMD) fmt $(MANIFEST) --all --check
 	$(CARGO_CMD) clippy $(MANIFEST) --workspace --all-targets -- -D warnings
+	$(CARGO_CMD) clippy $(MANIFEST) -p cainary-net --features tls --all-targets -- -D warnings
 	$(CARGO_CMD) test $(MANIFEST) --workspace
+	$(CARGO_CMD) test $(MANIFEST) -p cainary-net --features tls
 
 lint:
 	$(CARGO_CMD) fmt $(MANIFEST) --all --check
 	$(CARGO_CMD) clippy $(MANIFEST) --workspace --all-targets -- -D warnings
+	$(CARGO_CMD) clippy $(MANIFEST) -p cainary-net --features tls --all-targets -- -D warnings
 ifeq ($(HOST_OS),Darwin)
 	@if [ -d macos/Sources ]; then swift format lint --strict --recursive $(SWIFT_FORMAT_PATHS); fi
 else
@@ -111,7 +120,7 @@ lint-actions:
 	jactionlint
 
 core-universal:
-	@for t in $(APPLE_TARGETS); do $(CARGO_CMD) build $(MANIFEST) --release --target $$t -p cainary -p cainary-net || exit 1; done
+	@for t in $(APPLE_TARGETS); do $(CARGO_CMD) build $(MANIFEST) --release --target $$t -p cainary -p cainary-net --features cainary-net/tls || exit 1; done
 	mkdir -p target/universal
 	@for b in cainary cainary-otel-debug; do \
 		lipo -create -output target/universal/$$b \
@@ -167,7 +176,7 @@ bundle: $(BUNDLE_DEPS)
 # The CLI and the debug collector are static musl from the root workspace; it runs on any distro. The tray app links the
 # distro's Qt 6, so it is built on (or in a container of) the distro it ships for.
 linux-cli:
-	$(CARGO_CMD) build $(MANIFEST) --release --locked --target $(LINUX_CLI_TARGET) -p cainary -p cainary-net
+	$(CARGO_CMD) build $(MANIFEST) --release --locked --target $(LINUX_CLI_TARGET) -p cainary -p cainary-net --features cainary-net/tls
 
 linux-build:
 	$(CARGO_CMD) build $(LINUX_MANIFEST) --workspace
@@ -258,12 +267,12 @@ endif
 
 # Release binaries from this checkout, for trying a build without installing it.
 release:
-	$(CARGO_CMD) build $(MANIFEST) --release --locked -p cainary -p cainary-net
+	$(CARGO_CMD) build $(MANIFEST) --release --locked -p cainary -p cainary-net --features cainary-net/tls
 
 OTEL_DEBUG_ARGS ?=
 # Only the collector writes to stdout, so `--json` output can be piped.
 otel-debug:
-	@$(CARGO_CMD) build $(MANIFEST) --release --locked -p cainary-net >&2
+	@$(CARGO_CMD) build $(MANIFEST) --release --locked -p cainary-net --features tls >&2
 	@"$(CURDIR)/target/release/cainary-otel-debug" $(OTEL_DEBUG_ARGS)
 
 scan:

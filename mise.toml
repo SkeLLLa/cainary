@@ -42,6 +42,10 @@ run = "make -s release >&2 && target/release/cainary-otel-debug"
 description = "cargo test"
 run = "make test"
 
+[tasks.test-tls]
+description = "cargo test -p cainary-net --features tls (the endpoint takeover)"
+run = "make test-tls"
+
 [tasks.lint]
 description = "fmt, clippy, swift format, shellcheck"
 run = "make lint"

@@ -26,6 +26,13 @@ toml = "1.1"
 # Tilde: cainary-core uses plist::stream, which may break between minor versions.
 plist = { version = "~1.10.3", features = ["enable_unstable_features_that_may_break_with_minor_version_bumps"] }
 libc = { version = "0.2", default-features = false }
+# Only cainary-net, only under its non-default `tls` feature (the endpoint takeover, design §16):
+# rustls with the ring provider (never aws-lc-rs) and rcgen for the ephemeral CA and leaves.
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
+# Only cainary-net under `tls`: validity dates for the CA and leaves (rcgen takes OffsetDateTime).
+# Already in the lock through plist.
+time = { version = "0.3", default-features = false, features = ["std"] }
 # Only cainary-net: user red-flag patterns; linear-time matching, so hostile input can't ReDoS.
 regex = "1"
 

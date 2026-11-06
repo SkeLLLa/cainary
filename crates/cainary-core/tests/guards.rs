@@ -97,7 +97,16 @@ const NET_SRC: &str = "cainary-net/src/";
 const NET_SERVER: &str = "cainary-net/src/server.rs";
 const NET_LOGFILE: &str = "cainary-net/src/logfile.rs";
 const NET_REDFLAG_FILE: &str = "cainary-net/src/redflag/file.rs";
+const NET_TLS: &str = "cainary-net/src/tls/";
+const NET_CA_FILE: &str = "cainary-net/src/tls/ca_file.rs";
+const NET_PRIVDROP: &str = "cainary-net/src/tls/privdrop.rs";
 const NET_MAIN: &str = "cainary-net/src/main.rs";
+
+/// Files in the net crate that may call `libc`: the log file (open flags, uid), the CA file
+/// (same) and the capability drop.
+fn net_libc_ok(rel: &str) -> bool {
+    rel == NET_LOGFILE || rel == NET_CA_FILE || rel == NET_PRIVDROP
+}
 
 fn in_net(rel: &str) -> bool {
     rel.starts_with(NET_SRC)
@@ -211,7 +220,7 @@ fn check_guard3(srcs: &[Src]) -> Vec<String> {
                 spawns.push((s.rel.clone(), near.contains("/usr/sbin/scutil")));
             }
         }
-        if s.rel != FS_RS && s.rel != NET_LOGFILE && s.code.contains("libc::") {
+        if s.rel != FS_RS && !net_libc_ok(&s.rel) && s.code.contains("libc::") {
             bad.push(format!("{}: libc:: outside harness/fs.rs", s.rel));
         }
     }
@@ -298,7 +307,7 @@ fn check_n2(srcs: &[Src]) -> Vec<String> {
     for s in srcs.iter().filter(|s| in_net(&s.rel)) {
         for hit in banned_std_modules(&s.code) {
             let allowed = match hit.trim_start_matches("std::").trim_matches(['{', '}']) {
-                "fs" => s.rel == NET_LOGFILE || s.rel == NET_REDFLAG_FILE,
+                "fs" => s.rel == NET_LOGFILE || s.rel == NET_REDFLAG_FILE || s.rel == NET_CA_FILE,
                 "env" | "process" => s.rel == NET_MAIN,
                 _ => true, // `net` is N1's
             };
@@ -306,7 +315,7 @@ fn check_n2(srcs: &[Src]) -> Vec<String> {
                 bad.push(format!("{}: {hit} outside its allowed file", s.rel));
             }
         }
-        if s.rel != NET_LOGFILE {
+        if s.rel != NET_LOGFILE && s.rel != NET_CA_FILE {
             let code = squash(&s.code);
             if s.code.contains("OpenOptions") {
                 bad.push(format!("{}: OpenOptions outside logfile.rs", s.rel));
@@ -314,7 +323,7 @@ fn check_n2(srcs: &[Src]) -> Vec<String> {
             for m in WRITE_SHAPED {
                 if code.contains(m) {
                     bad.push(format!(
-                        "{}: write-shaped call `{m}` outside logfile.rs",
+                        "{}: write-shaped call `{m}` outside logfile.rs and tls/ca_file.rs",
                         s.rel
                     ));
                 }
@@ -324,16 +333,54 @@ fn check_n2(srcs: &[Src]) -> Vec<String> {
     bad
 }
 
-/// N3: no `Command` and no `libc::` in the net crate, except `libc::` in `logfile.rs` (the
-/// open flags and the effective uid). Guard 3's "exactly once" also counts `Command::new`.
+/// N3: no `Command` and no `libc::` in the net crate, except `libc::` in `logfile.rs` and
+/// `tls/ca_file.rs` (open flags, uid, flock) and `tls/privdrop.rs` (capabilities). Guard 3's "exactly once" also counts `Command::new`.
 fn check_n3(srcs: &[Src]) -> Vec<String> {
     let mut bad = Vec::new();
     for s in srcs.iter().filter(|s| in_net(&s.rel)) {
         if s.code.contains("Command") {
             bad.push(format!("{}: `Command` in the net crate", s.rel));
         }
-        if s.rel != NET_LOGFILE && s.code.contains("libc::") {
-            bad.push(format!("{}: libc:: outside logfile.rs", s.rel));
+        if !net_libc_ok(&s.rel) && s.code.contains("libc::") {
+            bad.push(format!(
+                "{}: libc:: outside logfile.rs, tls/ca_file.rs and tls/privdrop.rs",
+                s.rel
+            ));
+        }
+    }
+    bad
+}
+
+/// N5: the TLS crates (`rustls`, `rcgen`, `ring`) are named only under `cainary-net/src/tls/`,
+/// or on a line right after `#[cfg(feature = "tls")]`; `mod tls` is gated the same way.
+fn check_tls_paths(srcs: &[Src]) -> Vec<String> {
+    let mut bad = Vec::new();
+    for s in srcs
+        .iter()
+        .filter(|s| in_net(&s.rel) && !s.rel.starts_with(NET_TLS))
+    {
+        let lines: Vec<String> = s.code.lines().map(squash).collect();
+        for (i, line) in lines.iter().enumerate() {
+            let toks = idents(line);
+            let names_tls = toks
+                .iter()
+                .any(|t| matches!(*t, "rustls" | "rcgen" | "ring"))
+                || (toks.contains(&"mod") && toks.contains(&"tls"));
+            if !names_tls {
+                continue;
+            }
+            // The nearest non-blank line above, skipping other attributes.
+            let gated = lines[..i]
+                .iter()
+                .rev()
+                .find(|l| !l.is_empty() && !l.starts_with("#[cfg(not"))
+                .is_some_and(|l| l.contains("cfg(feature = \"tls\")"));
+            if !gated {
+                bad.push(format!(
+                    "{}: `{line}` names the TLS crates outside tls/ and not under #[cfg(feature = \"tls\")]",
+                    s.rel
+                ));
+            }
         }
     }
     bad
@@ -343,6 +390,9 @@ fn check_n3(srcs: &[Src]) -> Vec<String> {
 const NET_DEPS: &[&str] = &[
     "cainary-core",
     "libc",
+    "rcgen",
+    "rustls",
+    "time",
     "regex",
     "serde",
     "serde_json",
@@ -442,13 +492,69 @@ const NET_ONLY: &[&str] = &[
     "regex-syntax",
 ];
 
+/// Packages only the `tls` feature of `cainary-net` may use (design §16.5): rustls with the ring
+/// provider, rcgen, and everything they pull in that the core doesn't already have (`syn` and
+/// `time` are already `CORE_ALLOWED`). The lock lists rcgen's optional `x509-parser` too, so those
+/// names are here though no build compiles them. Never `aws-lc-rs`.
+const TLS_ONLY: &[&str] = &[
+    "asn1-rs",
+    "asn1-rs-derive",
+    "asn1-rs-impl",
+    "autocfg",
+    "bit-vec",
+    "cc",
+    "cfg-if",
+    "data-encoding",
+    "der-parser",
+    "displaydoc",
+    "find-msvc-tools",
+    "getrandom",
+    "lazy_static",
+    "minimal-lexical",
+    "nom",
+    "num-bigint",
+    "num-integer",
+    "num-traits",
+    "oid-registry",
+    "once_cell",
+    "pem",
+    "rcgen",
+    "ring",
+    "rusticata-macros",
+    "rustls",
+    "rustls-pki-types",
+    "rustls-webpki",
+    "shlex",
+    "subtle",
+    "synstructure",
+    "thiserror",
+    "thiserror-impl",
+    "untrusted",
+    "wasi",
+    "windows-sys",
+    "windows-targets",
+    "windows_aarch64_gnullvm",
+    "windows_aarch64_msvc",
+    "windows_i686_gnu",
+    "windows_i686_gnullvm",
+    "windows_i686_msvc",
+    "windows_x86_64_gnu",
+    "windows_x86_64_gnullvm",
+    "windows_x86_64_msvc",
+    "x509-parser",
+    "yasna",
+    "zeroize",
+];
+
 /// Closure rules: a named package set, and the roots whose dependency closure must not touch
 /// it. A further set (goal 3's `MITM_ONLY`) is one more row, plus its names in `ALLOWED_SETS`.
-const CLOSURE_RULES: &[(&str, &[&str], &[&str])] =
-    &[("NET_ONLY", NET_ONLY, &["cainary", "cainary-core"])];
+const CLOSURE_RULES: &[(&str, &[&str], &[&str])] = &[
+    ("NET_ONLY", NET_ONLY, &["cainary", "cainary-core"]),
+    ("TLS_ONLY", TLS_ONLY, &["cainary", "cainary-core"]),
+];
 
 /// Every set the lock may draw from.
-const ALLOWED_SETS: &[&[&str]] = &[CORE_ALLOWED, NET_ONLY];
+const ALLOWED_SETS: &[&[&str]] = &[CORE_ALLOWED, NET_ONLY, TLS_ONLY];
 
 fn lock_packages(lock: &str) -> Vec<String> {
     let v: toml::Value = toml::from_str(lock).expect("Cargo.lock parses as TOML");
@@ -563,6 +669,11 @@ fn n2_net_crate_io_stays_in_its_files() {
 #[test]
 fn n3_net_crate_has_no_subprocess_or_libc() {
     assert_clean("N3", check_n3(&sources()));
+}
+
+#[test]
+fn n5_tls_crates_stay_under_tls() {
+    assert_clean("N5", check_tls_paths(&sources()));
 }
 
 #[test]
@@ -974,5 +1085,100 @@ mod fires {
             assert!(reach.iter().any(|r| r == n), "{n}");
         }
         assert!(!closure(&graph, "cainary").iter().any(|r| r == "regex"));
+    }
+
+    #[test]
+    fn tls_allowances_are_exact() {
+        // tls/ca_file.rs may use fs, OpenOptions, writes and libc; the rest of tls/ may not.
+        let code =
+            "use std::fs;\nlet f = OpenOptions::new(); std::fs::write(p, b); libc::flock(1, 2);";
+        assert!(check_n2(&net("tls/ca_file.rs", code)).is_empty());
+        assert!(check_n3(&net("tls/ca_file.rs", "libc::flock(1, 2);")).is_empty());
+        assert!(!check_n2(&net("tls/mod.rs", "use std::fs;")).is_empty());
+        assert!(!check_n2(&net("tls/leaf.rs", "let f = OpenOptions::new();")).is_empty());
+        assert!(!check_n3(&net("tls/mod.rs", "libc::getuid();")).is_empty());
+        assert!(check_n3(&net("tls/privdrop.rs", "libc::prctl(1, 2);")).is_empty());
+        // privdrop.rs gets libc and nothing else.
+        assert!(!check_n2(&net("tls/privdrop.rs", "use std::fs;")).is_empty());
+        let mut s = net("tls/ca_file.rs", "libc::flock(1, 2);");
+        s.extend(src(PLATFORM_RS, "Command::new(\"/usr/sbin/scutil\");"));
+        assert!(check_guard3(&s).is_empty());
+        // Nobody else gets the CA writer's powers, and std::net stays in server.rs.
+        assert!(!check_n2(&net("tls/ca.rs", "use std::fs::File;")).is_empty());
+        assert!(!check_n1(&net("tls/mod.rs", "use std::net::TcpStream;")).is_empty());
+        assert!(!check_n1(&net("tls/mod.rs", "let s = TcpStream::connect(a);")).is_empty());
+    }
+
+    #[test]
+    fn n5_tls_crates_outside_tls_need_the_feature_gate() {
+        let gated = "#[cfg(feature = \"tls\")]\nuse rustls::ServerConfig;\n#[cfg(feature = \"tls\")]\npub mod tls;";
+        assert!(check_tls_paths(&net("lib.rs", gated)).is_empty());
+        assert!(check_tls_paths(&net("tls/mod.rs", "use rustls::ServerConfig;")).is_empty());
+        for bad in [
+            "use rustls::ServerConfig;",
+            "pub mod tls;",
+            "let k = rcgen::KeyPair::generate();",
+            "use ring::digest;",
+            "#[cfg(feature = \"other\")]\nuse rustls::Error;",
+            "#[cfg(not(feature = \"tls\"))]\nuse rustls::Error;",
+        ] {
+            assert!(!check_tls_paths(&net("server.rs", bad)).is_empty(), "{bad}");
+        }
+        // Other crates are not N5's business.
+        assert!(check_tls_paths(&src("cainary-core/src/analysis.rs", "use ring::x;")).is_empty());
+    }
+
+    #[test]
+    fn tls_only_closure_and_allowlist() {
+        let lock = format!(
+            "{LOCK}\n[[package]]\nname = \"rustls\"\nversion = \"0.23.0\"\ndependencies = [\"ring\"]\n\n\
+             [[package]]\nname = \"ring\"\nversion = \"0.17.0\"\n\n\
+             [[package]]\nname = \"cainary-net\"\nversion = \"1\"\ndependencies = [\"cainary-core\", \"regex\", \"rustls\"]\n"
+        )
+        .replace(
+            "[[package]]\nname = \"cainary-net\"\nversion = \"1\"\ndependencies = [\"cainary-core\", \"regex\"]\n\n",
+            "",
+        );
+        assert!(check_guard4(&lock).is_empty(), "{:?}", check_guard4(&lock));
+        // The CLI or core reaching ring, directly or through rustls, fires.
+        let direct = lock.replace(
+            "name = \"cainary-core\"\nversion = \"1\"\ndependencies = [\"serde_json 1.0.0\"]",
+            "name = \"cainary-core\"\nversion = \"1\"\ndependencies = [\"serde_json 1.0.0\", \"ring\"]",
+        );
+        let bad = check_guard4(&direct);
+        assert!(
+            bad.iter()
+                .any(|b| b.contains("`cainary-core` reaches `ring`")),
+            "{bad:?}"
+        );
+        assert!(
+            bad.iter().any(|b| b.contains("`cainary` reaches `ring`")),
+            "{bad:?}"
+        );
+        let via = lock.replace(
+            "name = \"serde_json\"\nversion = \"1.0.0\"\ndependencies = [\"memchr\"]",
+            "name = \"serde_json\"\nversion = \"1.0.0\"\ndependencies = [\"memchr\", \"rustls\"]",
+        );
+        assert!(
+            check_guard4(&via)
+                .iter()
+                .any(|b| b.contains("rustls") && b.contains("TLS_ONLY"))
+        );
+        // aws-lc-rs is in no set.
+        let aws = format!("{lock}\n[[package]]\nname = \"aws-lc-rs\"\nversion = \"1\"\n");
+        assert!(check_guard4(&aws).iter().any(|b| b.contains("aws-lc-rs")));
+    }
+
+    #[test]
+    fn n4_allows_the_tls_deps_only_as_named() {
+        let plain = "[package]\nname = \"x\"\n";
+        let ok = format!(
+            "{NET_OK}rustls = {{ workspace = true, optional = true }}\nrcgen = {{ workspace = true, optional = true }}\ntime = {{ workspace = true, optional = true }}\n"
+        );
+        assert!(check_n4(plain, plain, &ok).is_empty());
+        let aws = format!("{NET_OK}aws-lc-rs = \"1\"\n");
+        assert!(check_n4(plain, plain, &aws)[0].contains("aws-lc-rs"));
+        let ring = format!("{NET_OK}ring = \"0.17\"\n");
+        assert!(check_n4(plain, plain, &ring)[0].contains("ring"));
     }
 }
