@@ -1275,7 +1275,7 @@ true` is set, and the `summary` always stays.
 | `batch` | `seq`, `signal` (`logs`, `metrics`, `traces`), `path` (`/v1/<signal>`, or the fixed marker `<custom path>` in takeover mode: request paths are never printed), `host` (takeover only: the validated host name), `bytes`, `vendor` (`claude-code`, `codex` or `null`), `service` (`{name, version}` or `null`), `catalog` (the catalog label or `null`), `records`, `notInCatalog`, `summary`, `resources` or `resourcesOmitted`, and `scanIncomplete` when set |
 | `alert` | `seq`, `pattern`, `preset`, `signal`, `event` (record name or `null`), `events` (up to 8 names), `attribute` (key label or `null`), `where` (`key`, `value`, `body`, `resource`, `scope` or `name`), `count`, `match` |
 | `trust` | one per `--trust` call: `target` (`claude-code`, `codex`), `action` (`preview`, `applied`, `already`, `undone`, `nothing-to-undo`, `refused`), `message` (fixed text), `settingsPath`, `backupPath`, `key` (`NODE_EXTRA_CA_CERTS` or `null`), `from`, `to`, `bundlePath`, `command` (`null` where not applicable) |
-| `trust-status` | `claudeCode` (`{state: applied\|absent\|other-value\|managed, settingsPath, value}`), `codex` (`{state: ready\|absent, bundlePath, command}`), `caPath` |
+| `trust-status` | `claudeCode` (`{state: applied\|absent\|other-value\|managed, settingsPath, value}`), `codex` (`{state: ready\|absent, bundlePath, command}`), `caPath`, `caExists` (the collector certificate file exists), `note` (a sentence when an interrupted change was just finished or cleared, else `null`) |
 | `error` | `source`, then either `status`, `method`, `path`, `message` (for `http`) or `dropped`, `message`, or `message` alone |
 
 - `summary` is `{identity: [keys], resource: [keys], records: [{name, kind, count, known, what?,
@@ -1428,21 +1428,42 @@ action only, and it needs the `tls` feature.
   `NODE_EXTRA_CA_CERTS` the message says so (the shell value wins). If managed settings set the
   key (resolved with the core's Claude Code configuration resolution, in-process and read-only),
   it refuses: they override this.
-- **File safety.** The directory is opened through a descriptor and validated (the same
-  root-down walk as the CA directory; a group-writable settings directory is accepted, one others
-  can write is not); the file is refused if it is a symlink, not yours, not a regular one-link file,
-  over 1 MiB, or not a valid JSON object. Key order is kept (`preserve_order`), with 2-space
-  indentation and a trailing newline. The original is first copied to
-  `settings.json.cainary-<UTC yyyymmddThhmmssZ>.bak` (0600, same directory, never overwriting one),
-  the new file is written to a `create_new | O_NOFOLLOW` temporary in that directory and renamed
-  over. A missing file is created with only `{"env": {…}}` (no backup then). If the state file can't
-  be written the settings are put back.
-- **State and undo.** `otel-debug-trust.json` (0600) next to the CA records the settings path, the
-  original value, what was written, and whether the file and the `env` object were created. `--undo`
-  acts only when the current value is the one it wrote: it restores the original or removes the
-  key, drops an `env` it created if empty, deletes a file it created if now `{}` (a backup of the
-  state before the change is made first), and removes its bundle. Otherwise it answers
-  `nothing-to-undo` (no record) or `refused` (the value changed since).
+- **File safety.** The directory is opened through a descriptor and validated with the same
+  root-down walk as the CA directory; **a directory that group or others can write is refused**
+  (the message gives `chmod go-w <dir>`), because an authorized writer could swap the temporary
+  file between its validation and the rename. The file is refused if it is a symlink, not yours,
+  not a regular one-link file, or over 1 MiB.
+- **Lossless edit (`jsonedit.rs`).** The file is not round-tripped through a value tree (that
+  would change integers past 64 bits, precise decimals and drop duplicate members). A strict
+  scanner (RFC 8259: no comments, no trailing commas, depth ≤ 64, ≤ 1 MiB) locates the top-level
+  `env` member and its `NODE_EXTRA_CA_CERTS` member and splices only that, or adds the member (or
+  `env`) in the file's own indentation. A key twice in one object, at any level, is refused. Every
+  other byte stays identical, and apply followed by undo restores the original bytes exactly. A
+  new file is `{"env": {…}}` with a trailing newline.
+- **Concurrent editing.** Claude Code may write the file too, so the edit is compare-then-swap:
+  the file is read once (bytes and device, inode, size, mtime), and immediately before the rename it
+  is read again; if either differs nothing is written, the stale backup is removed and the answer
+  is `refused`: "Your Claude Code settings changed while editing; close Claude Code and try
+  again." No POSIX call compares and renames atomically, so a window of microseconds remains; the
+  preview therefore says to close Claude Code first. Neither undo nor any recovery ever overwrites
+  or deletes content that differs from what cAInary last wrote.
+- **Transactions.** Before the settings change, a pending record (hashes of the file before and
+  after, the original value, the backup name) is written durably to `otel-debug-trust.json` (file
+  and directory fsync); the backup, the swap and the record that replaces it are fsynced too. A
+  crash at any point is reconciled by the next `--trust` or `--trust-status` from the file's hash:
+  after the swap, the change is committed (or the undo completed); before it, the record is
+  cleared; if the file has changed since, it is left alone. A failure to write the final record is
+  reported (never as success) and never rolls the settings back.
+- **State and undo.** The state file records the settings path, the original value, what was
+  written, whether the file and the `env` object were created, and the hashes and backup that make
+  an exact restore possible. `--undo` acts only on the **same settings location** it recorded (a
+  changed `CLAUDE_CONFIG_DIR` is refused with the reason, and a record never counts for another
+  location's status) and only when the current value is the one it wrote. If the file is exactly
+  as cAInary left it, the original bytes come back from the verified backup; otherwise just this
+  key is put back (or removed), `env` is dropped if it was created and is now empty, and a file
+  it created is deleted if now `{}`. A backup of the state before the change is made first, and
+  the bundle is removed. Otherwise it answers `nothing-to-undo` (no record) or `refused` (the value
+  changed since). `--undo --dry-run` changes nothing, not even a stale record.
 - **Codex** (`--trust codex [--undo]`). Writes `otel-debug-codex-bundle.pem` (0644): the system
   roots (first existing of `/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem`,
   `/etc/ssl/certs/ca-certificates.crt`, `/etc/ssl/cert.pem`) plus the collector CA, and returns

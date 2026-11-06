@@ -8,6 +8,7 @@
 //! read-only. Certificate bundles of other programs are read narrowly here (`read_certs`),
 //! because the harness refuses `*.pem` by design.
 
+use crate::jsonedit::{self, EditError};
 use crate::setup::quote;
 use crate::tls::ca_file::{CA_FILE, CaDir};
 use cainary_core::harness::ctx::ScanCtx;
@@ -161,7 +162,7 @@ impl Line {
 
 const ORG_NOTE: &str =
     "While the HTTPS takeover is active, your organization's collector receives nothing.";
-const RESTART: &str = "Restart Claude Code afterwards.";
+const RESTART: &str = "Close Claude Code before applying this, and restart it afterwards.";
 const SHELL_WINS: &str = "Your shell sets NODE_EXTRA_CA_CERTS, which wins over the settings value.";
 
 fn with_shell(h: &Harness, base: &str) -> String {
@@ -196,9 +197,25 @@ enum Why {
     Io,
 }
 
-/// Reads `name` in `dir`: `Ok(None)` if absent; refuses a symlink, a file that isn't ours or
-/// isn't a regular one-link file, and anything over 1 MiB.
-fn read_in(dir: &CaDir, name: &str) -> Result<Option<Vec<u8>>, Why> {
+/// A file's identity when it was read: the same bytes under a different (device, inode, size,
+/// mtime) is a different file, as far as a compare-then-swap is concerned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Ident {
+    dev: u64,
+    ino: u64,
+    size: u64,
+    mtime_ns: i128,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Snapshot {
+    bytes: Vec<u8>,
+    ident: Ident,
+}
+
+/// Reads `name` in `dir` with its identity: `Ok(None)` if absent; refuses a symlink, a file that
+/// isn't ours or isn't a regular one-link file, and anything over 1 MiB.
+fn read_snapshot(dir: &CaDir, name: &str) -> Result<Option<Snapshot>, Why> {
     let n = cname(name);
     // SAFETY: valid descriptor and NUL-terminated name; the flags are plain constants.
     let raw = unsafe {
@@ -228,9 +245,29 @@ fn read_in(dir: &CaDir, name: &str) -> Result<Option<Vec<u8>>, Why> {
     if md.len() > MAX_FILE as u64 {
         return Err(Why::TooBig);
     }
-    let mut buf = Vec::new();
-    io::Read::read_to_end(&mut f, &mut buf).map_err(|_| Why::Io)?;
-    Ok(Some(buf))
+    let mut bytes = Vec::new();
+    io::Read::read_to_end(&mut f, &mut bytes).map_err(|_| Why::Io)?;
+    let ident = Ident {
+        dev: md.dev(),
+        ino: md.ino(),
+        size: md.len(),
+        mtime_ns: i128::from(md.mtime()) * 1_000_000_000 + i128::from(md.mtime_nsec()),
+    };
+    Ok(Some(Snapshot { bytes, ident }))
+}
+
+fn read_in(dir: &CaDir, name: &str) -> Result<Option<Vec<u8>>, Why> {
+    read_snapshot(dir, name).map(|s| s.map(|s| s.bytes))
+}
+
+/// Flushes a directory's entries (a created, renamed or removed file) to disk.
+fn sync_dir(dir: &CaDir) -> io::Result<()> {
+    // SAFETY: the descriptor is valid for the call.
+    if unsafe { libc::fsync(dir.raw_fd()) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
 }
 
 fn open_new(dir: &CaDir, name: &str, mode: u32) -> io::Result<File> {
@@ -261,7 +298,9 @@ fn unlink_in(dir: &CaDir, name: &str) -> io::Result<()> {
     let n = cname(name);
     // SAFETY: valid descriptor and NUL-terminated name.
     let r = unsafe { libc::unlinkat(dir.raw_fd(), n.as_ptr(), 0) };
-    if r == 0 || io::Error::last_os_error().kind() == io::ErrorKind::NotFound {
+    if r == 0 {
+        sync_dir(dir)
+    } else if io::Error::last_os_error().kind() == io::ErrorKind::NotFound {
         Ok(())
     } else {
         Err(io::Error::last_os_error())
@@ -288,7 +327,7 @@ fn write_atomic(dir: &CaDir, name: &str, bytes: &[u8], mode: u32) -> io::Result<
         let _ = unlink_in(dir, &tmp);
         return Err(e);
     }
-    Ok(())
+    sync_dir(dir)
 }
 
 /// A backup next to the file: `<name>.cainary-<UTC yyyymmddThhmmssZ>.bak`, 0600, never
@@ -305,6 +344,7 @@ fn backup(dir: &CaDir, name: &str, bytes: &[u8], stamp: &str) -> io::Result<Stri
             Ok(mut f) => {
                 f.write_all(bytes)?;
                 f.sync_all()?;
+                sync_dir(dir)?;
                 return Ok(b);
             }
             Err(e) if e.raw_os_error() == Some(libc::EEXIST) => continue,
@@ -403,6 +443,7 @@ fn collector_ca(ca: &CaDir) -> Result<String, &'static str> {
 
 // ── state file ───────────────────────────────────────────────────────────────────────────────
 
+/// What a committed Claude Code edit left behind, enough to undo it.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct ClaudeState {
     settings_path: String,
@@ -410,12 +451,64 @@ struct ClaudeState {
     written: String,
     created_env: bool,
     created_file: bool,
+    /// SHA-256 of the file as it was before the edit (`None`: there was no file), the backup
+    /// that holds those bytes, and SHA-256 of the file as cAInary left it. With all three, an
+    /// undo of an untouched file restores the original bytes exactly.
+    orig_sha: Option<String>,
+    backup: Option<String>,
+    new_sha: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingKind {
+    Apply,
+    Undo,
+}
+
+/// A transaction that was started and maybe not finished (design §17.2): written durably before
+/// the settings change, cleared after the new record is. Whatever state the file is found in,
+/// the hashes say how far it got.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Pending {
+    kind: PendingKind,
+    /// For an apply, the record to commit; for an undo, the record being undone.
+    claude: ClaudeState,
+    /// SHA-256 of the settings file before the change (`None`: absent) and after (`None`: gone).
+    before: Option<String>,
+    after: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct State {
     claude: Option<ClaudeState>,
     codex_bundle: Option<String>,
+    pending: Option<Pending>,
+}
+
+fn claude_json(c: &ClaudeState) -> Value {
+    json!({"settingsPath": c.settings_path, "original": c.original, "written": c.written,
+           "createdEnv": c.created_env, "createdFile": c.created_file,
+           "origSha": c.orig_sha, "backup": c.backup, "newSha": c.new_sha})
+}
+
+fn claude_from(c: &Map<String, Value>) -> Option<ClaudeState> {
+    let s = |k: &str| c.get(k).and_then(Value::as_str).map(str::to_string);
+    Some(ClaudeState {
+        settings_path: s("settingsPath")?,
+        original: s("original"),
+        written: s("written")?,
+        created_env: c
+            .get("createdEnv")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        created_file: c
+            .get("createdFile")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        orig_sha: s("origSha"),
+        backup: s("backup"),
+        new_sha: s("newSha"),
+    })
 }
 
 impl State {
@@ -426,46 +519,46 @@ impl State {
         let claude = m
             .get("claudeCode")
             .and_then(Value::as_object)
-            .and_then(|c| {
-                Some(ClaudeState {
-                    settings_path: c.get("settingsPath")?.as_str()?.to_string(),
-                    original: c
-                        .get("original")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                    written: c.get("written")?.as_str()?.to_string(),
-                    created_env: c
-                        .get("createdEnv")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                    created_file: c
-                        .get("createdFile")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                })
-            });
+            .and_then(claude_from);
         let codex_bundle = m
             .get("codex")
             .and_then(|c| c.get("bundlePath"))
             .and_then(Value::as_str)
             .map(str::to_string);
+        let pending = m.get("pending").and_then(Value::as_object).and_then(|p| {
+            let kind = match p.get("kind")?.as_str()? {
+                "apply" => PendingKind::Apply,
+                "undo" => PendingKind::Undo,
+                _ => return None,
+            };
+            Some(Pending {
+                kind,
+                claude: claude_from(p.get("claudeCode")?.as_object()?)?,
+                before: p.get("before").and_then(Value::as_str).map(str::to_string),
+                after: p.get("after").and_then(Value::as_str).map(str::to_string),
+            })
+        });
         State {
             claude,
             codex_bundle,
+            pending,
         }
     }
 
     fn to_bytes(&self) -> Vec<u8> {
         let mut m = Map::new();
         if let Some(c) = &self.claude {
-            m.insert(
-                "claudeCode".into(),
-                json!({"settingsPath": c.settings_path, "original": c.original, "written": c.written,
-                       "createdEnv": c.created_env, "createdFile": c.created_file}),
-            );
+            m.insert("claudeCode".into(), claude_json(c));
         }
         if let Some(b) = &self.codex_bundle {
             m.insert("codex".into(), json!({"bundlePath": b}));
+        }
+        if let Some(p) = &self.pending {
+            m.insert(
+                "pending".into(),
+                json!({"kind": match p.kind { PendingKind::Apply => "apply", PendingKind::Undo => "undo" },
+                       "claudeCode": claude_json(&p.claude), "before": p.before, "after": p.after}),
+            );
         }
         format!(
             "{}\n",
@@ -475,7 +568,7 @@ impl State {
     }
 
     fn is_empty(&self) -> bool {
-        self.claude.is_none() && self.codex_bundle.is_none()
+        self.claude.is_none() && self.codex_bundle.is_none() && self.pending.is_none()
     }
 }
 
@@ -488,11 +581,18 @@ fn read_state(ca: &CaDir) -> State {
 }
 
 fn save_state(ca: &CaDir, st: &State) -> io::Result<()> {
+    if hook::fail_save() {
+        return Err(io::Error::other("injected failure"));
+    }
     if st.is_empty() {
         unlink_in(ca, STATE_FILE)
     } else {
         write_atomic(ca, STATE_FILE, &st.to_bytes(), 0o600)
     }
+}
+
+fn sha_of(bytes: &[u8]) -> String {
+    crate::tls::ca::sha256_hex(bytes)
 }
 
 // ── Claude Code ──────────────────────────────────────────────────────────────────────────────
@@ -509,21 +609,59 @@ fn why_text(w: &Why) -> &'static str {
     }
 }
 
-fn dir_error(target: Target, what: &str) -> Line {
+fn edit_text(e: EditError) -> &'static str {
+    match e {
+        EditError::Syntax => {
+            "The settings file is not strict JSON (no comments or trailing commas); refusing to edit it."
+        }
+        EditError::NotObject => "The settings file is not a JSON object; refusing to edit it.",
+        EditError::Duplicate => {
+            "The settings file has a key twice in one object; refusing to edit it, so that neither copy is lost."
+        }
+        EditError::TooDeep | EditError::TooBig => {
+            "The settings file is too large or too deeply nested; refusing to edit it."
+        }
+        EditError::EnvNotObject => {
+            "env in the settings file is not an object; refusing to edit it."
+        }
+        EditError::NotString => {
+            "env.NODE_EXTRA_CA_CERTS in the settings file is not a string; refusing to edit it."
+        }
+    }
+}
+
+fn dir_error(target: Target, what: &str, dir: &Path) -> Line {
     Line::refused(
         target,
         format!(
-            "The {what} directory is not safe to edit (a symlink, or not owned by you, or writable by others)."
+            "The {what} directory {} is not safe to edit (a symlink, not owned by you, or writable by group or others). If it is group- or other-writable, run: chmod go-w {}",
+            crate::output::escape(&dir.display().to_string()),
+            quote(&dir.display().to_string())
         ),
     )
 }
 
+const CHANGED: &str =
+    "Your Claude Code settings changed while editing; close Claude Code and try again.";
+const WHERE_CHANGED: &str = "Your Claude Code settings location changed since cAInary edited it (CLAUDE_CONFIG_DIR?); leaving it alone.";
+
 struct Settings {
     dir: CaDir,
     path: PathBuf,
-    /// The file as it was, when it existed.
-    original_bytes: Option<Vec<u8>>,
-    doc: Map<String, Value>,
+    /// The file as read, when it existed, with its identity.
+    snapshot: Option<Snapshot>,
+}
+
+impl Settings {
+    fn text(&self) -> String {
+        self.snapshot
+            .as_ref()
+            .map(|s| String::from_utf8_lossy(&s.bytes).into_owned())
+            .unwrap_or_default()
+    }
+    fn path_str(&self) -> String {
+        self.path.display().to_string()
+    }
 }
 
 fn open_settings(env: &Env<'_>, create_dir: bool) -> Result<Option<Settings>, Box<Line>> {
@@ -536,54 +674,31 @@ fn open_settings(env: &Env<'_>, create_dir: bool) -> Result<Option<Settings>, Bo
     let dir = match CaDir::open_shared(&dir_path, create_dir) {
         Ok(Some(d)) => d,
         Ok(None) => return Ok(None),
-        Err(_) => return Err(Box::new(dir_error(t, "Claude Code settings"))),
+        Err(_) => return Err(Box::new(dir_error(t, "Claude Code settings", &dir_path))),
     };
     let path = dir.path().join("settings.json");
-    let original_bytes = read_in(&dir, "settings.json").map_err(|w| {
+    let snapshot = read_snapshot(&dir, "settings.json").map_err(|w| {
         let mut l = Line::refused(t, why_text(&w));
         l.settings_path = Some(path.display().to_string());
         Box::new(l)
     })?;
-    let doc = match &original_bytes {
-        None => Map::new(),
-        Some(b) => match serde_json::from_slice::<Value>(b) {
-            Ok(Value::Object(m)) => m,
-            _ => {
-                let mut l = Line::refused(
-                    t,
-                    "The settings file is not a valid JSON object; refusing to edit it.",
-                );
-                l.settings_path = Some(path.display().to_string());
-                return Err(Box::new(l));
-            }
-        },
-    };
     Ok(Some(Settings {
         dir,
         path,
-        original_bytes,
-        doc,
+        snapshot,
     }))
 }
 
-fn env_value(doc: &Map<String, Value>) -> Result<Option<String>, ()> {
-    match doc.get("env") {
-        None => Ok(None),
-        Some(Value::Object(e)) => match e.get(KEY) {
-            None => Ok(None),
-            Some(Value::String(s)) => Ok(Some(s.clone())),
-            Some(_) => Err(()),
-        },
-        Some(_) => Err(()),
+/// The parsed settings text, or the refusal for it.
+fn parse_settings<'a>(s: &Settings, text: &'a str) -> Result<Option<jsonedit::Doc<'a>>, Box<Line>> {
+    if s.snapshot.is_none() {
+        return Ok(None);
     }
-}
-
-fn render(doc: &Map<String, Value>) -> Vec<u8> {
-    format!(
-        "{}\n",
-        serde_json::to_string_pretty(&Value::Object(doc.clone())).expect("serializes")
-    )
-    .into_bytes()
+    jsonedit::parse(text).map(Some).map_err(|e| {
+        let mut l = Line::refused(Target::ClaudeCode, edit_text(e));
+        fill_paths(&mut l, s);
+        Box::new(l)
+    })
 }
 
 /// Managed settings (or any admin tier) that set the key win over ours: refuse. The shell value
@@ -601,15 +716,47 @@ pub enum Mode {
 }
 
 pub fn claude_code(env: &Env<'_>, mode: Mode) -> Line {
-    match mode {
+    let note = recover(env);
+    let mut line = match mode {
         Mode::Apply { dry_run } => claude_apply(env, dry_run),
         Mode::Undo { dry_run } => claude_undo(env, dry_run),
+    };
+    if let Some(n) = note {
+        line.message = format!("{n} {}", line.message);
     }
+    line
 }
 
 fn fill_paths(l: &mut Line, s: &Settings) {
-    l.settings_path = Some(s.path.display().to_string());
+    l.settings_path = Some(s.path_str());
     l.key = Some(KEY);
+}
+
+/// The directory the collector CA lives in, opened strictly and created if needed.
+fn open_ca_dir(env: &Env<'_>, t: Target) -> Result<CaDir, Box<Line>> {
+    CaDir::open(&env.ca_dir)
+        .map_err(|_| Box::new(dir_error(t, "collector certificate", &env.ca_dir)))
+}
+
+/// Re-reads the settings immediately before a change and requires them to be what the change was
+/// computed from: same bytes and same file (device, inode, size, mtime). Nothing is written if
+/// they differ. (No POSIX call compares and renames atomically; this narrows the window to
+/// microseconds, and the message tells the user to close Claude Code.)
+fn unchanged_since(s: &Settings, point: &str) -> bool {
+    hook::before_cas(point);
+    match (read_snapshot(&s.dir, "settings.json"), &s.snapshot) {
+        (Ok(None), None) => true,
+        (Ok(Some(now)), Some(then)) => now.bytes == then.bytes && now.ident == then.ident,
+        _ => false,
+    }
+}
+
+/// Writes the settings (or removes the file) and makes the directory entry durable.
+fn commit_settings(s: &Settings, new: Option<&str>) -> io::Result<()> {
+    match new {
+        Some(t) => write_atomic(&s.dir, "settings.json", t.as_bytes(), 0o600),
+        None => unlink_in(&s.dir, "settings.json"),
+    }
 }
 
 fn claude_apply(env: &Env<'_>, dry_run: bool) -> Line {
@@ -627,31 +774,38 @@ fn claude_apply(env: &Env<'_>, dry_run: bool) -> Line {
         Ok(None) => return preview_new_claude(env),
         Err(l) => return *l,
     };
-    let ca_dir = match CaDir::open(&env.ca_dir) {
+    let ca_dir = match open_ca_dir(env, t) {
         Ok(d) => d,
-        Err(_) => return dir_error(t, "collector certificate"),
+        Err(l) => return *l,
+    };
+    let text = settings.text();
+    let doc = match parse_settings(&settings, &text) {
+        Ok(d) => d,
+        Err(l) => return *l,
+    };
+    let existing = match &doc {
+        Some(d) => match d.env_value(KEY) {
+            Ok(v) => v,
+            Err(e) => {
+                let mut l = Line::refused(t, edit_text(e));
+                fill_paths(&mut l, &settings);
+                return l;
+            }
+        },
+        None => None,
     };
     let ca_path = ca_dir.path().join(CA_FILE).display().to_string();
     let bundle_path = ca_dir.path().join(CLAUDE_BUNDLE).display().to_string();
-    let existing = match env_value(&settings.doc) {
-        Ok(v) => v,
-        Err(()) => {
-            let mut l = Line::refused(
-                t,
-                "env.NODE_EXTRA_CA_CERTS in the settings file is not a string; refusing to edit it.",
-            );
-            fill_paths(&mut l, &settings);
-            return l;
-        }
-    };
     let state = read_state(&ca_dir);
-    let written_before = state.claude.as_ref().map(|c| c.written.as_str());
     let mut line = Line::new(t, Action::Already, "");
     fill_paths(&mut line, &settings);
     line.to = existing.clone();
+    let recorded_here = state
+        .claude
+        .as_ref()
+        .is_some_and(|c| c.written == bundle_path && c.settings_path == settings.path_str());
     if existing.as_deref() == Some(ca_path.as_str())
-        || (existing.as_deref() == Some(bundle_path.as_str())
-            && written_before == Some(bundle_path.as_str()))
+        || (existing.as_deref() == Some(bundle_path.as_str()) && recorded_here)
     {
         line.message = with_shell(h, "Claude Code already trusts the collector certificate.");
         line.from = existing.clone();
@@ -685,14 +839,31 @@ fn claude_apply(env: &Env<'_>, dry_run: bool) -> Line {
             (bundle_path.clone(), Some(bundle(&certs, &ca)))
         }
     };
-    let backup_name = settings
-        .original_bytes
+    let new_text = match &doc {
+        Some(d) => d.set_env_value(KEY, &written),
+        // A new file: just the one key, with a trailing newline.
+        None => jsonedit::parse("{}")
+            .expect("valid")
+            .set_env_value(KEY, &written)
+            .map(|t| format!("{t}\n")),
+    };
+    let new_text = match new_text {
+        Ok(t) => t,
+        Err(e) => {
+            let mut l = Line::refused(t, edit_text(e));
+            fill_paths(&mut l, &settings);
+            return l;
+        }
+    };
+    let stamp_now = stamp(&now_string(h));
+    let planned_backup = settings
+        .snapshot
         .as_ref()
-        .map(|_| format!("settings.json.cainary-{}.bak", stamp(&now_string(h))));
+        .map(|_| format!("settings.json.cainary-{stamp_now}.bak"));
     line.from = existing.clone();
     line.to = Some(written.clone());
     line.bundle_path = bundle_text.as_ref().map(|_| bundle_path.clone());
-    line.backup_path = backup_name
+    line.backup_path = planned_backup
         .as_ref()
         .map(|n| settings.dir.path().join(n).display().to_string());
     if dry_run {
@@ -712,25 +883,41 @@ fn claude_apply(env: &Env<'_>, dry_run: bool) -> Line {
         return line;
     }
 
-    // Apply: backup, bundle, settings, state; a failed state write puts the settings back.
-    let mut doc = settings.doc.clone();
-    let created_env = !doc.get("env").is_some_and(Value::is_object);
-    let env_map = doc
-        .entry("env")
-        .or_insert_with(|| Value::Object(Map::new()))
-        .as_object_mut()
-        .expect("env is an object");
-    env_map.insert(KEY.into(), Value::String(written.clone()));
     let fail = |m: &str| {
         let mut l = Line::refused(t, m);
         fill_paths(&mut l, &settings);
         l
     };
-    let stamp_now = stamp(&now_string(h));
-    let backup_name = match &settings.original_bytes {
-        Some(b) => match backup(&settings.dir, "settings.json", b, &stamp_now) {
+    let cs = ClaudeState {
+        settings_path: settings.path_str(),
+        original: existing.clone(),
+        written: written.clone(),
+        created_env: !doc.as_ref().is_some_and(|d| d.has_env()),
+        created_file: settings.snapshot.is_none(),
+        orig_sha: settings.snapshot.as_ref().map(|s| sha_of(&s.bytes)),
+        backup: None,
+        new_sha: Some(sha_of(new_text.as_bytes())),
+    };
+    // 1. The transaction record, durable, before anything changes.
+    let mut pending_state = state.clone();
+    pending_state.pending = Some(Pending {
+        kind: PendingKind::Apply,
+        claude: cs.clone(),
+        before: cs.orig_sha.clone(),
+        after: cs.new_sha.clone(),
+    });
+    if save_state(&ca_dir, &pending_state).is_err() {
+        return fail("The state file could not be written; nothing was changed.");
+    }
+    if hook::stop("after-pending") {
+        return fail("(simulated crash)");
+    }
+    // 2. The backup of exactly the bytes the edit was computed from.
+    let backup_name = match &settings.snapshot {
+        Some(s) => match backup(&settings.dir, "settings.json", &s.bytes, &stamp_now) {
             Ok(n) => Some(n),
             Err(_) => {
+                let _ = save_state(&ca_dir, &state);
                 return fail("The settings backup could not be written; nothing was changed.");
             }
         },
@@ -739,28 +926,39 @@ fn claude_apply(env: &Env<'_>, dry_run: bool) -> Line {
     if let Some(text) = &bundle_text
         && write_atomic(&ca_dir, CLAUDE_BUNDLE, text.as_bytes(), 0o644).is_err()
     {
+        let _ = save_state(&ca_dir, &state);
         return fail("The combined bundle could not be written; nothing was changed.");
     }
-    if write_atomic(&settings.dir, "settings.json", &render(&doc), 0o600).is_err() {
+    // 3. Compare, then swap.
+    if !unchanged_since(&settings, "apply") {
+        if let (Some(n), Some(_)) = (&backup_name, &settings.snapshot) {
+            let _ = unlink_in(&settings.dir, n);
+        }
+        let _ = save_state(&ca_dir, &state);
+        return fail(CHANGED);
+    }
+    if hook::stop("before-rename") {
+        return fail("(simulated crash)");
+    }
+    if commit_settings(&settings, Some(&new_text)).is_err() {
+        let _ = save_state(&ca_dir, &state);
         return fail("The settings file could not be written; nothing was changed.");
     }
-    let new_state = State {
-        claude: Some(ClaudeState {
-            settings_path: settings.path.display().to_string(),
-            original: existing.clone(),
-            written: written.clone(),
-            created_env,
-            created_file: settings.original_bytes.is_none(),
-        }),
-        codex_bundle: state.codex_bundle.clone(),
-    };
-    if save_state(&ca_dir, &new_state).is_err() {
-        // Put the settings back as they were.
-        let _ = match &settings.original_bytes {
-            Some(b) => write_atomic(&settings.dir, "settings.json", b, 0o600),
-            None => unlink_in(&settings.dir, "settings.json"),
-        };
-        return fail("The state file could not be written; the settings were put back.");
+    if hook::stop("after-rename") {
+        return fail("(simulated crash)");
+    }
+    // 4. The record, replacing the transaction. If this fails the settings are NOT rolled back
+    //    (that could overwrite something newer): the transaction stays, and the next --trust or
+    //    --trust-status finishes it.
+    let mut committed = state.clone();
+    committed.claude = Some(ClaudeState {
+        backup: backup_name.clone(),
+        ..cs
+    });
+    if save_state(&ca_dir, &committed).is_err() {
+        return fail(
+            "The change was made, but its record could not be saved. Run cainary-otel-debug --trust-status to finish it.",
+        );
     }
     line.action = Action::Applied;
     line.backup_path = backup_name.map(|n| settings.dir.path().join(n).display().to_string());
@@ -806,25 +1004,37 @@ fn claude_undo(env: &Env<'_>, dry_run: bool) -> Line {
             "cAInary has not changed your Claude Code settings.",
         )
     };
-    let Ok(Some(ca_dir)) = CaDir::open_existing(&env.ca_dir) else {
-        return nothing();
+    let ca_dir = match CaDir::open_existing(&env.ca_dir) {
+        Ok(Some(d)) => d,
+        Ok(None) => return nothing(),
+        Err(_) => return dir_error(t, "collector certificate", &env.ca_dir),
     };
-    let mut state = read_state(&ca_dir);
+    let state = read_state(&ca_dir);
     let Some(cs) = state.claude.clone() else {
         return nothing();
     };
     let settings = match open_settings(env, false) {
         Ok(Some(s)) => s,
-        Ok(None) => {
-            // The directory is gone: the record is stale.
-            state.claude = None;
-            let _ = save_state(&ca_dir, &state);
-            return nothing();
-        }
+        Ok(None) => return stale_record(&ca_dir, state, dry_run),
         Err(l) => return *l,
     };
-    let current = env_value(&settings.doc).ok().flatten();
-    if settings.original_bytes.is_none() || current.as_deref() != Some(cs.written.as_str()) {
+    // Only the settings the record was made for.
+    if cs.settings_path != settings.path_str() {
+        let mut l = Line::refused(t, WHERE_CHANGED);
+        fill_paths(&mut l, &settings);
+        return l;
+    }
+    if settings.snapshot.is_none() {
+        return stale_record(&ca_dir, state, dry_run);
+    }
+    let text = settings.text();
+    let doc = match parse_settings(&settings, &text) {
+        Ok(Some(d)) => d,
+        Ok(None) => return stale_record(&ca_dir, state, dry_run),
+        Err(l) => return *l,
+    };
+    let current = doc.env_value(KEY).ok().flatten();
+    if current.as_deref() != Some(cs.written.as_str()) {
         let mut l = Line::refused(
             t,
             "The setting changed since cAInary wrote it; leaving it alone.",
@@ -833,28 +1043,59 @@ fn claude_undo(env: &Env<'_>, dry_run: bool) -> Line {
         l.from = current;
         return l;
     }
-    let mut doc = settings.doc.clone();
-    if let Some(Value::Object(e)) = doc.get_mut("env") {
-        match &cs.original {
-            Some(o) => {
-                e.insert(KEY.into(), Value::String(o.clone()));
-            }
-            None => {
-                e.remove(KEY);
+    // What the file becomes: the exact original bytes if nothing else touched it, else just
+    // this key put back (or removed).
+    let snap_bytes = settings
+        .snapshot
+        .as_ref()
+        .map(|s| s.bytes.clone())
+        .unwrap_or_default();
+    let pristine = cs.new_sha.as_deref() == Some(sha_of(&snap_bytes).as_str());
+    let from_backup = if pristine {
+        exact_original(&settings, &cs)
+    } else {
+        None
+    };
+    let new_text: Option<String> = match from_backup {
+        Some(orig) => (!cs.created_file).then_some(orig),
+        None => {
+            let edited = match &cs.original {
+                Some(o) => doc.set_env_value(KEY, o),
+                None => doc.unset_env_value(KEY, cs.created_env),
+            };
+            match edited {
+                Ok(e) => {
+                    let empty = jsonedit::parse(&e).is_ok_and(|d| d.is_empty_object());
+                    if cs.created_file && empty {
+                        None
+                    } else {
+                        Some(e)
+                    }
+                }
+                Err(e) => {
+                    let mut l = Line::refused(t, edit_text(e));
+                    fill_paths(&mut l, &settings);
+                    return l;
+                }
             }
         }
-        if cs.created_env && e.is_empty() {
-            doc.remove("env");
-        }
-    }
-    let delete_file = cs.created_file && doc.is_empty();
-    let backup_name = format!("settings.json.cainary-{}.bak", stamp(&now_string(h)));
+    };
+    let bundle_here = ca_dir.path().join(CLAUDE_BUNDLE).display().to_string();
     let mut l = Line::new(t, Action::Undone, "");
     fill_paths(&mut l, &settings);
     l.from = Some(cs.written.clone());
     l.to = cs.original.clone();
-    l.backup_path = Some(settings.dir.path().join(&backup_name).display().to_string());
-    let bundle_here = ca_dir.path().join(CLAUDE_BUNDLE).display().to_string();
+    l.backup_path = Some(
+        settings
+            .dir
+            .path()
+            .join(format!(
+                "settings.json.cainary-{}.bak",
+                stamp(&now_string(h))
+            ))
+            .display()
+            .to_string(),
+    );
     if cs.written == bundle_here {
         l.bundle_path = Some(bundle_here.clone());
     }
@@ -862,7 +1103,7 @@ fn claude_undo(env: &Env<'_>, dry_run: bool) -> Line {
         l.action = Action::Preview;
         l.message = format!(
             "Would {} in your Claude Code settings, after a backup. {RESTART}",
-            match (&cs.original, delete_file) {
+            match (&cs.original, new_text.is_none()) {
                 (_, true) => "remove the settings file cAInary created".to_string(),
                 (Some(_), _) => "restore your previous NODE_EXTRA_CA_CERTS value".to_string(),
                 (None, _) => "remove env.NODE_EXTRA_CA_CERTS".to_string(),
@@ -875,32 +1116,147 @@ fn claude_undo(env: &Env<'_>, dry_run: bool) -> Line {
         fill_paths(&mut x, &settings);
         x
     };
-    let original = settings.original_bytes.clone().unwrap_or_default();
+    let after = new_text.as_ref().map(|n| sha_of(n.as_bytes()));
+    let mut pending_state = state.clone();
+    pending_state.pending = Some(Pending {
+        kind: PendingKind::Undo,
+        claude: cs.clone(),
+        before: Some(sha_of(&snap_bytes)),
+        after,
+    });
+    if save_state(&ca_dir, &pending_state).is_err() {
+        return fail("The state file could not be written; nothing was changed.");
+    }
+    if hook::stop("after-pending") {
+        return fail("(simulated crash)");
+    }
     let backup_name = match backup(
         &settings.dir,
         "settings.json",
-        &original,
+        &snap_bytes,
         &stamp(&now_string(h)),
     ) {
         Ok(n) => n,
-        Err(_) => return fail("The settings backup could not be written; nothing was changed."),
+        Err(_) => {
+            let _ = save_state(&ca_dir, &state);
+            return fail("The settings backup could not be written; nothing was changed.");
+        }
     };
-    let done = if delete_file {
-        unlink_in(&settings.dir, "settings.json")
-    } else {
-        write_atomic(&settings.dir, "settings.json", &render(&doc), 0o600)
-    };
-    if done.is_err() {
+    if !unchanged_since(&settings, "undo") {
+        let _ = unlink_in(&settings.dir, &backup_name);
+        let _ = save_state(&ca_dir, &state);
+        return fail(CHANGED);
+    }
+    if commit_settings(&settings, new_text.as_deref()).is_err() {
+        let _ = save_state(&ca_dir, &state);
         return fail("The settings file could not be changed; nothing was undone.");
     }
-    if cs.written == bundle_here {
-        let _ = unlink_in(&ca_dir, CLAUDE_BUNDLE);
+    if hook::stop("after-rename") {
+        return fail("(simulated crash)");
     }
-    state.claude = None;
-    let _ = save_state(&ca_dir, &state);
+    if let Err(m) = finish_undo(&ca_dir, &state, &cs) {
+        return fail(m);
+    }
     l.backup_path = Some(settings.dir.path().join(backup_name).display().to_string());
     l.message = format!("Restored your previous Claude Code setting. {RESTART}");
     l
+}
+
+/// The original bytes from the backup, if the backup still holds exactly what was recorded.
+fn exact_original(s: &Settings, cs: &ClaudeState) -> Option<String> {
+    let want = cs.orig_sha.as_deref()?;
+    let name = Path::new(cs.backup.as_deref()?)
+        .file_name()?
+        .to_str()?
+        .to_string();
+    let bytes = read_in(&s.dir, &name).ok().flatten()?;
+    (sha_of(&bytes) == want).then(|| String::from_utf8(bytes).ok())?
+}
+
+/// The record names settings that no longer exist. Cleared (surfacing a failure), unless this is
+/// only a preview, which changes nothing.
+fn stale_record(ca: &CaDir, mut state: State, dry_run: bool) -> Line {
+    let t = Target::ClaudeCode;
+    let l = Line::new(
+        t,
+        Action::NothingToUndo,
+        "cAInary has not changed your Claude Code settings.",
+    );
+    if dry_run {
+        return l;
+    }
+    state.claude = None;
+    if save_state(ca, &state).is_err() {
+        return Line::refused(
+            t,
+            "The old record of the Claude Code change could not be cleared.",
+        );
+    }
+    l
+}
+
+/// The last step of an undo: drop the record and the transaction in one write, and the bundle.
+/// A failure is reported, with the transaction left for the next run to finish.
+fn finish_undo(ca: &CaDir, state: &State, cs: &ClaudeState) -> Result<(), &'static str> {
+    let mut done = state.clone();
+    done.claude = None;
+    done.pending = None;
+    if save_state(ca, &done).is_err() {
+        return Err(
+            "The settings were restored, but the record of the change could not be cleared. Run cainary-otel-debug --trust-status to finish it.",
+        );
+    }
+    if cs.written == ca.path().join(CLAUDE_BUNDLE).display().to_string() {
+        let _ = unlink_in(ca, CLAUDE_BUNDLE);
+    }
+    Ok(())
+}
+
+/// A transaction found in the state file: finished, or cleared, according to what the settings
+/// file turns out to hold. Returns a sentence for the user when something was found.
+fn recover(env: &Env<'_>) -> Option<String> {
+    let ca = CaDir::open_existing(&env.ca_dir).ok().flatten()?;
+    let state = read_state(&ca);
+    let p = state.pending.clone()?;
+    let dir_path = Path::new(&p.claude.settings_path).parent()?.to_path_buf();
+    let sha_now = match CaDir::open_shared(&dir_path, false) {
+        Ok(Some(d)) => match read_snapshot(&d, "settings.json") {
+            Ok(s) => Some(s.map(|s| sha_of(&s.bytes))),
+            Err(_) => None,
+        },
+        Ok(None) => Some(None),
+        Err(_) => None,
+    };
+    let Some(now) = sha_now else {
+        return Some("An interrupted Claude Code trust change was found, but the settings can't be inspected right now; run --trust-status again later.".into());
+    };
+    let mut next = state.clone();
+    next.pending = None;
+    let note = if now == p.after {
+        match p.kind {
+            PendingKind::Apply => {
+                next.claude = Some(p.claude.clone());
+                "Finished an interrupted Claude Code trust change."
+            }
+            PendingKind::Undo => {
+                next.claude = None;
+                if p.claude.written == ca.path().join(CLAUDE_BUNDLE).display().to_string() {
+                    let _ = unlink_in(&ca, CLAUDE_BUNDLE);
+                }
+                "Finished an interrupted undo of the Claude Code trust change."
+            }
+        }
+    } else if now == p.before {
+        "An interrupted Claude Code trust change had not touched your settings; it was cleared."
+    } else {
+        "An interrupted Claude Code trust change was found, and your settings have changed since; they were left alone and the record was cleared."
+    };
+    if save_state(&ca, &next).is_err() {
+        return Some(
+            "An interrupted Claude Code trust change was found but could not be cleared.".into(),
+        );
+    }
+    Some(note.to_string())
 }
 
 // ── Codex ────────────────────────────────────────────────────────────────────────────────────
@@ -924,7 +1280,7 @@ pub fn codex(env: &Env<'_>, undo: bool) -> Line {
                 "No Codex certificate bundle was prepared.",
             );
         }
-        Err(_) => return dir_error(t, "collector certificate"),
+        Err(_) => return dir_error(t, "collector certificate", &env.ca_dir),
     };
     let path = ca_dir.path().join(CODEX_BUNDLE).display().to_string();
     let mut state = read_state(&ca_dir);
@@ -984,11 +1340,14 @@ pub fn codex(env: &Env<'_>, undo: bool) -> Line {
 /// The `trust-status` line.
 pub fn status_json(env: &Env<'_>, ts: &str) -> String {
     let h = env.harness;
+    // An interrupted transaction is finished (or cleared) first, so the status is of the result.
+    let note = recover(env);
     let ca_path = env.ca_dir.join(CA_FILE).display().to_string();
     let (state, claude_dir) = match CaDir::open_existing(&env.ca_dir) {
         Ok(Some(d)) => (read_state(&d), Some(d)),
         _ => (State::default(), None),
     };
+    let ca_exists = claude_dir.as_ref().is_some_and(|d| collector_ca(d).is_ok());
     let settings_path = h
         .tool_home(ToolHome::ClaudeConfig)
         .path()
@@ -999,15 +1358,25 @@ pub fn status_json(env: &Env<'_>, ts: &str) -> String {
         ("managed", None)
     } else {
         match open_settings(env, false) {
-            Ok(Some(s)) => match env_value(&s.doc) {
-                Ok(Some(v))
-                    if state.claude.as_ref().is_some_and(|c| c.written == v) || v == ca_path =>
-                {
-                    ("applied", Some(v))
+            Ok(Some(s)) => {
+                let text = s.text();
+                let value = jsonedit::parse(&text)
+                    .ok()
+                    .and_then(|d| d.env_value(KEY).ok().flatten());
+                match value {
+                    // A record only counts for the settings it was made for.
+                    Some(v)
+                        if v == ca_path
+                            || state.claude.as_ref().is_some_and(|c| {
+                                c.written == v && c.settings_path == s.path_str()
+                            }) =>
+                    {
+                        ("applied", Some(v))
+                    }
+                    Some(v) => ("other-value", Some(v)),
+                    None => ("absent", None),
                 }
-                Ok(Some(v)) => ("other-value", Some(v)),
-                _ => ("absent", None),
-            },
+            }
             _ => ("absent", None),
         }
     };
@@ -1034,6 +1403,8 @@ pub fn status_json(env: &Env<'_>, ts: &str) -> String {
         }),
     );
     m.insert("caPath".into(), json!(ca_path));
+    m.insert("caExists".into(), json!(ca_exists));
+    m.insert("note".into(), json!(note));
     format!("{}\n", Value::Object(m))
 }
 
@@ -1109,6 +1480,53 @@ pub fn refresh(env: &Env<'_>) -> Vec<String> {
 /// For the tests and the CLI: the time stamp used in backup names.
 pub fn backup_stamp(t: SystemTime) -> String {
     stamp(&cainary_core::value::rfc3339(t))
+}
+
+/// Test-only fault injection: a simulated crash at a named point, a failing state write, and a
+/// callback just before the compare-then-swap. Compiled to nothing outside tests.
+mod hook {
+    #[cfg(not(test))]
+    pub fn stop(_: &str) -> bool {
+        false
+    }
+    #[cfg(not(test))]
+    pub fn fail_save() -> bool {
+        false
+    }
+    #[cfg(not(test))]
+    pub fn before_cas(_: &str) {}
+
+    #[cfg(test)]
+    pub type CasHook = Box<dyn FnMut(&str)>;
+
+    #[cfg(test)]
+    thread_local! {
+        pub static STOP: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+        pub static FAIL_SAVES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+        pub static CAS: std::cell::RefCell<Option<CasHook>> = std::cell::RefCell::new(None);
+    }
+    #[cfg(test)]
+    pub fn stop(at: &str) -> bool {
+        STOP.with(|s| s.get() == Some(at))
+    }
+    #[cfg(test)]
+    pub fn fail_save() -> bool {
+        FAIL_SAVES.with(|c| {
+            let n = c.get();
+            if n > 0 {
+                c.set(n - 1);
+            }
+            n > 0
+        })
+    }
+    #[cfg(test)]
+    pub fn before_cas(point: &str) {
+        CAS.with(|c| {
+            if let Some(f) = c.borrow_mut().as_mut() {
+                f(point);
+            }
+        });
+    }
 }
 
 #[cfg(test)]
@@ -1250,7 +1668,7 @@ mod tests {
         let fx = Fx::new("create", "");
         let p = preview(&fx);
         assert_eq!(p.action, Action::Preview);
-        assert!(p.message.contains("Would create") && p.message.contains("Restart Claude Code"));
+        assert!(p.message.contains("Would create") && p.message.contains("restart it afterwards"));
         assert!(
             p.message
                 .contains("your organization's collector receives nothing")
@@ -1306,17 +1724,31 @@ mod tests {
             .cloned()
             .collect();
         assert_eq!(keys, ["zeta", "model", "alpha", "env"], "{after}");
+        // Their layout (4 spaces here) is kept, not replaced by ours.
         assert!(
-            after.ends_with("}\n") && after.contains("\n  \"zeta\": 1,"),
-            "2-space indent: {after}"
+            after.ends_with("}\n") && after.contains("\n    \"zeta\": 1,"),
+            "{after}"
+        );
+        assert_eq!(
+            after.replace(
+                &format!(
+                    ",\n    \"env\": {{\n        \"{KEY}\": \"{}\"\n    }}",
+                    fx.ca_path()
+                ),
+                ""
+            ),
+            original,
+            "everything but the added member is byte-identical"
         );
         assert_eq!(env_key(&fx), Some(fx.ca_path()));
         // Undo removes the key it added (and the env object it created), keeping the rest.
         let u = undo(&fx);
         assert_eq!(u.action, Action::Undone, "{u:?}");
-        let back: Value = serde_json::from_str(&fx.read_settings()).unwrap();
-        assert_eq!(back, serde_json::from_str::<Value>(original).unwrap());
-        assert!(back.get("env").is_none());
+        assert_eq!(
+            fx.read_settings(),
+            original,
+            "apply then undo restores the exact bytes"
+        );
         // The undo made a backup of the file as it stood, without clobbering the first one.
         assert_eq!(fx.baks().len(), 2, "{:?}", fx.baks());
         assert_eq!(undo(&fx).action, Action::NothingToUndo);
@@ -1559,8 +1991,19 @@ mod tests {
         let v: Map<String, Value> = serde_json::from_str(&line).unwrap();
         assert_eq!(
             v.keys().collect::<Vec<_>>(),
-            ["v", "type", "ts", "claudeCode", "codex", "caPath"]
+            [
+                "v",
+                "type",
+                "ts",
+                "claudeCode",
+                "codex",
+                "caPath",
+                "caExists",
+                "note"
+            ]
         );
+        assert_eq!(v["caExists"], true);
+        assert!(v["note"].is_null());
         assert_eq!(
             v["claudeCode"]
                 .as_object()
@@ -1776,5 +2219,495 @@ mod tests {
         // The bundle text never carried anything but certificates.
         let b = fs::read_to_string(fx.ca_dir.join(CLAUDE_BUNDLE)).unwrap();
         assert!(!b.contains("PRIVATE") && !b.contains("U0VDUkVU"));
+    }
+
+    // ── transactions, compare-and-swap, fidelity, locations ──────────────────────────────────
+
+    fn stop_at(point: &'static str) {
+        hook::STOP.with(|s| s.set(Some(point)));
+    }
+    fn clear_hooks() {
+        hook::STOP.with(|s| s.set(None));
+        hook::FAIL_SAVES.with(|c| c.set(0));
+        hook::CAS.with(|c| *c.borrow_mut() = None);
+    }
+    fn on_cas(f: impl FnMut(&str) + 'static) {
+        hook::CAS.with(|c| *c.borrow_mut() = Some(Box::new(f)));
+    }
+    fn state_bytes(fx: &Fx) -> Option<Vec<u8>> {
+        fs::read(fx.ca_dir.join(STATE_FILE)).ok()
+    }
+    fn status(fx: &Fx) -> Value {
+        serde_json::from_str(&status_json(&fx.env(), "T")).unwrap()
+    }
+
+    #[test]
+    fn a_change_made_while_editing_aborts_the_apply_without_writing() {
+        let fx = Fx::new("cas-apply", "");
+        let original = "{\n  \"model\": \"opus\"\n}\n";
+        fx.write_settings(original);
+        let settings = fx.settings();
+        // Claude Code (or the user) saves the file between our read and our swap.
+        on_cas(move |point| {
+            if point == "apply" {
+                fs::write(
+                    &settings,
+                    "{\n  \"model\": \"sonnet\",\n  \"theme\": \"dark\"\n}\n",
+                )
+                .unwrap();
+            }
+        });
+        let a = apply(&fx);
+        clear_hooks();
+        assert_eq!(a.action, Action::Refused, "{a:?}");
+        assert_eq!(
+            a.message,
+            "Your Claude Code settings changed while editing; close Claude Code and try again."
+        );
+        assert_eq!(a.code(), 1);
+        assert_eq!(
+            fx.read_settings(),
+            "{\n  \"model\": \"sonnet\",\n  \"theme\": \"dark\"\n}\n",
+            "their newer save survives"
+        );
+        assert!(fx.baks().is_empty(), "the stale backup is removed");
+        assert!(
+            state_bytes(&fx).is_none(),
+            "no half-finished record is left"
+        );
+        // A retry now works from the new contents.
+        assert_eq!(apply(&fx).action, Action::Applied);
+        assert!(fx.read_settings().contains("\"theme\": \"dark\""));
+    }
+
+    #[test]
+    fn a_rewrite_with_the_same_bytes_is_still_a_different_file_and_aborts() {
+        let fx = Fx::new("cas-ident", "");
+        let original = "{\n  \"model\": \"opus\"\n}\n";
+        fx.write_settings(original);
+        let settings = fx.settings();
+        on_cas(move |point| {
+            if point == "apply" {
+                // Same bytes, new inode (an editor's save-by-rename).
+                let tmp = settings.with_extension("tmp");
+                fs::write(&tmp, original).unwrap();
+                fs::rename(&tmp, &settings).unwrap();
+            }
+        });
+        let a = apply(&fx);
+        clear_hooks();
+        assert_eq!(a.action, Action::Refused, "{a:?}");
+        assert_eq!(fx.read_settings(), original);
+    }
+
+    #[test]
+    fn a_file_that_appears_while_a_missing_one_is_being_created_is_not_overwritten() {
+        let fx = Fx::new("cas-create", "");
+        let settings = fx.settings();
+        let dir = fx.claude_dir();
+        on_cas(move |point| {
+            if point == "apply" {
+                fs::create_dir_all(&dir).unwrap();
+                fs::write(&settings, "{\"theme\":\"dark\"}\n").unwrap();
+            }
+        });
+        let a = apply(&fx);
+        clear_hooks();
+        assert_eq!(a.action, Action::Refused, "{a:?}");
+        assert_eq!(fx.read_settings(), "{\"theme\":\"dark\"}\n");
+    }
+
+    #[test]
+    fn undo_never_deletes_or_overwrites_what_changed_since_it_looked() {
+        let fx = Fx::new("cas-undo", "");
+        assert_eq!(apply(&fx).action, Action::Applied);
+        let ours = fx.read_settings();
+        let settings = fx.settings();
+        let ca = fx.ca_path();
+        // Between undo's read of "only our key" and its delete, the user adds a key.
+        on_cas(move |point| {
+            if point == "undo" {
+                fs::write(
+                    &settings,
+                    format!("{{\"env\":{{\"{KEY}\":\"{ca}\"}},\"model\":\"opus\"}}\n"),
+                )
+                .unwrap();
+            }
+        });
+        let u = undo(&fx);
+        clear_hooks();
+        assert_eq!(u.action, Action::Refused, "{u:?}");
+        assert_eq!(
+            u.message,
+            "Your Claude Code settings changed while editing; close Claude Code and try again."
+        );
+        assert!(
+            fx.settings().exists(),
+            "a file with new content is not deleted"
+        );
+        assert!(
+            fx.read_settings().contains("\"model\": \"opus\"")
+                || fx.read_settings().contains("\"model\":\"opus\"")
+        );
+        assert_ne!(fx.read_settings(), ours);
+        // The record is intact (no transaction left), so undo works once the file is quiet.
+        assert!(
+            read_state(&CaDir::open_existing(&fx.ca_dir).unwrap().unwrap())
+                .pending
+                .is_none()
+        );
+        assert_eq!(undo(&fx).action, Action::Undone);
+        assert!(fx.read_settings().contains("opus") && !fx.read_settings().contains(KEY));
+    }
+
+    #[test]
+    fn numbers_decimals_escapes_and_layout_survive_byte_for_byte() {
+        let original = "{\n\t\"big\": 123456789012345678901234567890,\n\t\"dec\": 0.1000000000000000055511151231257827,\n\t\"exp\": 1E400,\n\t\"uni\": \"\\u00e9\\ud83d\\ude00 \\/ \\n\",\n\t\"nested\": {\"a\": [1,   2 ,3], \"b\": null},\n\t\"flag\":    true\n}\n";
+        let fx = Fx::new("fidelity", "");
+        fx.write_settings(original);
+        assert_eq!(apply(&fx).action, Action::Applied);
+        let after = fx.read_settings();
+        for kept in [
+            "123456789012345678901234567890",
+            "0.1000000000000000055511151231257827",
+            "1E400",
+            "\\u00e9\\ud83d\\ude00 \\/ \\n",
+            "[1,   2 ,3]",
+            "\"flag\":    true",
+        ] {
+            assert!(after.contains(kept), "{kept} in {after}");
+        }
+        assert!(
+            after.starts_with(original.trim_end_matches("\n}\n")),
+            "{after}"
+        );
+        assert_eq!(undo(&fx).action, Action::Undone);
+        assert_eq!(fx.read_settings(), original, "apply then undo is exact");
+    }
+
+    #[test]
+    fn undo_after_the_user_edited_elsewhere_is_targeted_and_keeps_their_edit() {
+        let fx = Fx::new("targeted", "");
+        let original = "{\n  \"model\": \"opus\"\n}\n";
+        fx.write_settings(original);
+        assert_eq!(apply(&fx).action, Action::Applied);
+        let edited = fx.read_settings().replace("\"opus\"", "\"sonnet\"");
+        fx.write_settings(&edited);
+        let u = undo(&fx);
+        assert_eq!(u.action, Action::Undone, "{u:?}");
+        assert_eq!(fx.read_settings(), "{\n  \"model\": \"sonnet\"\n}\n");
+    }
+
+    #[test]
+    fn duplicate_keys_comments_and_trailing_commas_are_refused_untouched() {
+        for (tag, body) in [
+            ("dup", "{\"model\":\"a\",\"model\":\"b\"}"),
+            ("dupnested", "{\"hooks\":{\"x\":1,\"x\":2}}"),
+            ("dupenv", "{\"env\":{\"A\":\"1\",\"A\":\"2\"}}"),
+            ("comment", "{\n  // keep\n  \"model\": \"a\"\n}"),
+            ("trailing", "{\"model\":\"a\",}"),
+        ] {
+            let fx = Fx::new(tag, "");
+            fx.write_settings(body);
+            let a = apply(&fx);
+            assert_eq!(a.action, Action::Refused, "{tag}: {a:?}");
+            assert_eq!(fx.read_settings(), body);
+            assert!(fx.baks().is_empty() && state_bytes(&fx).is_none(), "{tag}");
+        }
+        let fx = Fx::new("dupmsg", "");
+        fx.write_settings("{\"a\":1,\"a\":2}");
+        assert!(apply(&fx).message.contains("twice in one object"));
+    }
+
+    #[test]
+    fn group_or_other_writable_directories_are_refused_with_the_fix() {
+        let fx = Fx::new("gw-claude", "");
+        fs::create_dir_all(fx.claude_dir()).unwrap();
+        for m in [0o775, 0o757, 0o777] {
+            fs::set_permissions(fx.claude_dir(), fs::Permissions::from_mode(m)).unwrap();
+            let a = apply(&fx);
+            assert_eq!(a.action, Action::Refused, "{m:o}: {a:?}");
+            assert!(a.message.contains("chmod go-w"), "{}", a.message);
+            assert!(
+                a.message.contains(&fx.claude_dir().display().to_string()),
+                "{}",
+                a.message
+            );
+            assert!(!fx.settings().exists());
+        }
+        fs::set_permissions(fx.claude_dir(), fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(apply(&fx).action, Action::Applied);
+        // The state directory is held to the same rule.
+        let fx = Fx::new("gw-state", "");
+        fs::set_permissions(&fx.ca_dir, fs::Permissions::from_mode(0o775)).unwrap();
+        let a = apply(&fx);
+        assert_eq!(a.action, Action::Refused, "{a:?}");
+        assert!(a.message.contains("chmod go-w"), "{}", a.message);
+        assert_eq!(codex(&fx.env(), false).action, Action::Refused);
+    }
+
+    #[test]
+    fn a_crash_after_the_record_but_before_the_change_leaves_nothing_behind() {
+        let fx = Fx::new("crash-early", "");
+        let original = "{\"model\":\"opus\"}\n";
+        fx.write_settings(original);
+        stop_at("after-pending");
+        let _ = apply(&fx);
+        clear_hooks();
+        assert!(
+            state_bytes(&fx).is_some(),
+            "the transaction was recorded durably"
+        );
+        assert_eq!(fx.read_settings(), original);
+        // The next call notices, clears it, and carries on.
+        let s = status(&fx);
+        assert_eq!(s["claudeCode"]["state"], "absent");
+        assert!(
+            s["note"]
+                .as_str()
+                .unwrap()
+                .contains("had not touched your settings"),
+            "{s}"
+        );
+        assert!(state_bytes(&fx).is_none());
+        assert_eq!(apply(&fx).action, Action::Applied);
+    }
+
+    #[test]
+    fn a_crash_after_the_swap_is_finished_by_the_next_call() {
+        for next in ["status", "apply", "undo"] {
+            let fx = Fx::new(&format!("crash-late-{next}"), "");
+            fx.write_settings("{\"model\":\"opus\"}\n");
+            stop_at("after-rename");
+            let _ = apply(&fx);
+            clear_hooks();
+            assert!(
+                fx.read_settings().contains(KEY),
+                "the settings were changed"
+            );
+            match next {
+                "status" => {
+                    let s = status(&fx);
+                    assert_eq!(s["claudeCode"]["state"], "applied", "{s}");
+                    assert!(
+                        s["note"]
+                            .as_str()
+                            .unwrap()
+                            .contains("Finished an interrupted"),
+                        "{s}"
+                    );
+                    assert_eq!(undo(&fx).action, Action::Undone);
+                }
+                "apply" => {
+                    let a = apply(&fx);
+                    assert_eq!(a.action, Action::Already, "{a:?}");
+                    assert!(
+                        a.message.contains("Finished an interrupted"),
+                        "{}",
+                        a.message
+                    );
+                    assert_eq!(undo(&fx).action, Action::Undone);
+                }
+                _ => {
+                    let u = undo(&fx);
+                    assert_eq!(u.action, Action::Undone, "{u:?}");
+                    assert!(
+                        u.message.contains("Finished an interrupted"),
+                        "{}",
+                        u.message
+                    );
+                }
+            }
+            assert_eq!(
+                fx.read_settings(),
+                "{\"model\":\"opus\"}\n",
+                "{next}: exact original"
+            );
+            assert!(state_bytes(&fx).is_none(), "{next}");
+        }
+    }
+
+    #[test]
+    fn an_undo_that_crashes_after_the_swap_is_completed_and_cannot_resurrect() {
+        let fx = Fx::new("crash-undo", "");
+        let mine = fx.base.join("mine.pem");
+        fs::write(&mine, ROOT_A).unwrap();
+        fx.write_settings(&format!(
+            "{{\"env\":{{\"{KEY}\":\"{}\"}}}}\n",
+            mine.display()
+        ));
+        assert_eq!(apply(&fx).action, Action::Applied);
+        assert!(fx.ca_dir.join(CLAUDE_BUNDLE).exists());
+        stop_at("after-rename");
+        let _ = undo(&fx);
+        clear_hooks();
+        assert_eq!(
+            env_key(&fx),
+            Some(mine.display().to_string()),
+            "the settings were restored"
+        );
+        let s = status(&fx);
+        assert!(
+            s["note"].as_str().unwrap().contains("interrupted undo"),
+            "{s}"
+        );
+        assert!(
+            !fx.ca_dir.join(CLAUDE_BUNDLE).exists(),
+            "the bundle went with it"
+        );
+        assert!(state_bytes(&fx).is_none());
+        // The user later chooses our CA path themselves; a stale record can't undo that.
+        fx.write_settings(&format!("{{\"env\":{{\"{KEY}\":\"{}\"}}}}\n", fx.ca_path()));
+        assert_eq!(undo(&fx).action, Action::NothingToUndo);
+        assert_eq!(env_key(&fx), Some(fx.ca_path()));
+    }
+
+    #[test]
+    fn a_failed_record_write_is_reported_and_never_rolls_the_settings_back() {
+        let fx = Fx::new("savefail", "");
+        fx.write_settings("{\"model\":\"opus\"}\n");
+        // The first save is the transaction record; fail the second (the commit).
+        hook::FAIL_SAVES.with(|c| c.set(0));
+        on_cas(|_| hook::FAIL_SAVES.with(|c| c.set(1)));
+        let a = apply(&fx);
+        clear_hooks();
+        assert_eq!(a.action, Action::Refused, "{a:?}");
+        assert!(
+            a.message.contains("could not be saved") && a.message.contains("--trust-status"),
+            "{}",
+            a.message
+        );
+        assert!(
+            fx.read_settings().contains(KEY),
+            "the settings are left as written, not rolled back"
+        );
+        let s = status(&fx);
+        assert_eq!(s["claudeCode"]["state"], "applied", "{s}");
+        assert_eq!(undo(&fx).action, Action::Undone);
+        // Undo's final record write failing is surfaced too, and the next call completes it.
+        let fx = Fx::new("savefail-undo", "");
+        assert_eq!(apply(&fx).action, Action::Applied);
+        let ca = fx.ca_dir.clone();
+        on_cas(move |point| {
+            if point == "undo" {
+                let _ = &ca;
+                hook::FAIL_SAVES.with(|c| c.set(1));
+            }
+        });
+        let u = undo(&fx);
+        clear_hooks();
+        assert_eq!(u.action, Action::Refused, "{u:?}");
+        assert!(
+            u.message
+                .contains("record of the change could not be cleared"),
+            "{}",
+            u.message
+        );
+        assert!(!fx.settings().exists());
+        let s = status(&fx);
+        assert!(
+            s["note"].as_str().unwrap().contains("interrupted undo"),
+            "{s}"
+        );
+        fx.write_settings(&format!("{{\"env\":{{\"{KEY}\":\"{}\"}}}}\n", fx.ca_path()));
+        assert_eq!(
+            undo(&fx).action,
+            Action::NothingToUndo,
+            "a stale record can't undo their later choice"
+        );
+    }
+
+    #[test]
+    fn undo_and_status_only_count_the_settings_the_record_was_made_for() {
+        let a = Fx::new("loc-a", "");
+        let mine = a.base.join("mine.pem");
+        fs::write(&mine, ROOT_A).unwrap();
+        a.write_settings(&format!(
+            "{{\"env\":{{\"{KEY}\":\"{}\"}}}}\n",
+            mine.display()
+        ));
+        assert_eq!(apply(&a).action, Action::Applied);
+        let bundle = a.ca_dir.join(CLAUDE_BUNDLE).display().to_string();
+        // Another configuration (CLAUDE_CONFIG_DIR) that happens to hold the same value, sharing
+        // the state directory.
+        let b = Fx::new("loc-b", "");
+        b.write_settings(&format!(
+            "{{\"env\":{{\"{KEY}\":\"{bundle}\"}},\"theme\":\"dark\"}}\n"
+        ));
+        let env_b = Env {
+            harness: &b.harness,
+            ca_dir: a.ca_dir.clone(),
+        };
+        let st: Value = serde_json::from_str(&status_json(&env_b, "T")).unwrap();
+        assert_eq!(st["claudeCode"]["state"], "other-value", "{st}");
+        let u = claude_code(&env_b, Mode::Undo { dry_run: false });
+        assert_eq!(u.action, Action::Refused, "{u:?}");
+        assert!(u.message.contains("location changed"), "{}", u.message);
+        assert!(
+            b.read_settings().contains(&bundle) && b.read_settings().contains("dark"),
+            "untouched"
+        );
+        // Nor is "already" claimed for it.
+        let ap = claude_code(&env_b, Mode::Apply { dry_run: true });
+        assert_ne!(ap.action, Action::Already, "{ap:?}");
+        // The original configuration still undoes.
+        assert_eq!(undo(&a).action, Action::Undone);
+    }
+
+    #[test]
+    fn an_undo_preview_changes_nothing_even_with_a_stale_record() {
+        let fx = Fx::new("undo-preview-ro", "");
+        assert_eq!(apply(&fx).action, Action::Applied);
+        let moved = fx.base.join("fx/home/.claude-away");
+        fs::rename(fx.claude_dir(), &moved).unwrap();
+        let before = state_bytes(&fx);
+        let p = claude_code(&fx.env(), Mode::Undo { dry_run: true });
+        assert_eq!(p.action, Action::NothingToUndo, "{p:?}");
+        assert_eq!(state_bytes(&fx), before, "the record is still there");
+        // A real undo of a record whose settings are gone clears it, and says so.
+        let u = undo(&fx);
+        assert_eq!(u.action, Action::NothingToUndo);
+        assert!(state_bytes(&fx).is_none());
+        fs::rename(&moved, fx.claude_dir()).unwrap();
+    }
+
+    #[test]
+    fn the_preview_says_to_close_claude_code_first() {
+        let fx = Fx::new("close-first", "");
+        fx.write_settings("{}\n");
+        let p = preview(&fx);
+        assert!(
+            p.message
+                .contains("Close Claude Code before applying this, and restart it afterwards."),
+            "{}",
+            p.message
+        );
+        assert!(
+            preview(&Fx::new("close-first-new", ""))
+                .message
+                .contains("Close Claude Code before")
+        );
+        apply(&fx);
+        assert!(
+            claude_code(&fx.env(), Mode::Undo { dry_run: true })
+                .message
+                .contains("Close Claude Code before")
+        );
+    }
+
+    #[test]
+    fn status_says_whether_the_ca_exists() {
+        let fx = Fx::new("caexists", "");
+        assert_eq!(status(&fx)["caExists"], true);
+        fs::remove_file(fx.ca_dir.join(CA_FILE)).unwrap();
+        assert_eq!(status(&fx)["caExists"], false);
+        let none = Fx::new("caexists-none", "");
+        fs::remove_dir_all(&none.ca_dir).ok();
+        let env = Env {
+            harness: &none.harness,
+            ca_dir: none.base.join("nowhere/cainary"),
+        };
+        let s: Value = serde_json::from_str(&status_json(&env, "T")).unwrap();
+        assert_eq!(s["caExists"], false);
     }
 }
