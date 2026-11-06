@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 struct Src {
     rel: String,
     code: String,
+    /// The whole file, comments and tests included.
+    raw: String,
 }
 
 fn crates_dir() -> PathBuf {
@@ -58,6 +60,73 @@ fn production_code(text: &str) -> String {
     out.join("\n")
 }
 
+/// Production items that follow the first test module: `production_code` stops there, so every
+/// guard would silently skip them. An item at column 0 after the cut is fine only when it is
+/// itself `#[cfg(test)]`.
+fn check_tests_last(srcs: &[Src]) -> Vec<String> {
+    const ITEM: [&str; 18] = [
+        "fn ",
+        "pub fn ",
+        "pub(crate) fn ",
+        "impl",
+        "struct ",
+        "pub struct ",
+        "enum ",
+        "pub enum ",
+        "const ",
+        "pub const ",
+        "static ",
+        "trait ",
+        "pub trait ",
+        "use ",
+        "pub use ",
+        "type ",
+        "macro_rules!",
+        "extern ",
+    ];
+    let mut bad = Vec::new();
+    for s in srcs {
+        let lines: Vec<&str> = s.raw.lines().collect();
+        let Some(cut) = (0..lines.len()).find(|&i| {
+            lines[i].trim() == "#[cfg(test)]"
+                && lines[i + 1..]
+                    .iter()
+                    .map(|l| l.trim())
+                    .find(|l| !l.is_empty() && !l.starts_with("#["))
+                    .is_some_and(|l| l.starts_with("mod ") || l.starts_with("pub mod "))
+        }) else {
+            continue;
+        };
+        let mut pending_test = false;
+        for (n, line) in lines.iter().enumerate().skip(cut) {
+            if line.starts_with("#[") {
+                pending_test |= line.contains("cfg(") && line.contains("test");
+                continue;
+            }
+            if line.starts_with("//") {
+                continue;
+            }
+            let top_level = !line.is_empty() && !line.starts_with([' ', '\t', '}', ')', ']']);
+            let is_item = top_level
+                && (ITEM.iter().any(|p| line.starts_with(p))
+                    || line.starts_with("mod ")
+                    || line.starts_with("pub mod "));
+            if is_item && !pending_test {
+                bad.push(format!(
+                    "{}:{}: production item after a test module: `{}`",
+                    s.rel,
+                    n + 1,
+                    line.trim()
+                ));
+            }
+            if !line.trim().is_empty() {
+                pending_test = false;
+            }
+        }
+    }
+    bad
+}
+
 /// Every `crates/*/src/**/*.rs`.
 fn sources() -> Vec<Src> {
     let crates = crates_dir();
@@ -78,13 +147,17 @@ fn sources() -> Vec<Src> {
     }
     files
         .iter()
-        .map(|p| Src {
-            rel: p
-                .strip_prefix(&crates)
-                .expect("under crates/")
-                .to_string_lossy()
-                .replace('\\', "/"),
-            code: production_code(&fs::read_to_string(p).expect("read source")),
+        .map(|p| {
+            let raw = fs::read_to_string(p).expect("read source");
+            Src {
+                rel: p
+                    .strip_prefix(&crates)
+                    .expect("under crates/")
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+                code: production_code(&raw),
+                raw,
+            }
         })
         .collect()
 }
@@ -646,6 +719,11 @@ fn assert_clean(guard: &str, bad: Vec<String>) {
 }
 
 #[test]
+fn test_modules_come_last() {
+    assert_clean("tests-last", check_tests_last(&sources()));
+}
+
+#[test]
 fn guard1_no_std_io_modules_outside_harness() {
     assert_clean("guard 1", check_guard1(&sources()));
 }
@@ -713,6 +791,7 @@ mod fires {
         vec![Src {
             rel: rel.to_string(),
             code: production_code(code),
+            raw: code.to_string(),
         }]
     }
 
@@ -1190,5 +1269,35 @@ mod fires {
         assert!(check_n4(plain, plain, &aws)[0].contains("aws-lc-rs"));
         let ring = format!("{NET_OK}ring = \"0.17\"\n");
         assert!(check_n4(plain, plain, &ring)[0].contains("ring"));
+    }
+
+    #[test]
+    fn production_code_after_a_test_module_is_caught() {
+        let one = |code: &str| {
+            vec![Src {
+                rel: "cainary-net/src/x.rs".into(),
+                code: production_code(code),
+                raw: code.to_string(),
+            }]
+        };
+        let ok = "fn a() {}\n#[cfg(test)]\nmod tests {\n    fn t() {}\n}\n#[cfg(test)]\nmod more {\n}\n#[cfg(test)]\nfn helper() {}\n";
+        assert!(check_tests_last(&one(ok)).is_empty());
+        for bad in [
+            "fn a() {}\n#[cfg(test)]\nmod tests {\n}\n\npub fn takeover() {}\n",
+            "#[cfg(test)]\nmod tests {\n}\nimpl X {}\n",
+            "#[cfg(test)]\nmod tests {\n}\n\n/// doc\nconst K: u8 = 1;\n",
+            "#[cfg(test)]\nmod tests {\n}\nuse std::fs;\n",
+        ] {
+            assert_eq!(check_tests_last(&one(bad)).len(), 1, "{bad}");
+        }
+        // An attribute on a single test-only item before the module doesn't end production code.
+        assert!(
+            check_tests_last(&one("#[cfg(test)]\nfn only_in_tests() {}\nfn prod() {}\n"))
+                .is_empty()
+        );
+        // And the hidden code really is invisible to the other guards: that's the point.
+        let hidden = "#[cfg(test)]\nmod tests {\n}\npub fn sneaky() { std::fs::write(a, b); }\n";
+        assert!(production_code(hidden).contains("sneaky") == false);
+        assert!(!check_tests_last(&one(hidden)).is_empty());
     }
 }

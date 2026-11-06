@@ -21,7 +21,7 @@ mod imp {
     }
 
     const VERSION_3: u32 = 0x2008_0522;
-    const NET_BIND_SERVICE: u32 = 10;
+    pub(super) const NET_BIND_SERVICE: u32 = 10;
 
     fn get() -> std::io::Result<[Data; 2]> {
         let mut h = Header {
@@ -106,122 +106,6 @@ mod imp {
     pub fn drop_capabilities() -> std::io::Result<()> {
         drop_with(&Real)
     }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-        use std::cell::Cell;
-        use std::io::{Error, ErrorKind};
-
-        struct Fake {
-            caps: Cell<bool>,
-            get_fails: bool,
-            clear_fails: bool,
-            clear_noop: bool,
-            nnp_fails: bool,
-            cleared: Cell<u32>,
-        }
-
-        fn fake() -> Fake {
-            Fake {
-                caps: Cell::new(true),
-                get_fails: false,
-                clear_fails: false,
-                clear_noop: false,
-                nnp_fails: false,
-                cleared: Cell::new(0),
-            }
-        }
-
-        impl Sys for Fake {
-            fn get(&self) -> std::io::Result<[Data; 2]> {
-                if self.get_fails {
-                    return Err(Error::from(ErrorKind::PermissionDenied));
-                }
-                let bit = if self.caps.get() {
-                    1 << NET_BIND_SERVICE
-                } else {
-                    0
-                };
-                Ok([
-                    Data {
-                        effective: bit,
-                        permitted: bit,
-                        inheritable: 0,
-                    },
-                    Data::default(),
-                ])
-            }
-            fn clear(&self) -> std::io::Result<()> {
-                self.cleared.set(self.cleared.get() + 1);
-                if self.clear_fails {
-                    return Err(Error::from(ErrorKind::PermissionDenied));
-                }
-                if !self.clear_noop {
-                    self.caps.set(false);
-                }
-                Ok(())
-            }
-            fn no_new_privs(&self) -> std::io::Result<()> {
-                if self.nnp_fails {
-                    Err(Error::from(ErrorKind::PermissionDenied))
-                } else {
-                    Ok(())
-                }
-            }
-        }
-
-        #[test]
-        fn a_held_capability_is_cleared_and_verified() {
-            let f = fake();
-            drop_with(&f).unwrap();
-            assert_eq!(f.cleared.get(), 1);
-            assert!(!f.caps.get());
-        }
-
-        #[test]
-        fn nothing_to_drop_is_fine_and_clears_nothing() {
-            let f = fake();
-            f.caps.set(false);
-            drop_with(&f).unwrap();
-            assert_eq!(f.cleared.get(), 0);
-        }
-
-        #[test]
-        fn every_failure_is_fail_closed() {
-            // capget denied: we can't know, so it is an error, and nothing is assumed dropped.
-            let f = Fake {
-                get_fails: true,
-                ..fake()
-            };
-            assert!(drop_with(&f).is_err());
-            assert_eq!(f.cleared.get(), 0);
-            // capset fails.
-            assert!(
-                drop_with(&Fake {
-                    clear_fails: true,
-                    ..fake()
-                })
-                .is_err()
-            );
-            // capset "succeeds" but the capability is still there.
-            assert!(
-                drop_with(&Fake {
-                    clear_noop: true,
-                    ..fake()
-                })
-                .is_err()
-            );
-            // no_new_privs fails.
-            assert!(
-                drop_with(&Fake {
-                    nnp_fails: true,
-                    ..fake()
-                })
-                .is_err()
-            );
-        }
-    }
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -264,5 +148,121 @@ mod tests {
         drop_capabilities().unwrap();
         drop_capabilities().unwrap();
         assert!(!holds_bind_capability());
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_tests {
+    use super::imp::{Data, NET_BIND_SERVICE, Sys, drop_with};
+    use std::cell::Cell;
+    use std::io::{Error, ErrorKind};
+
+    struct Fake {
+        caps: Cell<bool>,
+        get_fails: bool,
+        clear_fails: bool,
+        clear_noop: bool,
+        nnp_fails: bool,
+        cleared: Cell<u32>,
+    }
+
+    fn fake() -> Fake {
+        Fake {
+            caps: Cell::new(true),
+            get_fails: false,
+            clear_fails: false,
+            clear_noop: false,
+            nnp_fails: false,
+            cleared: Cell::new(0),
+        }
+    }
+
+    impl Sys for Fake {
+        fn get(&self) -> std::io::Result<[Data; 2]> {
+            if self.get_fails {
+                return Err(Error::from(ErrorKind::PermissionDenied));
+            }
+            let bit = if self.caps.get() {
+                1 << NET_BIND_SERVICE
+            } else {
+                0
+            };
+            Ok([
+                Data {
+                    effective: bit,
+                    permitted: bit,
+                    inheritable: 0,
+                },
+                Data::default(),
+            ])
+        }
+        fn clear(&self) -> std::io::Result<()> {
+            self.cleared.set(self.cleared.get() + 1);
+            if self.clear_fails {
+                return Err(Error::from(ErrorKind::PermissionDenied));
+            }
+            if !self.clear_noop {
+                self.caps.set(false);
+            }
+            Ok(())
+        }
+        fn no_new_privs(&self) -> std::io::Result<()> {
+            if self.nnp_fails {
+                Err(Error::from(ErrorKind::PermissionDenied))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn a_held_capability_is_cleared_and_verified() {
+        let f = fake();
+        drop_with(&f).unwrap();
+        assert_eq!(f.cleared.get(), 1);
+        assert!(!f.caps.get());
+    }
+
+    #[test]
+    fn nothing_to_drop_is_fine_and_clears_nothing() {
+        let f = fake();
+        f.caps.set(false);
+        drop_with(&f).unwrap();
+        assert_eq!(f.cleared.get(), 0);
+    }
+
+    #[test]
+    fn every_failure_is_fail_closed() {
+        // capget denied: we can't know, so it is an error, and nothing is assumed dropped.
+        let f = Fake {
+            get_fails: true,
+            ..fake()
+        };
+        assert!(drop_with(&f).is_err());
+        assert_eq!(f.cleared.get(), 0);
+        // capset fails.
+        assert!(
+            drop_with(&Fake {
+                clear_fails: true,
+                ..fake()
+            })
+            .is_err()
+        );
+        // capset "succeeds" but the capability is still there.
+        assert!(
+            drop_with(&Fake {
+                clear_noop: true,
+                ..fake()
+            })
+            .is_err()
+        );
+        // no_new_privs fails.
+        assert!(
+            drop_with(&Fake {
+                nnp_fails: true,
+                ..fake()
+            })
+            .is_err()
+        );
     }
 }

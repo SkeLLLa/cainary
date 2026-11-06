@@ -64,44 +64,6 @@ pub fn text(s: &Setup) -> String {
     t
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn carries_the_real_endpoint() {
-        let s = setup("http://127.0.0.1:4999");
-        assert!(
-            s.claude_code
-                .contains(&"OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4999".to_string())
-        );
-        assert!(s.codex[0].contains("http://127.0.0.1:4999/v1/logs"));
-        assert!(text(&s).contains("4999"));
-        assert!(!text(&s).contains("<port>"));
-        let v6 = setup("http://[::1]:4999");
-        assert!(v6.codex[0].contains("http://[::1]:4999/v1/logs"));
-        assert!(
-            v6.claude_code
-                .iter()
-                .any(|l| l == "OTEL_EXPORTER_OTLP_ENDPOINT=http://[::1]:4999")
-        );
-    }
-
-    #[test]
-    fn text_has_the_documented_sections() {
-        let t = text(&setup("http://127.0.0.1:4318"));
-        for needle in [
-            "Point an agent at it.",
-            "Claude Code (start",
-            "Codex (~/.codex",
-            "Settings can override",
-            "unauthenticated",
-        ] {
-            assert!(t.contains(needle), "{needle}");
-        }
-    }
-}
-
 /// What the takeover instructions are about.
 pub struct Takeover<'a> {
     pub hosts: &'a [String],
@@ -165,6 +127,44 @@ pub fn takeover(t: &Takeover<'_>) -> Vec<String> {
     }
     l.push("The certificate is only trusted for the names above, its key exists only in this process's memory, and it is never installed in a system trust store.".into());
     l
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn carries_the_real_endpoint() {
+        let s = setup("http://127.0.0.1:4999");
+        assert!(
+            s.claude_code
+                .contains(&"OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4999".to_string())
+        );
+        assert!(s.codex[0].contains("http://127.0.0.1:4999/v1/logs"));
+        assert!(text(&s).contains("4999"));
+        assert!(!text(&s).contains("<port>"));
+        let v6 = setup("http://[::1]:4999");
+        assert!(v6.codex[0].contains("http://[::1]:4999/v1/logs"));
+        assert!(
+            v6.claude_code
+                .iter()
+                .any(|l| l == "OTEL_EXPORTER_OTLP_ENDPOINT=http://[::1]:4999")
+        );
+    }
+
+    #[test]
+    fn text_has_the_documented_sections() {
+        let t = text(&setup("http://127.0.0.1:4318"));
+        for needle in [
+            "Point an agent at it.",
+            "Claude Code (start",
+            "Codex (~/.codex",
+            "Settings can override",
+            "unauthenticated",
+        ] {
+            assert!(t.contains(needle), "{needle}");
+        }
+    }
 }
 
 #[cfg(test)]
