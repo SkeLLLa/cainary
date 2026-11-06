@@ -7,6 +7,7 @@ pub mod args;
 pub mod config;
 pub mod host;
 pub mod http;
+pub mod jsonedit;
 pub mod logfile;
 pub mod otlp;
 pub mod output;
