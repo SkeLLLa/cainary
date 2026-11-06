@@ -188,6 +188,14 @@ Ref base: `https://code.claude.com/docs/en/` — `managed-settings`, `server-man
 | policy cache | `<cfg>/policy-limits.json` (internals UNVERIFIED → BE) | same | json | server |
 | env | process env | same | — | environment |
 
+The env tier reads only a fixed list of process variables, besides the `OTEL_EXPORTER_OTLP_*`
+family. For telemetry that is `CLAUDE_CODE_ENABLE_TELEMETRY`, the trace switches, the three
+`OTEL_*_EXPORTER` variables, `OTEL_RESOURCE_ATTRIBUTES`, the `OTEL_LOG_*` content flags,
+`OTEL_LOG_MANAGED_SETTINGS`, and
+`OTEL_METRICS_INCLUDE_{SESSION_ID,ACCOUNT_UUID,VERSION,ENTRYPOINT,RESOURCE_ATTRIBUTES,REPOSITORY}`.
+`OTEL_LOG_MANAGED_SETTINGS` and the `OTEL_METRICS_INCLUDE_*` variables feed only the payload
+preview (CC.3).
+
 The file tier is one document. `managed-settings.json` comes first, then every
 `managed-settings.d/*.json` in alphabetical order (hidden files and non-`.json` names are
 skipped), folded with `merge_dropin` (CC.2). The `.d` listing is recorded, so more than 256
@@ -313,8 +321,7 @@ The value of `OTEL_EXPORTER_OTLP_HEADERS` is never shown, only its names.
 
 | Condition | Signals |
 | --- | --- |
-| `metrics`, `logs`, `traces` or `beta` | usage: "sends usage data to `<hosts>`" |
-| … and (`logs`, `traces` or `beta`), or `OTEL_RESOURCE_ATTRIBUTES` set, or `metrics` with `OTEL_METRICS_INCLUDE_ACCOUNT_UUID` not `false` | + identity |
+| `metrics`, `logs`, `traces` or `beta` | usage, identity: "sends usage data and your identity to `<hosts>`". Every metric data point, event and span carries the standard attributes (`user.id`, `user.email` when signed in, `organization.id`, `session.id`, `terminal.type`; `#standard-attributes`). `OTEL_METRICS_INCLUDE_ACCOUNT_UUID=false` removes only the account IDs. |
 
 Content flags (truthy unless noted) and where each one lands:
 
@@ -325,6 +332,13 @@ Content flags (truthy unless noted) and where each one lands:
 | `OTEL_LOG_TOOL_DETAILS` | tool-details | tool-details | tool-details |
 | `OTEL_LOG_TOOL_CONTENT` | — | file-contents | file-contents |
 | `OTEL_LOG_RAW_API_BODIES` = `1`/`true` | prompts, responses, tool-details, file-contents | — | — |
+| `OTEL_LOG_MANAGED_SETTINGS` | — (preview gate only) | — | — |
+| `OTEL_METRICS_INCLUDE_{SESSION_ID,ACCOUNT_UUID,VERSION,ENTRYPOINT,RESOURCE_ATTRIBUTES,REPOSITORY}` | — (preview gates only; `#metrics-cardinality-control`) | — | — |
+
+`OTEL_LOG_TOOL_DETAILS` is worded "every shell command in full" (`tool_parameters.full_command`,
+`tool_input`; `#tool-result-event`) in the title when the group's tool-details signal comes from
+that flag, and "tool details" when it comes from `OTEL_LOG_RAW_API_BODIES`. Phrases come in the
+order usage data, your identity, your prompts, Claude's responses, the tool phrase, file contents.
 
 - `OTEL_LOG_RAW_API_BODIES` = `file:<dir>` → info, BE: "writes raw API bodies to `<dir>` on this
   machine" (local disk). Any other value → info, BE: "unrecognised value".
@@ -334,6 +348,20 @@ Content flags (truthy unless noted) and where each one lands:
 
 One finding per destination (logs, traces, beta) and contributing source. The evidence lists the
 contributing variables, redacted. Ref `monitoring-usage`.
+
+The detail is the destination's sentence (every data point, event or span is tagged with your
+identity), then, when no endpoint is set for the signal, the sentence that the data goes to the
+OpenTelemetry default on this machine (port 4318, or 4317 for gRPC). After that comes one sentence
+for each content flag the source contributes.
+
+**Payload preview.** The finding that holds a destination's exporter variable
+(`OTEL_LOGS_EXPORTER`, `OTEL_METRICS_EXPORTER`, `OTEL_TRACES_EXPORTER`, `BETA_TRACING_ENDPOINT`)
+carries `payload` (architecture §3.7), built by `rules/otel_preview.rs` from
+`rules/otel_catalog.rs`. Its gates resolve from the same in-effect `CcConfig.env` values; a dropped
+or replaced value never counts. A content-flag finding from another source carries none. The
+`beta` payload is `maybe`. Gate text is built in the core, as `<label>: <state>, because <why>`,
+and every UI prints it as is. The key names in `OTEL_RESOURCE_ATTRIBUTES` (never the values) are
+listed as identity attributes. `payload` is not compared by `--since`.
 
 ### CC.4 Gateways, providers, proxies (effective env + in-effect settings)
 
@@ -537,14 +565,29 @@ exactly one key, `otlp-http` or `otlp-grpc`. That key's table may hold `endpoint
 `otel.trace_exporter` take `none|otlp-http|otlp-grpc`. `otel.metrics_exporter` also takes
 `statsig`, and defaults to `Statsig`.
 
-| Condition | Signals |
-| --- | --- |
-| `otel.exporter` OTLP | tool-details, usage, identity: "sends tool results and session data to `<host>`" |
-| `otel.trace_exporter` OTLP | tool-details, usage, identity: "sends traces to `<host>`" |
-| … and `otel.log_user_prompt = true` with `otel.exporter` OTLP | + prompts |
-| `otel.log_user_prompt = true` with only a trace exporter | info: "prompts would be logged only through `otel.exporter`, which is off" |
-| OTLP `headers` / `tls` client certificate | + identity (names only) |
-| an `Unknown` exporter | info BE: "unrecognised exporter setting" |
+| Condition | Signals | Title |
+| --- | --- | --- |
+| `otel.exporter` OTLP | tool-details, file-contents, usage, identity | parts in this order: "your prompts" (if prompts), "its replies" (if responses), "your commands", "their output", "your account email", joined as "a, b and c": "Codex sends your commands, their output and your account email to `<host>`" |
+| … + `otel.log_user_prompt = true` | + prompts | |
+| … + `otel.log_agent_responses = true` | + responses | |
+| `otel.trace_exporter` OTLP | tool-details, usage, identity, BE | "Codex sends traces of your session to `<host>`" |
+| `log_user_prompt` or `log_agent_responses` with only a trace exporter | info | "Codex would log prompts only through `otel.exporter`, which is off"; "Codex would log its replies only through `otel.exporter`, which is off" |
+| OTLP `headers` / `tls` client certificate | + identity (names only) | |
+| an `Unknown` exporter | info BE: "unrecognised exporter setting" | |
+
+`file-contents` is there because `tool_result.output` is sent by default: reading a file with a
+shell tool puts its contents there.
+
+Detail, logs: "Codex's log export is on. Each tool result carries the command's arguments and up to
+2 KiB of its output (`otel.tool_result.max_bytes`), and events carry your account email and the
+conversation ID." Detail, traces: "Codex's trace export is on. Codex doesn't document span names or
+fields, so what they carry may differ from the log events."
+
+**Payload preview.** The finding for each OTLP exporter carries `payload` (architecture §3.7):
+`logs` for `otel.exporter`, `traces` (`maybe`) for `otel.trace_exporter`. Its gates
+(`otel.log_user_prompt`, `otel.log_agent_responses`, `otel.log_guardian_assessments`) resolve from
+`CxConfig.cfg`: the value is the TOML scalar as text, and the origin and path come from the layer
+that set it.
 
 A missing endpoint reads as "a collector". Hosts only.
 
@@ -555,7 +598,7 @@ A missing endpoint reads as "a collector". Hosts only.
 | `analytics.enabled = false` | info "usage metrics are off" (this turns off custom metrics too) |
 | `metrics_exporter` = `None` | info "usage metrics are off" |
 | `Statsig` (explicit or the default) | vendor: "OpenAI receives anonymous usage metrics by default" (origin vendor-default unless set explicitly) |
-| OTLP | usage: "sends usage metrics to `<host>`". No OpenAI finding |
+| OTLP | usage: "sends usage metrics to `<host>`", with a `metrics` payload. No OpenAI finding |
 | `Unknown` | vendor BE (unlike Swift, an unknown kind doesn't hide the default) |
 
 The vendor row needs Codex to be installed.
@@ -605,7 +648,8 @@ pub struct CxSetting { pub value: Value, pub layer: CxLayerId, pub shadowed: Vec
 /// The dotted keys the resolver resolves; everything else is only listed in policy evidence.
 pub const CX_KEYS: &[&str] = &["model_provider", "model_providers", "openai_base_url",
     "chatgpt_base_url", "notify", "mcp_servers", "hooks", "features", "otel.exporter",
-    "otel.trace_exporter", "otel.metrics_exporter", "otel.log_user_prompt", "analytics.enabled",
+    "otel.trace_exporter", "otel.metrics_exporter", "otel.log_user_prompt",
+    "otel.log_agent_responses", "otel.log_guardian_assessments", "analytics.enabled",
     "profile", "profiles"];
 
 pub struct CxConfig {
