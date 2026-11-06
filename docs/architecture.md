@@ -1008,7 +1008,9 @@ state.
   `check-rust`, `check` (lint + test + ui-test), `core-universal` (release builds for both Apple targets, `lipo` →
   `target/universal/cainary`), `app`, `bundle` (`RELEASE=1` for the universal release app),
   `ui-test`, `scan`, `publish-check` (`cargo publish --workspace --dry-run`), `clean` (also
-  `linux/target`). The app and bundle steps are in macos.md §4. The Linux targets use the
+  `linux/target`). The app and bundle steps are in macos.md §4. Checks for the other OS are skipped with a
+  note, never failed: on Linux, `lint` skips `swift format` and `ui-test` is a no-op; on macOS, `linux-lint`,
+  `linux-test`, `linux-check` and `linux-ui-test` are no-ops (`HOST_OS`, from `uname -s`). The Linux targets use the
   `linux/` workspace through `--manifest-path`: `linux-cli` (static musl `cainary`),
   `linux-build`, `linux-test` (under `dbus-run-session`, `QT_QPA_PLATFORM=offscreen`),
   `linux-fmt`, `linux-lint`, `linux-check` (lint, test, shellcheck, desktop-file and AppStream

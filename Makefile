@@ -29,6 +29,11 @@ CARGO_CMD := $(CARGO_CD) $(CARGO)
 # it then starts itself recursively until memory runs out. Cargo sets CARGO for its own children.
 unexport CARGO
 
+# Checks that need the other OS are skipped with a note instead of failing: Swift (swift format,
+# ui-test) runs only on macOS, the Qt tray checks only on Linux. CI runs each on its own OS.
+HOST_OS := $(shell uname -s)
+skipped = @echo "make $@: skipped, needs $(1) (this is $(HOST_OS))" >&2
+
 SWIFT_FORMAT_PATHS = macos/Sources macos/Tests
 APPLE_TARGETS = aarch64-apple-darwin x86_64-apple-darwin
 
@@ -86,7 +91,11 @@ check-rust:
 lint:
 	$(CARGO_CMD) fmt $(MANIFEST) --all --check
 	$(CARGO_CMD) clippy $(MANIFEST) --workspace --all-targets -- -D warnings
+ifeq ($(HOST_OS),Darwin)
 	@if [ -d macos/Sources ]; then swift format lint --strict --recursive $(SWIFT_FORMAT_PATHS); fi
+else
+	$(call skipped,macOS for swift format)
+endif
 	@if ls packaging/*.sh >/dev/null 2>&1; then shellcheck packaging/*.sh packaging/dist/*.sh packaging/ci/*.sh scripts/*.sh macos/Tests/run.sh macos/Tests/stubs/*.sh; fi
 
 check: lint test ui-test
@@ -159,19 +168,30 @@ linux-build:
 	$(CARGO_CMD) build $(LINUX_MANIFEST) --workspace
 
 # A private session bus for the tray's D-Bus tests, and no display.
+ifeq ($(HOST_OS),Linux)
 linux-test:
 	$(CARGO_CD) dbus-run-session -- env QT_QPA_PLATFORM=offscreen $(CARGO) test --manifest-path "$(CURDIR)/linux/Cargo.toml"
+else
+linux-test:
+	$(call skipped,Linux)
+endif
 
 linux-fmt:
 	$(CARGO_CMD) fmt $(LINUX_MANIFEST) --all
 
+ifeq ($(HOST_OS),Linux)
 linux-lint:
 	$(CARGO_CMD) fmt $(LINUX_MANIFEST) --all --check
 	$(CARGO_CMD) clippy $(LINUX_MANIFEST) --workspace --all-targets -- -D warnings
 	$(CARGO_CMD) check $(LINUX_MANIFEST) -p cainary-tray --no-default-features
+else
+linux-lint:
+	$(call skipped,Linux)
+endif
 
 # appstreamcli reports cid-domain-not-lowercase: the ID ua.SkeLLLa.cAInary is fixed (it is the
 # D-Bus name and the icon and desktop file names). Every other error or warning still fails.
+ifeq ($(HOST_OS),Linux)
 linux-check: linux-lint linux-test
 	shellcheck packaging/linux.sh packaging/dist/install-user.sh packaging/ci/*.sh
 	desktop-file-validate linux/data/ua.SkeLLLa.cAInary.desktop
@@ -183,12 +203,21 @@ linux-check: linux-lint linux-test
 		elif [ $$rc -ne 0 ] && ! echo "$$out" | grep -q 'cid-domain-not-lowercase'; then \
 			echo "$$out"; echo "appstreamcli: validation failed" >&2; exit $$rc; \
 		else echo "appstreamcli: metainfo OK (expected cid-domain-not-lowercase ignored)"; fi
+else
+linux-check:
+	$(call skipped,Linux)
+endif
 
+ifeq ($(HOST_OS),Linux)
 linux-ui-test:
 	mkdir -p target/ui-snapshots/linux
 	$(CARGO_CD) dbus-run-session -- env QT_QPA_PLATFORM=offscreen \
 		CAINARY_UI_SNAPSHOTS="$(CURDIR)/target/ui-snapshots/linux" \
 		$(CARGO) test $(LINUX_MANIFEST) -p cainary-tray --test offscreen
+else
+linux-ui-test:
+	$(call skipped,Linux)
+endif
 
 linux-run: build
 	$(CARGO_CD) env CAINARY_CORE="$(CURDIR)/target/debug/cainary" \
@@ -203,8 +232,13 @@ linux: linux-cli
 		--tray linux/target/release/cainary-tray \
 		--formats $(LINUX_FORMATS) --out dist
 
+ifeq ($(HOST_OS),Darwin)
 ui-test: build
 	sh macos/Tests/run.sh
+else
+ui-test:
+	$(call skipped,macOS)
+endif
 
 scan:
 	$(CARGO_CMD) run $(MANIFEST) --quiet -p cainary -- scan

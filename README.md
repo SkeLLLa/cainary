@@ -409,7 +409,7 @@ container. See [docs/linux.md §8](docs/linux.md#8-build-run-and-test).
 make check-rust                                 # fmt, clippy -D warnings, all tests
 CAINARY_GOLDEN=codex make test                  # only the codex-* golden fixtures
 CAINARY_GOLDEN=codex CAINARY_BLESS=1 make test  # re-record them after an intended change
-make ui-test                                    # macOS app: Swift model, unit checks, snapshots
+make ui-test                                    # macOS app: Swift model, unit checks, snapshots (skipped off macOS)
 ```
 
 `make ui-test` decodes the Rust goldens through the Swift model, runs the unit checks and renders
