@@ -1,4 +1,4 @@
-//! Source-level safety guards (architecture.md §10, guards 1–4).
+//! Source-level safety guards (architecture.md §10, guards 1–4, and N1–N4 for `cainary-net`).
 //!
 //! These are regression checks over marker strings, not proofs. Each file is cut at its first
 //! `#[cfg(test)] mod` (the guarded files keep their test modules last), and whole-line `//`
@@ -93,6 +93,16 @@ const FS_RS: &str = "cainary-core/src/harness/fs.rs";
 const PLATFORM_RS: &str = "cainary-core/src/harness/platform.rs";
 const CLI_MAIN: &str = "cainary-cli/src/main.rs";
 
+const NET_SRC: &str = "cainary-net/src/";
+const NET_SERVER: &str = "cainary-net/src/server.rs";
+const NET_LOGFILE: &str = "cainary-net/src/logfile.rs";
+const NET_REDFLAG_FILE: &str = "cainary-net/src/redflag/file.rs";
+const NET_MAIN: &str = "cainary-net/src/main.rs";
+
+fn in_net(rel: &str) -> bool {
+    rel.starts_with(NET_SRC)
+}
+
 fn in_harness(rel: &str) -> bool {
     rel.starts_with("cainary-core/src/harness/")
 }
@@ -143,7 +153,7 @@ fn banned_std_modules(code: &str) -> Vec<String> {
 fn check_guard1(srcs: &[Src]) -> Vec<String> {
     let mut bad = Vec::new();
     for s in srcs {
-        if in_harness(&s.rel) || s.rel == CLI_MAIN {
+        if in_harness(&s.rel) || s.rel == CLI_MAIN || in_net(&s.rel) {
             continue;
         }
         for hit in banned_std_modules(&s.code) {
@@ -169,6 +179,9 @@ const WRITE_SHAPED: [&str; 10] = [
 fn check_guard2(srcs: &[Src]) -> Vec<String> {
     let mut bad = Vec::new();
     for s in srcs {
+        if in_net(&s.rel) {
+            continue;
+        }
         let code = squash(&s.code);
         if s.rel != FS_RS && s.code.contains("OpenOptions") {
             bad.push(format!("{}: OpenOptions outside harness/fs.rs", s.rel));
@@ -198,7 +211,7 @@ fn check_guard3(srcs: &[Src]) -> Vec<String> {
                 spawns.push((s.rel.clone(), near.contains("/usr/sbin/scutil")));
             }
         }
-        if s.rel != FS_RS && s.code.contains("libc::") {
+        if s.rel != FS_RS && s.rel != NET_LOGFILE && s.code.contains("libc::") {
             bad.push(format!("{}: libc:: outside harness/fs.rs", s.rel));
         }
     }
@@ -211,10 +224,148 @@ fn check_guard3(srcs: &[Src]) -> Vec<String> {
     bad
 }
 
-/// Every package `Cargo.lock` may contain: the two workspace crates and the current
+/// Calls that open or resolve an outbound connection. None may appear anywhere in the net
+/// crate, `server.rs` included: it listens and never dials.
+const NET_BANNED_CALLS: [&str; 10] = [
+    "TcpStream::connect",
+    ".connect(",
+    "connect_timeout",
+    "UdpSocket",
+    "ToSocketAddrs",
+    "to_socket_addrs",
+    "lookup_host",
+    "UnixStream",
+    "UnixDatagram",
+    "os::unix::net",
+];
+
+/// N1: `std::net` only in `server.rs`, and no outbound or resolving call anywhere in the crate.
+fn check_n1(srcs: &[Src]) -> Vec<String> {
+    let mut bad = Vec::new();
+    for s in srcs.iter().filter(|s| in_net(&s.rel)) {
+        if s.rel != NET_SERVER {
+            for hit in banned_std_modules(&s.code) {
+                if hit == "std::net" || hit == "std::{net}" {
+                    bad.push(format!("{}: {hit} outside server.rs", s.rel));
+                }
+            }
+        }
+        let code = squash(&s.code);
+        for call in NET_BANNED_CALLS {
+            if code.contains(call) {
+                bad.push(format!("{}: outbound or resolving call `{call}`", s.rel));
+            }
+        }
+    }
+    bad
+}
+
+/// N2: `std::fs` only in `logfile.rs` (write) and `redflag/file.rs` (read); `OpenOptions` and
+/// write-shaped calls only in `logfile.rs`; `std::env` and `std::process` only in `main.rs`.
+fn check_n2(srcs: &[Src]) -> Vec<String> {
+    let mut bad = Vec::new();
+    for s in srcs.iter().filter(|s| in_net(&s.rel)) {
+        for hit in banned_std_modules(&s.code) {
+            let allowed = match hit.trim_start_matches("std::").trim_matches(['{', '}']) {
+                "fs" => s.rel == NET_LOGFILE || s.rel == NET_REDFLAG_FILE,
+                "env" | "process" => s.rel == NET_MAIN,
+                _ => true, // `net` is N1's
+            };
+            if !allowed {
+                bad.push(format!("{}: {hit} outside its allowed file", s.rel));
+            }
+        }
+        if s.rel != NET_LOGFILE {
+            let code = squash(&s.code);
+            if s.code.contains("OpenOptions") {
+                bad.push(format!("{}: OpenOptions outside logfile.rs", s.rel));
+            }
+            for m in WRITE_SHAPED {
+                if code.contains(m) {
+                    bad.push(format!(
+                        "{}: write-shaped call `{m}` outside logfile.rs",
+                        s.rel
+                    ));
+                }
+            }
+        }
+    }
+    bad
+}
+
+/// N3: no `Command` and no `libc::` in the net crate, except `libc::` in `logfile.rs` (the
+/// open flags and the effective uid). Guard 3's "exactly once" also counts `Command::new`.
+fn check_n3(srcs: &[Src]) -> Vec<String> {
+    let mut bad = Vec::new();
+    for s in srcs.iter().filter(|s| in_net(&s.rel)) {
+        if s.code.contains("Command") {
+            bad.push(format!("{}: `Command` in the net crate", s.rel));
+        }
+        if s.rel != NET_LOGFILE && s.code.contains("libc::") {
+            bad.push(format!("{}: libc:: outside logfile.rs", s.rel));
+        }
+    }
+    bad
+}
+
+/// Dependencies the net crate may declare, in any dependency table.
+const NET_DEPS: &[&str] = &[
+    "aho-corasick",
+    "cainary-core",
+    "libc",
+    "regex",
+    "serde",
+    "serde_json",
+    "toml",
+];
+
+/// N4 (manifests): the core and CLI manifests never mention `cainary-net`; the net manifest
+/// declares only `NET_DEPS` and `publish = false`.
+fn check_n4(core: &str, cli: &str, net: &str) -> Vec<String> {
+    let mut bad = Vec::new();
+    for (name, text) in [("cainary-core", core), ("cainary-cli", cli)] {
+        if text.contains("cainary-net") {
+            bad.push(format!("{name}/Cargo.toml mentions cainary-net"));
+        }
+    }
+    let Ok(v) = toml::from_str::<toml::Value>(net) else {
+        return vec!["cainary-net/Cargo.toml does not parse".to_string()];
+    };
+    let mut tables: Vec<(String, &toml::Value)> = Vec::new();
+    for t in ["dependencies", "dev-dependencies", "build-dependencies"] {
+        if let Some(d) = v.get(t) {
+            tables.push((t.to_string(), d));
+        }
+    }
+    if let Some(targets) = v.get("target").and_then(|t| t.as_table()) {
+        for (cfg, body) in targets {
+            for t in ["dependencies", "dev-dependencies", "build-dependencies"] {
+                if let Some(d) = body.get(t) {
+                    tables.push((format!("target.{cfg}.{t}"), d));
+                }
+            }
+        }
+    }
+    for (table, deps) in tables {
+        for name in deps.as_table().into_iter().flat_map(|t| t.keys()) {
+            if !NET_DEPS.contains(&name.as_str()) {
+                bad.push(format!(
+                    "cainary-net [{table}]: `{name}` is not an allowed dependency"
+                ));
+            }
+        }
+    }
+    let publish = v.get("package").and_then(|p| p.get("publish"));
+    if publish != Some(&toml::Value::Boolean(false)) {
+        bad.push("cainary-net must set `publish = false`".to_string());
+    }
+    bad
+}
+
+/// Packages `cainary` and `cainary-core` may use: the two workspace crates and the current
 /// transitive closure of `serde`, `serde_json`, `toml`, `plist` and `libc`. Adding a crate is
 /// a visible, reviewed change to this list.
-const ALLOWED_PACKAGES: &[&str] = &[
+const CORE_ALLOWED: &[&str] = &[
     "base64",
     "cainary",
     "cainary-core",
@@ -250,6 +401,25 @@ const ALLOWED_PACKAGES: &[&str] = &[
     "zmij",
 ];
 
+/// Packages only `cainary-net` may use (`regex`, `aho-corasick`): in the lock, but never in the
+/// dependency closure of `cainary` or `cainary-core`. `memchr` is already in the core's closure
+/// through `serde_json`, so it isn't here.
+const NET_ONLY: &[&str] = &[
+    "aho-corasick",
+    "cainary-net",
+    "regex",
+    "regex-automata",
+    "regex-syntax",
+];
+
+/// Closure rules: a named package set, and the roots whose dependency closure must not touch
+/// it. A further set (goal 3's `MITM_ONLY`) is one more row, plus its names in `ALLOWED_SETS`.
+const CLOSURE_RULES: &[(&str, &[&str], &[&str])] =
+    &[("NET_ONLY", NET_ONLY, &["cainary", "cainary-core"])];
+
+/// Every set the lock may draw from.
+const ALLOWED_SETS: &[&[&str]] = &[CORE_ALLOWED, NET_ONLY];
+
 fn lock_packages(lock: &str) -> Vec<String> {
     let v: toml::Value = toml::from_str(lock).expect("Cargo.lock parses as TOML");
     v.get("package")
@@ -265,12 +435,70 @@ fn lock_packages(lock: &str) -> Vec<String> {
         .collect()
 }
 
-fn check_guard4(lock: &str) -> Vec<String> {
-    lock_packages(lock)
-        .into_iter()
-        .filter(|n| !ALLOWED_PACKAGES.contains(&n.as_str()))
-        .map(|n| format!("Cargo.lock: package `{n}` is not in the allowlist"))
+/// The lock's `[[package]]` entries: name → the names it depends on.
+fn lock_graph(lock: &str) -> Vec<(String, Vec<String>)> {
+    let v: toml::Value = toml::from_str(lock).expect("Cargo.lock parses as TOML");
+    v.get("package")
+        .and_then(|p| p.as_array())
+        .expect("Cargo.lock has [[package]] entries")
+        .iter()
+        .map(|p| {
+            let name = p
+                .get("name")
+                .and_then(|n| n.as_str())
+                .expect("package has a name");
+            let deps = p
+                .get("dependencies")
+                .and_then(|d| d.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|d| d.as_str())
+                // "name", "name 1.2.3" or "name 1.2.3 (registry+…)".
+                .map(|d| d.split(' ').next().unwrap_or(d).to_string())
+                .collect();
+            (name.to_string(), deps)
+        })
         .collect()
+}
+
+/// Every name reachable from `root`, `root` included.
+fn closure(graph: &[(String, Vec<String>)], root: &str) -> Vec<String> {
+    let mut seen = vec![root.to_string()];
+    let mut stack = vec![root.to_string()];
+    while let Some(n) = stack.pop() {
+        for (name, deps) in graph {
+            if *name == n {
+                for d in deps {
+                    if !seen.contains(d) {
+                        seen.push(d.clone());
+                        stack.push(d.clone());
+                    }
+                }
+            }
+        }
+    }
+    seen
+}
+
+fn check_guard4(lock: &str) -> Vec<String> {
+    let mut bad: Vec<String> = lock_packages(lock)
+        .into_iter()
+        .filter(|n| !ALLOWED_SETS.iter().any(|set| set.contains(&n.as_str())))
+        .map(|n| format!("Cargo.lock: package `{n}` is not in the allowlist"))
+        .collect();
+    let graph = lock_graph(lock);
+    for (set, packages, roots) in CLOSURE_RULES {
+        for root in *roots {
+            for reached in closure(&graph, root) {
+                if packages.contains(&reached.as_str()) && reached != *root {
+                    bad.push(format!(
+                        "Cargo.lock: `{root}` reaches `{reached}`, which is {set} only"
+                    ));
+                }
+            }
+        }
+    }
+    bad
 }
 
 fn assert_clean(guard: &str, bad: Vec<String>) {
@@ -290,6 +518,36 @@ fn guard2_open_options_only_in_fs_and_no_writes() {
 #[test]
 fn guard3_one_subprocess_and_libc_only_in_fs() {
     assert_clean("guard 3", check_guard3(&sources()));
+}
+
+#[test]
+fn n1_net_crate_never_dials_and_std_net_stays_in_server() {
+    assert_clean("N1", check_n1(&sources()));
+}
+
+#[test]
+fn n2_net_crate_io_stays_in_its_files() {
+    assert_clean("N2", check_n2(&sources()));
+}
+
+#[test]
+fn n3_net_crate_has_no_subprocess_or_libc() {
+    assert_clean("N3", check_n3(&sources()));
+}
+
+#[test]
+fn n4_net_manifests() {
+    let crates = crates_dir();
+    let read =
+        |c: &str| fs::read_to_string(crates.join(c).join("Cargo.toml")).expect("read manifest");
+    assert_clean(
+        "N4",
+        check_n4(
+            &read("cainary-core"),
+            &read("cainary-cli"),
+            &read("cainary-net"),
+        ),
+    );
 }
 
 #[test]
@@ -416,5 +674,240 @@ mod fires {
         let bad = check_guard4(lock);
         assert_eq!(bad.len(), 1);
         assert!(bad[0].contains("reqwest"));
+    }
+
+    fn net(rel: &str, code: &str) -> Vec<Src> {
+        src(&format!("cainary-net/src/{rel}"), code)
+    }
+
+    #[test]
+    fn guards_1_to_3_leave_the_net_crate_to_its_own_rules() {
+        let s = net(
+            "server.rs",
+            "use std::net::TcpListener;\nlet f = OpenOptions::new();",
+        );
+        assert!(check_guard1(&s).is_empty());
+        assert!(check_guard2(&s).is_empty());
+    }
+
+    #[test]
+    fn n1_std_net_outside_server() {
+        for rel in ["output.rs", "args.rs", "main.rs", "redflag/mod.rs"] {
+            assert_eq!(
+                check_n1(&net(rel, "use std::net::IpAddr;")).len(),
+                1,
+                "{rel}"
+            );
+        }
+        assert_eq!(check_n1(&net("otlp.rs", "use std::{io, net};")).len(), 1);
+        assert!(check_n1(&net("server.rs", "use std::net::TcpListener;")).is_empty());
+    }
+
+    #[test]
+    fn n1_no_outbound_calls_anywhere() {
+        for call in [
+            "let s = TcpStream::connect(a);",
+            "sock.connect(addr);",
+            "TcpStream :: connect_timeout(&a, d);",
+            "let u = UdpSocket::bind(a);",
+            "use std::net::ToSocketAddrs;",
+            "let a = host.to_socket_addrs();",
+            "let s = std::os::unix::net::UnixStream::connect(p);",
+        ] {
+            assert!(!check_n1(&net("server.rs", call)).is_empty(), "{call}");
+            assert!(!check_n1(&net("otlp.rs", call)).is_empty(), "{call}");
+        }
+        assert!(check_n1(&net("server.rs", "let l = TcpListener::bind(addr);")).is_empty());
+        // Other crates are not N1's business.
+        assert!(check_n1(&src("cainary-core/src/analysis.rs", "x.connect(a);")).is_empty());
+    }
+
+    #[test]
+    fn n2_fs_env_process_and_writes() {
+        assert_eq!(check_n2(&net("output.rs", "use std::fs;")).len(), 1);
+        assert_eq!(
+            check_n2(&net("server.rs", "let a = std::env::args();")).len(),
+            1
+        );
+        assert_eq!(
+            check_n2(&net("args.rs", "use std::process::exit;")).len(),
+            1
+        );
+        assert_eq!(
+            check_n2(&net("redflag/mod.rs", "use std::{fs, io};")).len(),
+            1
+        );
+        assert!(check_n2(&net("logfile.rs", "use std::fs::File;")).is_empty());
+        assert!(check_n2(&net("redflag/file.rs", "std::fs::File::open(p);")).is_empty());
+        assert!(check_n2(&net("main.rs", "std::env::args(); std::process::exit(0);")).is_empty());
+        // main.rs doesn't get the file system, redflag/file.rs doesn't get the environment.
+        assert_eq!(check_n2(&net("main.rs", "use std::fs;")).len(), 1);
+        assert_eq!(
+            check_n2(&net("redflag/file.rs", "std::env::var(x);")).len(),
+            1
+        );
+        // The file reader reads only.
+        assert_eq!(
+            check_n2(&net("redflag/file.rs", "let f = OpenOptions::new();")).len(),
+            1
+        );
+        assert_eq!(
+            check_n2(&net("redflag/file.rs", "std::fs::write(p, b);")).len(),
+            1
+        );
+        assert_eq!(
+            check_n2(&net("otlp.rs", "let f = OpenOptions::new();")).len(),
+            1
+        );
+        for m in WRITE_SHAPED {
+            assert_eq!(
+                check_n2(&net("output.rs", &format!("x{m}y"))).len(),
+                1,
+                "{m}"
+            );
+            assert!(
+                check_n2(&net("logfile.rs", &format!("x{m}y"))).is_empty(),
+                "{m}"
+            );
+        }
+    }
+
+    #[test]
+    fn n3_no_command_and_libc_only_in_logfile() {
+        assert_eq!(
+            check_n3(&net("server.rs", "let c = Command::new(\"ls\");")).len(),
+            1
+        );
+        assert_eq!(
+            check_n3(&net("main.rs", "use std::process::Command as C;")).len(),
+            1
+        );
+        assert_eq!(
+            check_n3(&net("otlp.rs", "let n = libc::getuid();")).len(),
+            1
+        );
+        assert!(check_n3(&net("logfile.rs", "let n = libc::geteuid();")).is_empty());
+        // Guard 3 also stops libc and counts Command::new across the whole workspace.
+        let mut s = net("server.rs", "libc::getuid();");
+        s.extend(src(PLATFORM_RS, "Command::new(\"/usr/sbin/scutil\");"));
+        assert_eq!(check_guard3(&s).len(), 1);
+        let mut s = net("logfile.rs", "libc::geteuid();");
+        s.extend(src(PLATFORM_RS, "Command::new(\"/usr/sbin/scutil\");"));
+        assert!(check_guard3(&s).is_empty());
+        let mut s = net("server.rs", "Command::new(\"ls\");");
+        s.extend(src(PLATFORM_RS, "Command::new(\"/usr/sbin/scutil\");"));
+        assert!(!check_guard3(&s).is_empty());
+    }
+
+    const NET_OK: &str = "[package]\nname = \"cainary-net\"\npublish = false\n[dependencies]\nregex.workspace = true\nserde_json.workspace = true\n";
+
+    #[test]
+    fn n4_manifests() {
+        let plain = "[package]\nname = \"x\"\n[dependencies]\nserde = \"1\"\n";
+        assert!(check_n4(plain, plain, NET_OK).is_empty());
+        let bad = check_n4(
+            "[dependencies]\ncainary-net = { path = \"../cainary-net\" }",
+            plain,
+            NET_OK,
+        );
+        assert_eq!(bad.len(), 1);
+        assert_eq!(check_n4(plain, "# uses cainary-net", NET_OK).len(), 1);
+        let extra = format!("{NET_OK}reqwest = \"1\"\n");
+        assert!(check_n4(plain, plain, &extra)[0].contains("reqwest"));
+        let dev = format!("{NET_OK}[dev-dependencies]\nureq = \"1\"\n");
+        assert!(check_n4(plain, plain, &dev)[0].contains("ureq"));
+        let target = format!("{NET_OK}[target.'cfg(unix)'.dependencies]\nhyper = \"1\"\n");
+        assert!(check_n4(plain, plain, &target)[0].contains("hyper"));
+        let build = format!("{NET_OK}[build-dependencies]\ncc = \"1\"\n");
+        assert!(check_n4(plain, plain, &build)[0].contains("cc"));
+        for no_publish in [
+            "[package]\nname = \"cainary-net\"\n[dependencies]\nregex = \"1\"\n",
+            "[package]\nname = \"cainary-net\"\npublish = true\n",
+            "[package]\nname = \"cainary-net\"\npublish.workspace = true\n",
+        ] {
+            assert!(
+                check_n4(plain, plain, no_publish)
+                    .iter()
+                    .any(|b| b.contains("publish")),
+                "{no_publish}"
+            );
+        }
+    }
+
+    const LOCK: &str = "[[package]]\nname = \"cainary\"\nversion = \"1\"\ndependencies = [\"cainary-core\", \"serde_json 1.0.0\"]\n\n\
+        [[package]]\nname = \"cainary-core\"\nversion = \"1\"\ndependencies = [\"serde_json 1.0.0\"]\n\n\
+        [[package]]\nname = \"serde_json\"\nversion = \"1.0.0\"\ndependencies = [\"memchr\"]\n\n\
+        [[package]]\nname = \"memchr\"\nversion = \"2\"\n\n\
+        [[package]]\nname = \"cainary-net\"\nversion = \"1\"\ndependencies = [\"cainary-core\", \"regex\"]\n\n\
+        [[package]]\nname = \"regex\"\nversion = \"1\"\ndependencies = [\"regex-automata\", \"aho-corasick 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)\"]\n\n\
+        [[package]]\nname = \"regex-automata\"\nversion = \"1\"\ndependencies = [\"memchr\"]\n\n\
+        [[package]]\nname = \"aho-corasick\"\nversion = \"1.0.0\"\ndependencies = [\"memchr\"]\n";
+
+    #[test]
+    fn net_only_packages_are_allowed_in_the_lock_but_not_reachable_from_the_core() {
+        assert!(check_guard4(LOCK).is_empty(), "{:?}", check_guard4(LOCK));
+    }
+
+    #[test]
+    fn closure_fires_when_the_core_or_cli_reaches_a_net_only_package() {
+        // Directly, and through a third package.
+        let direct = LOCK.replace("dependencies = [\"serde_json 1.0.0\"]\n\n[[package]]\nname = \"serde_json\"", "dependencies = [\"serde_json 1.0.0\", \"regex\"]\n\n[[package]]\nname = \"serde_json\"");
+        let bad = check_guard4(&direct);
+        assert!(
+            bad.iter()
+                .any(|b| b.contains("`cainary-core` reaches `regex`")),
+            "{bad:?}"
+        );
+        assert!(
+            bad.iter()
+                .any(|b| b.contains("`cainary` reaches `regex-automata`")),
+            "{bad:?}"
+        );
+        let indirect = LOCK.replace(
+            "dependencies = [\"memchr\"]\n\n[[package]]\nname = \"memchr\"",
+            "dependencies = [\"memchr\", \"aho-corasick\"]\n\n[[package]]\nname = \"memchr\"",
+        );
+        assert!(
+            check_guard4(&indirect)
+                .iter()
+                .any(|b| b.contains("aho-corasick"))
+        );
+        let cli_only = LOCK.replace(
+            "dependencies = [\"cainary-core\", \"serde_json 1.0.0\"]",
+            "dependencies = [\"cainary-core\", \"regex\"]",
+        );
+        assert!(
+            check_guard4(&cli_only)
+                .iter()
+                .any(|b| b.contains("`cainary` reaches `regex`"))
+        );
+        // Net may of course use them, and the net crate reaching core is fine.
+        assert!(!check_guard4(LOCK).iter().any(|b| b.contains("cainary-net")));
+    }
+
+    #[test]
+    fn unknown_package_still_fires_next_to_net_only_ones() {
+        let lock = format!("{LOCK}\n[[package]]\nname = \"reqwest\"\nversion = \"0.12.0\"\n");
+        let bad = check_guard4(&lock);
+        assert_eq!(bad.len(), 1);
+        assert!(bad[0].contains("reqwest"));
+    }
+
+    #[test]
+    fn closure_rules_are_a_table() {
+        // A third set is one more row: this checks the walk on a made-up one.
+        let graph = lock_graph(LOCK);
+        let reach = closure(&graph, "cainary-net");
+        for n in [
+            "cainary-core",
+            "regex",
+            "regex-automata",
+            "aho-corasick",
+            "memchr",
+            "serde_json",
+        ] {
+            assert!(reach.iter().any(|r| r == n), "{n}");
+        }
+        assert!(!closure(&graph, "cainary").iter().any(|r| r == "regex"));
     }
 }
