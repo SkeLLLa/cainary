@@ -410,16 +410,29 @@ fn busy(stream: TcpStream) {
     let _ = stream.shutdown(Shutdown::Both);
 }
 
-/// The socket plus the clocks: a deadline checked before every read, a read timeout clipped to
+/// One connection's byte stream: plain TCP today, TLS over TCP in takeover mode. Requests and
+/// responses go through this one object; `tcp()` is the socket underneath, for timeouts and
+/// shutdown.
+trait Wire: Read + Write {
+    fn tcp(&self) -> &TcpStream;
+}
+
+impl Wire for TcpStream {
+    fn tcp(&self) -> &TcpStream {
+        self
+    }
+}
+
+/// The stream plus the clocks: a deadline checked before every read, a read timeout clipped to
 /// what's left of it, and the per-request wire budget.
-struct Guarded {
-    stream: TcpStream,
+struct Guarded<S: Wire> {
+    stream: S,
     deadline: Cell<Instant>,
     read_timeout: Duration,
     wire_left: Cell<usize>,
 }
 
-impl Read for Guarded {
+impl<S: Wire> Read for Guarded<S> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let now = Instant::now();
         let deadline = self.deadline.get();
@@ -431,6 +444,7 @@ impl Read for Guarded {
             return Err(io::Error::from(io::ErrorKind::FileTooLarge));
         }
         self.stream
+            .tcp()
             .set_read_timeout(Some(self.read_timeout.min(deadline - now)))?;
         let take = buf.len().min(left);
         let n = self.stream.read(&mut buf[..take])?;
@@ -444,12 +458,9 @@ enum Next {
     Close { linger: bool },
 }
 
-fn serve(stream: TcpStream, sh: &Shared) {
-    let _ = stream.set_nodelay(true);
-    let _ = stream.set_write_timeout(Some(sh.t.write_timeout));
-    let Ok(writer) = stream.try_clone() else {
-        return;
-    };
+fn serve<S: Wire>(stream: S, sh: &Shared) {
+    let _ = stream.tcp().set_nodelay(true);
+    let _ = stream.tcp().set_write_timeout(Some(sh.t.write_timeout));
     let mut reader = BufReader::with_capacity(
         8192,
         Guarded {
@@ -470,12 +481,12 @@ fn serve(stream: TcpStream, sh: &Shared) {
         let g = reader.get_ref();
         g.wire_left.set(sh.t.wire_budget);
         g.deadline.set(Instant::now() + sh.t.request_deadline);
-        match request(&mut reader, &writer, sh) {
+        match request(&mut reader, sh) {
             Next::KeepAlive => {}
             Next::Close { linger } => break linger,
         }
     };
-    let stream = &reader.get_ref().stream;
+    let stream = reader.get_ref().stream.tcp();
     let _ = stream.shutdown(Shutdown::Write);
     if linger {
         // Read what the client is still sending, briefly, so closing doesn't turn into a reset
@@ -519,14 +530,19 @@ impl Shared {
     }
 }
 
-fn write_response(w: &TcpStream, r: &Response) -> bool {
-    (&*w).write_all(&r.to_bytes()).is_ok()
+fn send<S: Wire>(r: &mut BufReader<Guarded<S>>, bytes: &[u8]) -> bool {
+    let s = &mut r.get_mut().stream;
+    s.write_all(bytes).and_then(|()| s.flush()).is_ok()
+}
+
+fn write_response<S: Wire>(r: &mut BufReader<Guarded<S>>, resp: &Response) -> bool {
+    send(r, &resp.to_bytes())
 }
 
 /// Answers a rejection and reports it.
-fn reject(
+fn reject<S: Wire>(
     sh: &Shared,
-    w: &TcpStream,
+    w: &mut BufReader<Guarded<S>>,
     r: Response,
     method: Option<&str>,
     path: Option<&str>,
@@ -538,35 +554,38 @@ fn reject(
     Next::Close { linger: true }
 }
 
-fn request(reader: &mut BufReader<Guarded>, w: &TcpStream, sh: &Shared) -> Next {
+fn request<S: Wire>(reader: &mut BufReader<Guarded<S>>, sh: &Shared) -> Next {
     let head = match http::read_head(reader, &sh.t.limits) {
         Ok(h) => h,
         Err(HttpError::Bad { status, message }) => {
             return reject(
                 sh,
-                w,
+                reader,
                 Response::error(status, &message),
                 None,
                 None,
                 &message,
             );
         }
-        Err(HttpError::Io(e)) => return io_close(sh, w, &e),
+        Err(HttpError::Io(e)) => return io_close(sh, reader, &e),
         Err(HttpError::Eof) => return Next::Close { linger: false },
     };
     let method = Some(head.method.as_str());
     let path = otlp::known_path(head.path());
     let deadline = reader.get_ref().deadline.get();
-    let deny = |status: u16, message: &str| {
-        reject(
-            sh,
-            w,
-            Response::error(status, message),
-            method,
-            path,
-            message,
-        )
-    };
+    macro_rules! deny {
+        ($status:expr, $message:expr) => {{
+            let message: &str = $message;
+            reject(
+                sh,
+                reader,
+                Response::error($status, message),
+                method,
+                path,
+                message,
+            )
+        }};
+    }
 
     // DNS rebinding and browsers (design §14.4): before any body is read or 100 sent.
     let hosts: Vec<&str> = head
@@ -577,55 +596,55 @@ fn request(reader: &mut BufReader<Guarded>, w: &TcpStream, sh: &Shared) -> Next 
         .collect();
     match hosts.as_slice() {
         [h] if sh.hosts.iter().any(|a| a.eq_ignore_ascii_case(h)) => {}
-        [_] => return deny(421, "unexpected Host"),
-        _ => return deny(400, "exactly one Host header is required"),
+        [_] => return deny!(421, "unexpected Host"),
+        _ => return deny!(400, "exactly one Host header is required"),
     }
     if head
         .headers
         .iter()
         .any(|(k, _)| k == "origin" || k.starts_with("sec-fetch-"))
     {
-        return deny(403, "browser requests are refused");
+        return deny!(403, "browser requests are refused");
     }
 
     let signal = match otlp::route(&head.method, head.path()) {
         Route::Signal(s) => s,
-        Route::NotFound => return deny(404, "not found"),
+        Route::NotFound => return deny!(404, "not found"),
         Route::NotAllowed => {
             let r = Response::error(405, "method not allowed").with_header("Allow", "POST");
-            return reject(sh, w, r, method, path, "method not allowed");
+            return reject(sh, reader, r, method, path, "method not allowed");
         }
     };
     if let Err(rej) = otlp::check_content(&head) {
-        return deny(rej.status, rej.message);
+        return deny!(rej.status, rej.message);
     }
     let framing = match http::framing(&head, &sh.t.limits) {
         Ok(f) => f,
-        Err(HttpError::Bad { status, message }) => return deny(status, &message),
+        Err(HttpError::Bad { status, message }) => return deny!(status, &message),
         Err(_) => return Next::Close { linger: false },
     };
 
     // The job permit comes before the body is allocated.
     let Some(permit) = sh.jobs.acquire(deadline) else {
-        return deny(503, "busy");
+        return deny!(503, "busy");
     };
-    if head.expects_continue() && (&*w).write_all(http::CONTINUE).is_err() {
+    if head.expects_continue() && !send(reader, http::CONTINUE) {
         return Next::Close { linger: false };
     }
     let body = match http::read_body(reader, framing, &sh.t.limits) {
         Ok(b) => b,
-        Err(HttpError::Bad { status, message }) => return deny(status, &message),
-        Err(HttpError::Io(e)) => return io_close(sh, w, &e),
+        Err(HttpError::Bad { status, message }) => return deny!(status, &message),
+        Err(HttpError::Io(e)) => return io_close(sh, reader, &e),
         Err(HttpError::Eof) => return Next::Close { linger: false },
     };
     let doc = match otlp::parse(&body) {
         Ok(d) => d,
-        Err(m) => return deny(400, &m),
+        Err(m) => return deny!(400, &m),
     };
     let bytes = body.len();
     let prepared = match otlp::process(signal, bytes, &doc, &sh.ctx) {
         Ok(p) => p,
-        Err(f) => return deny(f.status(), &f.message()),
+        Err(f) => return deny!(f.status(), &f.message()),
     };
     drop(doc);
     drop(body);
@@ -638,12 +657,12 @@ fn request(reader: &mut BufReader<Guarded>, w: &TcpStream, sh: &Shared) -> Next 
     let sizes: Vec<usize> = events.iter().map(Event::size).collect();
     let permit = match sh.queue.reserve(&sizes, deadline) {
         Ok(p) => p,
-        Err(Refused::TooLarge) => return deny(413, "batch too large to show"),
-        Err(Refused::Timeout) => return deny(503, "busy"),
+        Err(Refused::TooLarge) => return deny!(413, "batch too large to show"),
+        Err(Refused::Timeout) => return deny!(503, "busy"),
     };
     let keep = head.keep_alive();
     let resp = Response::json(200, "{}".to_string(), keep);
-    if !write_response(w, &resp) {
+    if !write_response(reader, &resp) {
         return Next::Close { linger: false };
     }
     permit.send(events);
@@ -655,7 +674,7 @@ fn request(reader: &mut BufReader<Guarded>, w: &TcpStream, sh: &Shared) -> Next 
 }
 
 /// A read failed: the wire budget is answered with 413, timeouts and resets just close.
-fn io_close(sh: &Shared, w: &TcpStream, e: &io::Error) -> Next {
+fn io_close<S: Wire>(sh: &Shared, w: &mut BufReader<Guarded<S>>, e: &io::Error) -> Next {
     if e.kind() == io::ErrorKind::FileTooLarge {
         return reject(
             sh,
