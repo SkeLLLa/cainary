@@ -951,3 +951,148 @@ fn the_default_binds_v4_then_v6_on_the_same_port() {
     }
     srv.shutdown();
 }
+
+// ── goldens ────────────────────────────────────────────────────────────────────────────────
+
+fn fixture(rel: &str) -> Vec<u8> {
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../cainary-core/tests/otel-payloads")
+        .join(rel);
+    std::fs::read(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+}
+
+/// The stream for one fixture: hello, batch, alerts. `ts`, `generator` and the port are masked.
+fn golden_text(out: &Buf, port: u16) -> String {
+    let mut s = String::new();
+    for mut v in out.lines() {
+        v["ts"] = json!("<ts>");
+        if v["type"] == "hello" {
+            v["generator"] = json!("<generator>");
+        }
+        s.push_str(&v.to_string().replace(&port.to_string(), "<port>"));
+        s.push('\n');
+    }
+    s
+}
+
+fn check_golden(name: &str, fixture_rel: &str, path: &str, batches: usize) {
+    let (srv, out) = start();
+    let r = post_with(
+        srv.addrs[0],
+        path,
+        "Content-Type: application/json\r\n",
+        &fixture(fixture_rel),
+    )
+    .expect("a reply");
+    assert_eq!((r.status, r.body.as_str()), (200, "{}"), "{name}");
+    out.wait_for("batch", batches);
+    let got = golden_text(&out, srv.port);
+    srv.shutdown();
+    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/golden")
+        .join(format!("{name}.jsonl"));
+    if std::env::var_os("CAINARY_BLESS").is_some() {
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, &got).unwrap();
+        return;
+    }
+    let want = std::fs::read_to_string(&file)
+        .unwrap_or_else(|e| panic!("{}: {e} (run with CAINARY_BLESS=1)", file.display()));
+    assert!(
+        got == want,
+        "{name} differs from {}; re-bless with CAINARY_BLESS=1",
+        file.display()
+    );
+}
+
+#[test]
+fn golden_claude_code_logs() {
+    check_golden(
+        "claude-code-2.1.316.logs",
+        "claude-code-2.1.316/logs.json",
+        "/v1/logs",
+        1,
+    );
+}
+
+#[test]
+fn golden_claude_code_metrics() {
+    check_golden(
+        "claude-code-2.1.316.metrics",
+        "claude-code-2.1.316/metrics.json",
+        "/v1/metrics",
+        1,
+    );
+}
+
+#[test]
+fn golden_codex_logs() {
+    check_golden(
+        "codex-0.166.0.logs",
+        "codex-0.166.0/logs.json",
+        "/v1/logs",
+        1,
+    );
+}
+
+#[test]
+fn fixtures_classify_against_their_catalogs_and_stream_masked() {
+    let (srv, out) = start();
+    let a = srv.addrs[0];
+    for (rel, path) in [
+        ("claude-code-2.1.316/logs.json", "/v1/logs"),
+        ("claude-code-2.1.316/metrics.json", "/v1/metrics"),
+        ("codex-0.166.0/logs.json", "/v1/logs"),
+    ] {
+        let r = post_with(a, path, "Content-Type: application/json\r\n", &fixture(rel)).unwrap();
+        assert_eq!(r.status, 200, "{rel}");
+    }
+    let batches = out.wait_for("batch", 3);
+    assert_eq!(batches.len(), 3);
+    let by = |catalog: &str, signal: &str| {
+        batches
+            .iter()
+            .find(|b| b["catalog"] == catalog && b["signal"] == signal)
+            .unwrap_or_else(|| panic!("no {catalog} {signal} batch"))
+            .clone()
+    };
+    let cl = by("claude-code 2.1.316", "logs");
+    assert_eq!(cl["vendor"], "claude-code");
+    assert_eq!(
+        cl["notInCatalog"], 0,
+        "the drift test keeps the fixtures inside the catalog"
+    );
+    assert!(
+        cl["summary"]["identity"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|k| k == "user.email")
+    );
+    let tool_result = cl["summary"]["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "claude_code.tool_result")
+        .unwrap();
+    assert_eq!(tool_result["known"], true);
+    assert!(tool_result["what"].is_string());
+    let content = tool_result["attrs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["key"] == "tool_parameters")
+        .unwrap();
+    assert_eq!(content["group"], "content");
+    assert_eq!(content["flag"], "OTEL_LOG_TOOL_DETAILS");
+    let m = by("claude-code 2.1.316", "metrics");
+    let rec = &m["resources"][0]["scopes"][0]["records"][0];
+    assert_eq!(rec["kind"], "metric");
+    assert!(rec["metricType"].is_string());
+    let cx = by("codex 0.166.0", "logs");
+    assert_eq!(cx["vendor"], "codex");
+    assert_eq!(cx["notInCatalog"], 0);
+    // Sanitized fixtures hold placeholders: nothing may alert.
+    assert!(out.lines().iter().all(|l| l["type"] != "alert"));
+    srv.shutdown();
+}

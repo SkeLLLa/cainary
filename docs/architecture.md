@@ -1243,26 +1243,31 @@ true` is set, and the `summary` always stays.
 | `alert` | `seq`, `pattern`, `preset`, `signal`, `event` (record name or `null`), `events` (up to 8 names), `attribute` (key label or `null`), `where` (`key`, `value`, `body`, `resource`, `scope` or `name`), `count`, `match` |
 | `error` | `source`, then either `status`, `method`, `path`, `message` (for `http`) or `dropped`, `message`, or `message` alone |
 
-- `summary` is `{identity: [keys], resource: [keys], records: [{name, kind, count, known, attrs:
-  [{key, group, known}]}]}`: what a GUI draws. `resources` is the raw tree, shown only under "Raw
-  records": `[{attrs: [F], scopes: [{name, version, records: [{name, kind, known, attrs: [F]}]}]}]`.
-  `kind` is `event`, `metric` (one record per data point), `span` or `span-event`.
-- `F` is `{key, group, known, type, len?, value}`: `type` is `string`, `int`, `double`, `bool`,
-  `array`, `kvlist`, `bytes` or `empty`; `len` is the character, item or key count when there is
-  one; `value` is always a string, masked unless `showValues` (§12.3). `group` is `null` when the
-  key isn't classified.
+- `summary` is `{identity: [keys], resource: [keys], records: [{name, kind, count, known, what?,
+  attrs: [{key, group, flag?, known}]}]}`: what a GUI draws. `identity` and `resource` list the
+  keys the catalog puts in those groups; `what` is the catalog's one-line description; `flag` names
+  the setting that gates a content attribute. `resources` is the raw tree, shown only under "Raw
+  records": `[{attrs: [F], scopes: [{name, version, records: [{name, kind, known, unit?,
+  metricType?, span?, attrs: [F]}]}]}]`. `kind` is `event`, `metric` (one record per data point,
+  with `unit` from the catalog and `metricType` `sum`, `gauge`, `histogram`,
+  `exponentialHistogram` or `summary`), `span` or `span-event` (with `span`, its span's name).
+- `F` is `{key, group, flag?, known, type, len?, value}`: `type` is `string`, `int`, `double`,
+  `bool`, `array`, `kvlist`, `bytes` or `empty`; `len` is the character, item or key count when
+  there is one; `value` is always a string, masked unless `showValues` (§12.3). `group` is
+  `identity`, `resource`, `event` or `content`, and `null` when the key isn't in the catalog.
+- The vendor comes from `service.name` (`claude-code`, `claude-code-desktop`, `codex*`), else from
+  the scope name, else it is `null` and every record counts in `notInCatalog`. Names (record, key,
+  scope, service) print verbatim only when they are exact catalog entries, or pass the name rule
+  after a complete red-flag scan (§12.3); a wildcard catalog entry such as `vcs.ref.head.*` still
+  classifies its keys (`known`, `group`) but they take the name rule.
 - A rejected request emits no `batch`, only an `error` line.
 
-> **Status of the catalog fields.** The classifier that matches records against the vendor
-> catalog (`rules/otel_classify.rs`, design §5) isn't merged yet, so the net crate's structure
-> walk stands in for it. Until it lands, `vendor` is inferred from `service.name` only,
-> `catalog` is `null`, `notInCatalog` is `0`, `known` is `false` and `group` is `null`
-> everywhere, `summary.identity` is empty, and attributes carry no `flag`. These keys are part of
-> v1 now, so filling them in later is an additive change.
-
-**Text mode** (no `--json`) prints per batch a header line (`── logs · claude-code · 12 records ·
-12:17:49Z`), one `resource` line, one line per record name with its count and its attribute
-keys, and one `⚠ red flag <name>: …` line per alert. The setup lines go to stderr at startup.
+**Text mode** (no `--json`) prints per batch a header line (`── logs · claude-code 2.1.316 · 12
+records · 12:17:49Z`), a `resource` line, an `identity` line ("on every record"), then per record
+name its count and the catalog's description, with `event`, `content` (each content attribute
+followed by its gating flag) and `NOT IN CATALOG` lines taken from the first record of that name,
+and one `⚠ red flag <name>: …` line per alert. Every payload-derived string is escaped (§12.3),
+and retained text per batch is capped at 256 KiB. The setup lines go to stderr at startup.
 
 ### 12.7 Running it from the apps, and `--config-stdin`
 

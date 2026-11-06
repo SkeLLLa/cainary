@@ -1,14 +1,17 @@
 //! Routing, content checks and the OTLP/JSON pipeline (design §8.2, §14.2): from a request body
 //! to the owned events the output thread prints. Pure: no I/O.
 //!
-//! **Phase 1 stand-in.** `walk` reads the OTLP structure without the vendor catalog; it is
-//! replaced by `cainary_core::rules::otel_classify` when that lands.
+//! Classification is `cainary_core::rules::otel_classify`; this module applies the output policy
+//! (design §14.2) to everything it returns: names print verbatim only when they are catalog
+//! entries or pass the name rule after a complete red-flag scan, values are masked.
 
 use crate::http::Head;
 use crate::output::{AlertEvent, BatchEvent, ErrorEvent, escape};
 use crate::redflag::{Hit, Matcher, Scanner};
+use cainary_core::rules::otel_catalog::{self, Export, Group, Item, ItemKind};
+use cainary_core::rules::otel_classify::{self, Field};
 use serde_json::{Map, Value, json};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 pub const MAX_RECORDS: usize = 10_000;
@@ -49,13 +52,6 @@ impl Signal {
             Signal::Logs => "/v1/logs",
             Signal::Metrics => "/v1/metrics",
             Signal::Traces => "/v1/traces",
-        }
-    }
-    fn root(self) -> &'static str {
-        match self {
-            Signal::Logs => "resourceLogs",
-            Signal::Metrics => "resourceMetrics",
-            Signal::Traces => "resourceSpans",
         }
     }
 }
@@ -149,229 +145,80 @@ impl Fail {
     }
 }
 
-// ── structure walk (phase 1 stand-in) ────────────────────────────────────────────────────────
+// ── caps before any allocation ───────────────────────────────────────────────────────────────
 
-struct Attr<'a> {
-    key: &'a str,
-    value: &'a Value,
+fn len_of(v: &Value, key: &str) -> usize {
+    v.get(key).and_then(Value::as_array).map_or(0, Vec::len)
 }
 
-struct Rec<'a> {
-    name: &'a str,
-    kind: &'static str,
-    body: Option<&'a Value>,
-    attrs: Vec<Attr<'a>>,
-}
-
-struct Scope<'a> {
-    name: &'a str,
-    version: Option<&'a str>,
-    recs: Vec<Rec<'a>>,
-}
-
-struct Res<'a> {
-    attrs: Vec<Attr<'a>>,
-    scopes: Vec<Scope<'a>>,
-}
-
-struct Walker {
-    signal: Signal,
-    records: usize,
-    attrs: usize,
-}
-
-type W<T> = Result<T, Fail>;
-
-impl Walker {
-    fn shape(&self) -> Fail {
-        Fail::Shape(self.signal)
-    }
-
-    fn arr<'a>(&self, v: &'a Value, key: &str) -> W<&'a [Value]> {
-        match v.get(key) {
-            None | Some(Value::Null) => Ok(&[]),
-            Some(Value::Array(a)) => Ok(a),
-            Some(_) => Err(self.shape()),
-        }
-    }
-
-    fn obj<'a>(&self, v: &'a Value) -> W<&'a Value> {
-        if v.is_object() {
-            Ok(v)
-        } else {
-            Err(self.shape())
-        }
-    }
-
-    fn attrs<'a>(&mut self, v: &'a Value) -> W<Vec<Attr<'a>>> {
-        let list = self.arr(v, "attributes")?;
-        self.attrs += list.len();
-        if self.attrs > MAX_ATTRS {
-            return Err(Fail::TooMany);
-        }
-        list.iter()
-            .map(
-                |a| match (a.get("key").and_then(Value::as_str), a.get("value")) {
-                    (Some(key), Some(value)) => Ok(Attr { key, value }),
-                    (Some(key), None) => Ok(Attr {
-                        key,
-                        value: &Value::Null,
-                    }),
-                    _ => Err(self.shape()),
-                },
-            )
-            .collect()
-    }
-
-    fn count(&mut self, n: usize) -> W<()> {
-        self.records += n;
-        if self.records > MAX_RECORDS {
+/// Counts records and attributes straight from the JSON, leniently (shape errors are the
+/// classifier's to report), so an oversized request is refused before anything is built.
+fn precount(signal: Signal, doc: &Value) -> Result<(), Fail> {
+    let (root, scopes, items) = match signal {
+        Signal::Logs => ("resourceLogs", "scopeLogs", "logRecords"),
+        Signal::Metrics => ("resourceMetrics", "scopeMetrics", "metrics"),
+        Signal::Traces => ("resourceSpans", "scopeSpans", "spans"),
+    };
+    let (mut records, mut attrs) = (0usize, 0usize);
+    let over = |records: usize, attrs: usize| {
+        if records > MAX_RECORDS || attrs > MAX_ATTRS {
             Err(Fail::TooMany)
         } else {
             Ok(())
         }
-    }
-
-    fn walk<'a>(&mut self, doc: &'a Value) -> W<Vec<Res<'a>>> {
-        let root = self.signal.root();
-        if !doc.is_object() || !doc.get(root).is_some_and(Value::is_array) {
-            return Err(self.shape());
-        }
-        let scope_key = match self.signal {
-            Signal::Logs => "scopeLogs",
-            Signal::Metrics => "scopeMetrics",
-            Signal::Traces => "scopeSpans",
-        };
-        let mut out = Vec::new();
-        for r in self.arr(doc, root)? {
-            let r = self.obj(r)?;
-            let attrs = match r.get("resource") {
-                Some(res) => self.attrs(self.obj(res)?)?,
-                None => Vec::new(),
-            };
-            let mut scopes = Vec::new();
-            for s in self.arr(r, scope_key)? {
-                let s = self.obj(s)?;
-                let (name, version) = match s.get("scope") {
-                    Some(sc) => (
-                        sc.get("name").and_then(Value::as_str).unwrap_or(""),
-                        sc.get("version").and_then(Value::as_str),
-                    ),
-                    None => ("", None),
-                };
-                let recs = match self.signal {
-                    Signal::Logs => self.logs(s)?,
-                    Signal::Metrics => self.metrics(s)?,
-                    Signal::Traces => self.spans(s)?,
-                };
-                scopes.push(Scope {
-                    name,
-                    version,
-                    recs,
-                });
-            }
-            out.push(Res { attrs, scopes });
-        }
-        Ok(out)
-    }
-
-    fn logs<'a>(&mut self, scope: &'a Value) -> W<Vec<Rec<'a>>> {
-        let items = self.arr(scope, "logRecords")?;
-        self.count(items.len())?;
-        let mut recs = Vec::new();
-        for l in items {
-            let l = self.obj(l)?;
-            let attrs = self.attrs(l)?;
-            let event_name = attrs
-                .iter()
-                .find(|a| a.key == "event.name")
-                .and_then(|a| a.value.get("stringValue"))
-                .and_then(Value::as_str);
-            let body = l.get("body");
-            let from_body = body
-                .and_then(|b| b.get("stringValue"))
-                .and_then(Value::as_str)
-                .filter(|b| is_event_name(b))
-                .filter(|b| event_name.is_some_and(|e| e == *b || b.ends_with(&format!(".{e}"))));
-            recs.push(Rec {
-                name: from_body.or(event_name).unwrap_or(""),
-                kind: "event",
-                body,
-                attrs,
-            });
-        }
-        Ok(recs)
-    }
-
-    fn metrics<'a>(&mut self, scope: &'a Value) -> W<Vec<Rec<'a>>> {
-        let mut recs = Vec::new();
-        for m in self.arr(scope, "metrics")? {
-            let m = self.obj(m)?;
-            let name = m.get("name").and_then(Value::as_str).unwrap_or("");
-            for kind in [
-                "sum",
-                "gauge",
-                "histogram",
-                "exponentialHistogram",
-                "summary",
-            ] {
-                let Some(body) = m.get(kind) else { continue };
-                let points = self.arr(self.obj(body)?, "dataPoints")?;
-                self.count(points.len())?;
-                for p in points {
-                    let p = self.obj(p)?;
-                    recs.push(Rec {
-                        name,
-                        kind: "metric",
-                        body: None,
-                        attrs: self.attrs(p)?,
-                    });
+    };
+    let empty = Vec::new();
+    for r in doc.get(root).and_then(Value::as_array).unwrap_or(&empty) {
+        attrs += r.get("resource").map_or(0, |x| len_of(x, "attributes"));
+        for s in r.get(scopes).and_then(Value::as_array).unwrap_or(&empty) {
+            for it in s.get(items).and_then(Value::as_array).unwrap_or(&empty) {
+                match signal {
+                    Signal::Logs => {
+                        records += 1;
+                        attrs += len_of(it, "attributes");
+                    }
+                    Signal::Traces => {
+                        records += 1 + len_of(it, "events");
+                        attrs += len_of(it, "attributes");
+                        for e in it.get("events").and_then(Value::as_array).unwrap_or(&empty) {
+                            attrs += len_of(e, "attributes");
+                        }
+                    }
+                    Signal::Metrics => {
+                        let mut any = false;
+                        for fam in [
+                            "sum",
+                            "gauge",
+                            "histogram",
+                            "exponentialHistogram",
+                            "summary",
+                        ] {
+                            let Some(f) = it.get(fam) else { continue };
+                            any = true;
+                            let points = f
+                                .get("dataPoints")
+                                .and_then(Value::as_array)
+                                .unwrap_or(&empty);
+                            records += points.len();
+                            attrs += points
+                                .iter()
+                                .map(|p| len_of(p, "attributes"))
+                                .sum::<usize>();
+                            over(records, attrs)?;
+                        }
+                        records += usize::from(!any);
+                    }
                 }
+                over(records, attrs)?;
             }
         }
-        Ok(recs)
     }
-
-    fn spans<'a>(&mut self, scope: &'a Value) -> W<Vec<Rec<'a>>> {
-        let items = self.arr(scope, "spans")?;
-        self.count(items.len())?;
-        let mut recs = Vec::new();
-        for s in items {
-            let s = self.obj(s)?;
-            recs.push(Rec {
-                name: s.get("name").and_then(Value::as_str).unwrap_or(""),
-                kind: "span",
-                body: None,
-                attrs: self.attrs(s)?,
-            });
-            let events = self.arr(s, "events")?;
-            self.count(events.len())?;
-            for e in events {
-                let e = self.obj(e)?;
-                recs.push(Rec {
-                    name: e.get("name").and_then(Value::as_str).unwrap_or(""),
-                    kind: "span-event",
-                    body: None,
-                    attrs: self.attrs(e)?,
-                });
-            }
-        }
-        Ok(recs)
-    }
+    over(records, attrs)
 }
 
-/// `^[a-z][a-z0-9_.]*$`
-fn is_event_name(s: &str) -> bool {
-    let b = s.as_bytes();
-    !b.is_empty()
-        && b[0].is_ascii_lowercase()
-        && b.iter()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'_' || *c == b'.')
-}
+// ── masking helpers ──────────────────────────────────────────────────────────────────────────
 
-// ── masking helpers (phase 1 stand-ins for the core's) ───────────────────────────────────────
-
-/// `(type, len)` of an OTLP AnyValue.
+/// `(type, len)` of an OTLP AnyValue, for the `F` objects.
 fn any_type(v: &Value) -> (&'static str, Option<usize>) {
     let n = |k: &str| v.get(k);
     if let Some(s) = n("stringValue").and_then(Value::as_str) {
@@ -383,23 +230,9 @@ fn any_type(v: &Value) -> (&'static str, Option<usize>) {
     } else if n("boolValue").is_some() {
         ("bool", None)
     } else if let Some(a) = n("arrayValue") {
-        (
-            "array",
-            Some(
-                a.get("values")
-                    .and_then(Value::as_array)
-                    .map_or(0, Vec::len),
-            ),
-        )
+        ("array", Some(len_of(a, "values")))
     } else if let Some(k) = n("kvlistValue") {
-        (
-            "kvlist",
-            Some(
-                k.get("values")
-                    .and_then(Value::as_array)
-                    .map_or(0, Vec::len),
-            ),
-        )
+        ("kvlist", Some(len_of(k, "values")))
     } else if let Some(b) = n("bytesValue").and_then(Value::as_str) {
         ("bytes", Some(b.chars().count()))
     } else {
@@ -407,17 +240,7 @@ fn any_type(v: &Value) -> (&'static str, Option<usize>) {
     }
 }
 
-pub fn mask(v: &Value) -> String {
-    match any_type(v) {
-        ("string", Some(n)) => format!("<string, {n} chars>"),
-        ("array", Some(n)) => format!("<array, {n} items>"),
-        ("kvlist", Some(n)) => format!("<kvlist, {n} keys>"),
-        ("bytes", Some(n)) => format!("<bytes, {n} chars>"),
-        ("empty", _) => "<empty>".to_string(),
-        (t, _) => format!("<{t}>"),
-    }
-}
-
+/// The value as text, for `--show-values` only.
 fn raw(v: &Value) -> String {
     for k in [
         "stringValue",
@@ -440,53 +263,39 @@ fn raw(v: &Value) -> String {
     String::new()
 }
 
-/// `n >= 8`: the first 3 characters and the length; shorter: the length only.
-pub fn mask_match(s: &str) -> String {
-    let n = s.chars().count();
-    if n >= 8 {
-        format!("{}…({n} chars)", s.chars().take(3).collect::<String>())
-    } else {
-        format!("…({n} chars)")
+/// Whether an AnyValue nests deeper than `text_of` looks (it stops silently at 32).
+fn too_deep(v: &Value, depth: usize) -> bool {
+    if depth >= MAX_DEPTH {
+        return v.get("arrayValue").is_some() || v.get("kvlistValue").is_some();
+    }
+    let kids = |k: &str| {
+        v.get(k)
+            .and_then(|a| a.get("values"))
+            .and_then(Value::as_array)
+    };
+    kids("arrayValue").is_some_and(|a| a.iter().any(|c| too_deep(c, depth + 1)))
+        || kids("kvlistValue").is_some_and(|a| {
+            a.iter()
+                .any(|c| c.get("value").is_some_and(|c| too_deep(c, depth + 1)))
+        })
+}
+
+fn group_str(g: Group) -> &'static str {
+    match g {
+        Group::Identity => "identity",
+        Group::Resource => "resource",
+        Group::Event => "event",
+        Group::Content => "content",
     }
 }
 
-/// Strings and numbers inside an AnyValue, recursively. Returns false when `MAX_DEPTH` cut it.
-fn visit_texts(v: &Value, depth: usize, f: &mut dyn FnMut(&str)) -> bool {
-    if depth > MAX_DEPTH {
-        return false;
+fn kind_str(k: ItemKind) -> &'static str {
+    match k {
+        ItemKind::Event => "event",
+        ItemKind::Metric => "metric",
+        ItemKind::Span => "span",
+        ItemKind::SpanEvent => "span-event",
     }
-    let mut complete = true;
-    for k in ["stringValue", "intValue", "doubleValue"] {
-        match v.get(k) {
-            Some(Value::String(s)) => f(s),
-            Some(Value::Number(n)) => f(&n.to_string()),
-            _ => {}
-        }
-    }
-    if let Some(items) = v
-        .get("arrayValue")
-        .and_then(|a| a.get("values"))
-        .and_then(Value::as_array)
-    {
-        for i in items {
-            complete &= visit_texts(i, depth + 1, f);
-        }
-    }
-    if let Some(items) = v
-        .get("kvlistValue")
-        .and_then(|a| a.get("values"))
-        .and_then(Value::as_array)
-    {
-        for kv in items {
-            if let Some(k) = kv.get("key").and_then(Value::as_str) {
-                f(k);
-            }
-            if let Some(inner) = kv.get("value") {
-                complete &= visit_texts(inner, depth + 1, f);
-            }
-        }
-    }
-    complete
 }
 
 // ── naming policy and alerts (design §14.2) ──────────────────────────────────────────────────
@@ -512,7 +321,8 @@ struct Namer {
 }
 
 impl Namer {
-    /// Verbatim when `known` (in the catalog) or safe and unflagged; else a request-local label.
+    /// Verbatim when `known` (an exact catalog name) or safe and cleanly scanned; else a
+    /// request-local label.
     fn name(&mut self, s: &str, kind: Label, known: bool, flagged: bool) -> String {
         if known || (safe_name(s) && !flagged) {
             return s.to_string();
@@ -531,7 +341,7 @@ impl Namer {
     }
 }
 
-struct Group {
+struct AlertGroup {
     pattern: usize,
     where_: &'static str,
     attribute: Option<String>,
@@ -549,10 +359,13 @@ pub struct Ctx {
 struct Proc<'m> {
     scanner: Scanner<'m>,
     namer: Namer,
-    groups: Vec<Group>,
+    groups: Vec<AlertGroup>,
     index: HashMap<(usize, Option<String>, &'static str), usize>,
     show: bool,
     hits: Vec<Hit>,
+    /// Record names sanitized once per distinct raw slice: the points of one metric, and the
+    /// events of one span, share one name.
+    name_cache: HashMap<(usize, usize), String>,
 }
 
 /// Appends within the text budget; once it is spent, one marker and nothing more.
@@ -585,6 +398,7 @@ impl<'m> Proc<'m> {
             index: HashMap::new(),
             show: ctx.show_values,
             hits: Vec::new(),
+            name_cache: HashMap::new(),
         }
     }
 
@@ -606,7 +420,7 @@ impl<'m> Proc<'m> {
                         continue;
                     }
                     let matched = &text[h.start..h.end];
-                    self.groups.push(Group {
+                    self.groups.push(AlertGroup {
                         pattern: h.pattern,
                         where_,
                         attribute: attribute.map(|a| cut(a, MAX_IDENT)),
@@ -616,7 +430,7 @@ impl<'m> Proc<'m> {
                         matched: if self.show {
                             cut(matched, MAX_RAW_MATCH)
                         } else {
-                            mask_match(matched)
+                            otel_classify::mask_match(matched)
                         },
                     });
                     self.index.insert(key, self.groups.len() - 1);
@@ -667,6 +481,9 @@ impl<'m> Proc<'m> {
 
     /// A name's displayed form without raising alerts (the caller already scanned it elsewhere).
     fn shown(&mut self, s: &str, kind: Label, known: bool) -> String {
+        if s.is_empty() {
+            return "<empty>".to_string();
+        }
         let mut hits = std::mem::take(&mut self.hits);
         hits.clear();
         let complete = self.scanner.scan(s, &mut hits);
@@ -675,6 +492,21 @@ impl<'m> Proc<'m> {
             .name(s, kind, known, !hits.is_empty() || !complete);
         self.hits = hits;
         shown
+    }
+
+    /// A record or span name, scanned and sanitized once per raw slice.
+    fn record_name(&mut self, raw: &str, known: bool) -> String {
+        let slice = (raw.as_ptr() as usize, raw.len());
+        if let Some(n) = self.name_cache.get(&slice) {
+            return n.clone();
+        }
+        let n = if raw.is_empty() {
+            "(unnamed)".to_string()
+        } else {
+            self.scan_name(raw, Label::Name, known, "name", None, None)
+        };
+        self.name_cache.insert(slice, n.clone());
+        n
     }
 
     fn scan_value(
@@ -687,39 +519,61 @@ impl<'m> Proc<'m> {
         if self.scanner.is_empty() {
             return;
         }
-        let mut texts: Vec<String> = Vec::new();
-        if !visit_texts(v, 0, &mut |t| texts.push(t.to_string())) {
+        if too_deep(v, 0) {
             self.scanner.incomplete = true;
         }
         let mut hits = std::mem::take(&mut self.hits);
-        for t in &texts {
+        for (path, text) in otel_classify::text_of(v) {
             hits.clear();
-            self.scanner.scan(t, &mut hits);
-            self.record(t, &hits, where_, attribute, event);
+            self.scanner.scan(&text, &mut hits);
+            self.record(&text, &hits, where_, attribute, event);
+            // A nested key is part of the path.
+            if let Some(key) = path.rsplit_once('.').map(|(_, k)| k)
+                && !key.is_empty()
+            {
+                hits.clear();
+                self.scanner.scan(key, &mut hits);
+                self.record(key, &hits, where_, attribute, event);
+            }
         }
         self.hits = hits;
     }
 
-    fn field(&self, key: &str, v: &Value) -> Value {
-        let (ty, len) = any_type(v);
-        let value = if self.show { raw(v) } else { mask(v) };
+    fn display(&self, v: &Value) -> String {
+        if self.show {
+            raw(v)
+        } else {
+            otel_classify::mask(v)
+        }
+    }
+
+    fn text_value(&self, v: &Value) -> String {
+        escape(&cut(&self.display(v), MAX_TEXT_VALUE))
+    }
+
+    /// The `F` object of design §8.6.
+    fn field(&self, label: &str, f: &Field<'_>) -> Value {
+        let (ty, len) = any_type(f.value);
         let mut m = Map::new();
-        m.insert("key".into(), json!(key));
-        m.insert("group".into(), Value::Null);
-        m.insert("known".into(), json!(false));
+        m.insert("key".into(), json!(label));
+        m.insert("group".into(), json!(f.attr.map(|a| group_str(a.group))));
+        if let Some(flag) = f.attr.and_then(|a| a.gate).map(|g| g.flag) {
+            m.insert("flag".into(), json!(flag));
+        }
+        m.insert("known".into(), json!(f.attr.is_some()));
         m.insert("type".into(), json!(ty));
         if let Some(n) = len {
             m.insert("len".into(), json!(n));
         }
-        m.insert("value".into(), json!(value));
+        m.insert("value".into(), json!(self.display(f.value)));
         Value::Object(m)
     }
 
-    fn text_value(&self, v: &Value) -> String {
-        escape(&cut(
-            &if self.show { raw(v) } else { mask(v) },
-            MAX_TEXT_VALUE,
-        ))
+    /// The displayed key of a field: verbatim for an exact catalog key (a wildcard entry such
+    /// as `vcs.ref.head.*` matches attacker-chosen suffixes, so those take the name rule).
+    fn key_label(&mut self, f: &Field<'_>, where_: &'static str, event: Option<&str>) -> String {
+        let exact = f.attr.is_some_and(|a| a.key == f.key);
+        self.scan_name(&f.key, Label::Key, exact, where_, None, event)
     }
 }
 
@@ -728,161 +582,243 @@ pub struct Prepared {
     pub extra: Vec<ErrorEvent>,
 }
 
-fn vendor_of(service: Option<&str>) -> Option<&'static str> {
-    match service {
-        Some("claude-code" | "claude-code-desktop") => Some("claude-code"),
-        Some(s) if s.starts_with("codex") => Some("codex"),
-        _ => None,
-    }
+/// What the text block keeps of a record name's first occurrence.
+struct Shown {
+    key: String,
+    group: Option<Group>,
+    flag: Option<&'static str>,
+    known: bool,
+    text: String,
 }
 
-fn str_attr<'a>(attrs: &[Attr<'a>], key: &str) -> Option<&'a str> {
-    attrs
-        .iter()
-        .find(|a| a.key == key)
-        .and_then(|a| a.value.get("stringValue"))
-        .and_then(Value::as_str)
-}
+type SummaryAttr = (String, Option<Group>, Option<&'static str>, bool);
 
-struct Summary {
+struct Entry {
     name: String,
-    kind: &'static str,
+    kind: ItemKind,
+    known: bool,
+    what: Option<&'static str>,
     count: usize,
-    keys: Vec<String>,
+    attrs: Vec<SummaryAttr>,
+    seen: HashSet<String>,
+    first: Vec<Shown>,
 }
 
 pub fn process(signal: Signal, bytes: usize, doc: &Value, ctx: &Ctx) -> Result<Prepared, Fail> {
-    let mut w = Walker {
-        signal,
-        records: 0,
-        attrs: 0,
+    precount(signal, doc)?;
+    let export = match signal {
+        Signal::Logs => Export::Logs,
+        Signal::Metrics => Export::Metrics,
+        Signal::Traces => Export::Traces,
     };
-    let resources = w.walk(doc)?;
+    let c = otel_classify::classify(export, doc).map_err(|_| Fail::Shape(signal))?;
     let mut p = Proc::new(ctx);
 
-    let mut service: Option<(String, Option<String>)> = None;
-    let mut vendor = None;
-    let mut resource_json = Vec::new();
-    let mut resource_keys: Vec<String> = Vec::new();
-    let mut text_body = String::new();
-    let mut summaries: Vec<Summary> = Vec::new();
-    let mut summary_index: HashMap<(String, &'static str), usize> = HashMap::new();
-    let mut name_cache: HashMap<(usize, usize), String> = HashMap::new();
+    let service = c.service.as_ref().map(|(n, v)| {
+        (
+            p.shown(n, Label::Name, false),
+            v.as_deref().map(|v| p.shown(v, Label::Name, false)),
+        )
+    });
+    let vendor = c.vendor.map(|v| otel_catalog::catalog(v).product);
+    let catalog = c.vendor.map(|v| otel_catalog::catalog(v).label());
 
-    for res in &resources {
+    let mut resource_json = Vec::new();
+    let mut identity: BTreeSet<String> = BTreeSet::new();
+    let mut resource_keys: BTreeSet<String> = BTreeSet::new();
+    let mut resource_line: Vec<String> = Vec::new();
+    let mut entries: Vec<Entry> = Vec::new();
+    let mut entry_index: HashMap<(String, &'static str), usize> = HashMap::new();
+
+    for res in &c.resources {
         let mut attrs = Vec::new();
-        let mut line = Vec::new();
-        for (i, a) in res.attrs.iter().enumerate() {
-            let label = p.scan_name(a.key, Label::Key, false, "resource", None, None);
-            p.scan_value(a.value, "resource", Some(&label), None);
-            attrs.push(p.field(&label, a.value));
-            if i < 32 {
-                line.push(format!("{} {}", escape(&label), p.text_value(a.value)));
+        for f in &res.attrs {
+            let label = p.key_label(f, "resource", None);
+            p.scan_value(f.value, "resource", Some(&label), None);
+            attrs.push(p.field(&label, f));
+            match f.attr.map(|a| a.group) {
+                Some(Group::Identity) => {
+                    identity.insert(label.clone());
+                }
+                _ => {
+                    resource_keys.insert(label.clone());
+                }
             }
-            if !resource_keys.contains(&label) {
-                resource_keys.push(label);
+            if resource_line.len() < 32 {
+                resource_line.push(format!("{} {}", escape(&label), p.text_value(f.value)));
             }
-        }
-        if service.is_none()
-            && let Some(name) = str_attr(&res.attrs, "service.name")
-        {
-            vendor = vendor_of(Some(name));
-            let name = p.shown(name, Label::Name, false);
-            let version =
-                str_attr(&res.attrs, "service.version").map(|v| p.shown(v, Label::Name, false));
-            service = Some((name, version));
-        }
-        if !line.is_empty() {
-            push_capped(
-                &mut text_body,
-                &format!("resource   {}\n", line.join(" · ")),
-            );
         }
 
         let mut scopes_json = Vec::new();
         for sc in &res.scopes {
-            let scope_name = p.scan_name(sc.name, Label::Name, false, "scope", None, None);
+            let scope_name = p.scan_name(&sc.name, Label::Name, false, "scope", None, None);
             let version = sc
                 .version
+                .as_deref()
                 .map(|v| p.scan_name(v, Label::Name, false, "scope", None, None));
             let mut recs_json = Vec::new();
-            for r in &sc.recs {
-                // Sanitized once per distinct raw slice: all points of a metric share one name.
-                let slice = (r.name.as_ptr() as usize, r.name.len());
-                let name = match name_cache.get(&slice) {
-                    Some(n) => n.clone(),
-                    None => {
-                        let n = if r.name.is_empty() {
-                            "(unnamed)".to_string()
-                        } else {
-                            p.scan_name(r.name, Label::Name, false, "name", None, None)
-                        };
-                        name_cache.insert(slice, n.clone());
-                        n
-                    }
-                };
+            for r in &sc.records {
+                let known_name = r.item.is_some_and(|i| i.name == &*r.name);
+                let name = p.record_name(&r.name, known_name);
                 if let Some(b) = r.body {
                     p.scan_value(b, "body", None, Some(&name));
                 }
-                let mut fields = Vec::new();
-                let mut keys = Vec::new();
-                for a in &r.attrs {
-                    let label = p.scan_name(a.key, Label::Key, false, "key", None, Some(&name));
-                    p.scan_value(a.value, "value", Some(&label), Some(&name));
-                    fields.push(p.field(&label, a.value));
-                    keys.push(label);
-                }
-                match summary_index
-                    .get(&(name.clone(), r.kind))
-                    .map(|i| &mut summaries[*i])
-                {
-                    Some(s) => {
-                        s.count += 1;
-                        for k in keys {
-                            if !s.keys.contains(&k) {
-                                s.keys.push(k);
-                            }
+                let mut fields = Vec::with_capacity(r.fields.len());
+                let mut shown_fields: Vec<(String, &Field<'_>)> =
+                    Vec::with_capacity(r.fields.len());
+                for f in &r.fields {
+                    let label = p.key_label(f, "key", Some(&name));
+                    p.scan_value(f.value, "value", Some(&label), Some(&name));
+                    fields.push(p.field(&label, f));
+                    match f.attr.map(|a| a.group) {
+                        Some(Group::Identity) => {
+                            identity.insert(label.clone());
                         }
+                        Some(Group::Resource) => {
+                            resource_keys.insert(label.clone());
+                        }
+                        _ => {}
                     }
+                    shown_fields.push((label, f));
+                }
+
+                let idx = match entry_index.get(&(name.clone(), kind_str(r.kind))) {
+                    Some(i) => *i,
                     None => {
-                        summary_index.insert((name.clone(), r.kind), summaries.len());
-                        summaries.push(Summary {
+                        entries.push(Entry {
                             name: name.clone(),
                             kind: r.kind,
-                            count: 1,
-                            keys,
+                            known: r.item.is_some(),
+                            what: r.item.map(|i: &Item| i.what),
+                            count: 0,
+                            attrs: Vec::new(),
+                            seen: HashSet::new(),
+                            first: shown_fields
+                                .iter()
+                                .take(32)
+                                .map(|(label, f)| Shown {
+                                    key: label.clone(),
+                                    group: f.attr.map(|a| a.group),
+                                    flag: f.attr.and_then(|a| a.gate).map(|g| g.flag),
+                                    known: f.attr.is_some(),
+                                    text: p.text_value(f.value),
+                                })
+                                .collect(),
                         });
+                        entry_index.insert((name.clone(), kind_str(r.kind)), entries.len() - 1);
+                        entries.len() - 1
+                    }
+                };
+                let e = &mut entries[idx];
+                e.count += 1;
+                e.known &= r.item.is_some();
+                for (label, f) in &shown_fields {
+                    if e.seen.insert(label.clone()) {
+                        e.attrs.push((
+                            label.clone(),
+                            f.attr.map(|a| a.group),
+                            f.attr.and_then(|a| a.gate).map(|g| g.flag),
+                            f.attr.is_some(),
+                        ));
                     }
                 }
-                recs_json
-                    .push(json!({"name": name, "kind": r.kind, "known": false, "attrs": fields}));
+
+                let mut rec = Map::new();
+                rec.insert("name".into(), json!(name));
+                rec.insert("kind".into(), json!(kind_str(r.kind)));
+                rec.insert("known".into(), json!(r.item.is_some()));
+                if r.kind == ItemKind::Metric {
+                    if let Some(u) = r.item.and_then(|i| i.unit) {
+                        rec.insert("unit".into(), json!(u));
+                    }
+                    if let Some(f) = r.family {
+                        rec.insert("metricType".into(), json!(f));
+                    }
+                }
+                if let Some(parent) = r.parent.as_deref() {
+                    let parent = p.record_name(parent, false);
+                    rec.insert("span".into(), json!(parent));
+                }
+                rec.insert("attrs".into(), Value::Array(fields));
+                recs_json.push(Value::Object(rec));
             }
             scopes_json.push(json!({"name": scope_name, "version": version, "records": recs_json}));
         }
         resource_json.push(json!({"attrs": attrs, "scopes": scopes_json}));
     }
 
-    for s in &summaries {
+    // Text block.
+    let mut text_body = String::new();
+    if !resource_line.is_empty() {
         push_capped(
             &mut text_body,
-            &format!("{} ×{}\n", escape(&s.name), s.count),
+            &format!("resource   {}\n", resource_line.join(" · ")),
         );
-        let keys: Vec<String> = s.keys.iter().take(16).map(|k| escape(k)).collect();
-        if !keys.is_empty() {
-            push_capped(
-                &mut text_body,
-                &format!("  attrs    {}\n", keys.join(" · ")),
-            );
+    }
+    if !identity.is_empty() {
+        let ids: Vec<String> = identity.iter().take(32).map(|k| escape(k)).collect();
+        push_capped(
+            &mut text_body,
+            &format!("identity   {} (on every record)\n", ids.join(" · ")),
+        );
+    }
+    for e in &entries {
+        let what = e.what.map(|w| format!("   {w}")).unwrap_or_default();
+        let flag = if e.known { "" } else { "   NOT IN CATALOG" };
+        push_capped(
+            &mut text_body,
+            &format!("{} ×{}{what}{flag}\n", escape(&e.name), e.count),
+        );
+        let line = |pred: &dyn Fn(&Shown) -> bool, with_flag: bool| -> String {
+            e.first
+                .iter()
+                .filter(|s| s.group != Some(Group::Identity) && s.group != Some(Group::Resource))
+                .filter(|s| pred(s))
+                .map(|s| match (with_flag, s.flag) {
+                    (true, Some(f)) => format!("{} {} ({f})", escape(&s.key), s.text),
+                    _ => format!("{} {}", escape(&s.key), s.text),
+                })
+                .collect::<Vec<_>>()
+                .join(" · ")
+        };
+        let event = line(&|s| s.known && s.group != Some(Group::Content), false);
+        if !event.is_empty() {
+            push_capped(&mut text_body, &format!("  event    {event}\n"));
+        }
+        let content = line(&|s| s.known && s.group == Some(Group::Content), true);
+        if !content.is_empty() {
+            push_capped(&mut text_body, &format!("  content  {content}\n"));
+        }
+        let unknown = line(&|s| !s.known, false);
+        if !unknown.is_empty() {
+            push_capped(&mut text_body, &format!("  NOT IN CATALOG  {unknown}\n"));
         }
     }
 
     let summary = json!({
-        "identity": [],
+        "identity": identity,
         "resource": resource_keys,
-        "records": summaries.iter().map(|s| json!({
-            "name": s.name, "kind": s.kind, "count": s.count, "known": false,
-            "attrs": s.keys.iter().map(|k| json!({"key": k, "group": null, "known": false})).collect::<Vec<_>>(),
-        })).collect::<Vec<_>>(),
+        "records": entries.iter().map(|e| {
+            let mut m = Map::new();
+            m.insert("name".into(), json!(e.name));
+            m.insert("kind".into(), json!(kind_str(e.kind)));
+            m.insert("count".into(), json!(e.count));
+            m.insert("known".into(), json!(e.known));
+            if let Some(w) = e.what {
+                m.insert("what".into(), json!(w));
+            }
+            m.insert("attrs".into(), Value::Array(e.attrs.iter().map(|(k, g, f, known)| {
+                let mut a = Map::new();
+                a.insert("key".into(), json!(k));
+                a.insert("group".into(), json!(g.map(group_str)));
+                if let Some(f) = f {
+                    a.insert("flag".into(), json!(f));
+                }
+                a.insert("known".into(), json!(known));
+                Value::Object(a)
+            }).collect()));
+            Value::Object(m)
+        }).collect::<Vec<_>>(),
     });
 
     let mut alerts = Vec::new();
@@ -928,9 +864,9 @@ pub fn process(signal: Signal, bytes: usize, doc: &Value, ctx: &Ctx) -> Result<P
     m.insert("bytes".into(), json!(bytes));
     m.insert("vendor".into(), json!(vendor));
     m.insert("service".into(), service_json);
-    m.insert("catalog".into(), Value::Null);
-    m.insert("records".into(), json!(w.records));
-    m.insert("notInCatalog".into(), json!(0));
+    m.insert("catalog".into(), json!(catalog));
+    m.insert("records".into(), json!(c.records));
+    m.insert("notInCatalog".into(), json!(c.unknown));
     m.insert("summary".into(), summary);
     if omit {
         m.insert("resourcesOmitted".into(), json!(true));
@@ -949,8 +885,8 @@ pub fn process(signal: Signal, bytes: usize, doc: &Value, ctx: &Ctx) -> Result<P
     let header = format!(
         "{} · {} · {} records",
         signal.name(),
-        vendor.unwrap_or("unknown vendor"),
-        w.records
+        catalog.as_deref().unwrap_or("unknown vendor"),
+        c.records
     );
     let extra = if incomplete {
         vec![ErrorEvent::other(
@@ -1058,30 +994,6 @@ mod tests {
         ]))
         .unwrap_err();
         assert_eq!((e.status, e.message), (415, COMPRESSED_MESSAGE));
-    }
-
-    #[test]
-    fn mask_formats() {
-        assert_eq!(mask(&sv("alice@example-corp.com")), "<string, 22 chars>");
-        assert_eq!(mask(&json!({"intValue": "5"})), "<int>");
-        assert_eq!(mask(&json!({"doubleValue": 1.5})), "<double>");
-        assert_eq!(mask(&json!({"boolValue": true})), "<bool>");
-        assert_eq!(
-            mask(&json!({"arrayValue": {"values": [sv("a"), sv("b"), sv("c")]}})),
-            "<array, 3 items>"
-        );
-        assert_eq!(
-            mask(&json!({"kvlistValue": {"values": [{"key":"a","value":sv("x")}]}})),
-            "<kvlist, 1 keys>"
-        );
-        assert_eq!(
-            mask(&json!({"bytesValue": "AAAAAAAAAAAA"})),
-            "<bytes, 12 chars>"
-        );
-        assert_eq!(mask(&json!({})), "<empty>");
-        assert_eq!(mask_match("AKIAIOSFODNN7EXAMPLE"), "AKI…(20 chars)");
-        assert_eq!(mask_match("short"), "…(5 chars)");
-        assert_eq!(mask_match("exactly8"), "exa…(8 chars)");
     }
 
     fn run(doc: &Value, show: bool) -> (Value, Vec<Value>, Prepared) {
@@ -1421,5 +1333,32 @@ mod tests {
         let p = process(Signal::Logs, 1, &doc, &c).unwrap();
         assert!(p.batch.text_body.len() < MAX_TEXT_BODY + 64);
         assert!(p.batch.tail.len() + ENVELOPE_BYTES <= crate::output::MAX_LINE_BYTES);
+    }
+
+    #[test]
+    fn wildcard_catalog_keys_classify_but_do_not_print_attacker_suffixes() {
+        let c = ctx(false);
+        let secret = "AKIAIOSFODNN7EXAMPLE";
+        let doc = logs(
+            vec![attr("service.name", sv("claude-code"))],
+            json!({"name": "com.anthropic.claude_code.events"}),
+            vec![
+                json!({"body": sv("claude_code.tool_result"), "attributes": [
+                attr("event.name", sv("tool_result")),
+                attr(&format!("vcs.ref.head.{secret}"), sv("x"))]}),
+            ],
+        );
+        let p = process(Signal::Logs, 1, &doc, &c).unwrap();
+        let all = format!("{}{}", p.batch.tail, p.batch.text_body);
+        assert!(!all.contains(secret), "{all}");
+        let v: Value = serde_json::from_str(&p.batch.tail).unwrap();
+        let attrs = &v["resources"][0]["scopes"][0]["records"][0]["attrs"];
+        let f = attrs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["known"] == true && a["key"].as_str().unwrap().starts_with("<unknown-key"))
+            .expect("classified but labelled");
+        assert_eq!(f["flag"], "OTEL_LOG_TOOL_DETAILS");
     }
 }
