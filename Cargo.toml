@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/cainary-core", "crates/cainary-cli"]
+members = ["crates/cainary-core", "crates/cainary-cli", "crates/cainary-net"]
 exclude = ["linux"]
 
 [workspace.package]
@@ -26,6 +26,10 @@ toml = "1.1"
 # Tilde: cainary-core uses plist::stream, which may break between minor versions.
 plist = { version = "~1.10.3", features = ["enable_unstable_features_that_may_break_with_minor_version_bumps"] }
 libc = { version = "0.2", default-features = false }
+# Only cainary-net: user red-flag patterns; linear-time matching, so hostile input can't ReDoS.
+regex = "1"
+# Only cainary-net: one pass over every value for all text patterns.
+aho-corasick = "1"
 
 [profile.release]
 opt-level = "s"
