@@ -7,7 +7,7 @@ use crate::redact;
 use crate::rules::otel_catalog::{self, Export, Vendor};
 use crate::rules::otel_preview::{self, FlagInput};
 use crate::rules::vendor;
-use crate::value::{self, Value};
+use crate::value::Value;
 
 const REF: &str = "https://learn.chatgpt.com/docs/config-file/config-reference";
 
@@ -103,10 +103,8 @@ fn flag_input(cfg: &CxConfig, name: &str) -> FlagInput {
     };
     let source = layer_source(cfg, s.layer);
     FlagInput {
-        value: Some(match &s.value {
-            Value::String(t) => t.clone(),
-            other => other.to_string(),
-        }),
+        // A TOML scalar as text: strings keep their quotes, so only a real boolean reads `true`.
+        value: Some(s.value.to_string()),
         set_by: Some(source.origin),
         path: Some(source.path),
     }
@@ -122,7 +120,9 @@ fn payload_of(cfg: &CxConfig, export: Export) -> Payload {
 }
 
 fn on(cfg: &CxConfig, key: &str) -> bool {
-    cfg.cfg.get(key).is_some_and(|s| value::truthy(&s.value))
+    cfg.cfg
+        .get(key)
+        .is_some_and(|s| s.value == Value::Bool(true))
 }
 
 fn join(list: &[&str]) -> String {
@@ -465,6 +465,26 @@ mod tests {
             gate("otel.log_user_prompt").path.as_deref(),
             Some("~/.codex/config.toml")
         );
+    }
+
+    #[test]
+    fn only_a_toml_true_turns_prompt_and_reply_logging_on() {
+        for v in [json!(1), json!("yes"), json!("true")] {
+            let f = run(&[
+                ("otel.exporter", otlp("https://otel.example-corp.com")),
+                ("otel.log_user_prompt", v.clone()),
+                ("otel.log_agent_responses", v.clone()),
+            ]);
+            assert_eq!(
+                f[0].title,
+                "Codex sends your commands, their output and your account email to otel.example-corp.com",
+                "{v}"
+            );
+            let p = f[0].payload.as_ref().unwrap();
+            for g in &p.gates {
+                assert!(!g.on, "{} for {v}", g.flag);
+            }
+        }
     }
 
     #[test]

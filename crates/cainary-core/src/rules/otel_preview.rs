@@ -42,7 +42,8 @@ fn on_under(cat: &Catalog, rule: Rule, name: &str, flag: Lookup, depth: u8) -> b
     }
 }
 
-fn is_inline(v: &str) -> bool {
+/// `OTEL_LOG_RAW_API_BODIES` asks for bodies inline: `1` or `true`, trimmed, any case.
+pub fn is_inline(v: &str) -> bool {
     matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true")
 }
 

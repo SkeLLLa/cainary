@@ -78,7 +78,7 @@ fn content(cfg: &CcConfig, d: Dest) -> Vec<(&CcEnvVar, Vec<Signal>)> {
     }
     if let Some(v) = claude_code::env(cfg, "OTEL_LOG_RAW_API_BODIES")
         && d == Dest::Logs
-        && matches!(v.value.to_ascii_lowercase().as_str(), "1" | "true")
+        && otel_preview::is_inline(&v.value)
     {
         out.push((v, vec![Prompts, Responses, ToolDetails, FileContents]));
     }
@@ -160,9 +160,7 @@ fn note(name: &str, d: Dest, value: &str) -> Option<&'static str> {
         "OTEL_LOG_TOOL_CONTENT" => {
             "With OTEL_LOG_TOOL_CONTENT on, tool output such as file contents and command output is attached to trace spans (up to 60 KB each)."
         }
-        "OTEL_LOG_RAW_API_BODIES"
-            if matches!(value.to_ascii_lowercase().as_str(), "1" | "true") =>
-        {
+        "OTEL_LOG_RAW_API_BODIES" if otel_preview::is_inline(value) => {
             "With OTEL_LOG_RAW_API_BODIES on, the full request and response of every model call is sent, including the whole conversation."
         }
         _ => return None,
@@ -391,7 +389,7 @@ fn orphan_flags(ctx: &mut ScanCtx, cfg: &CcConfig, used: &[&str]) {
             continue;
         };
         let on = if name == "OTEL_LOG_RAW_API_BODIES" {
-            matches!(v.value.to_ascii_lowercase().as_str(), "1" | "true")
+            otel_preview::is_inline(&v.value)
         } else {
             flag(cfg, name)
         };
@@ -428,8 +426,8 @@ fn raw_bodies(ctx: &mut ScanCtx, cfg: &CcConfig) {
     let Some(v) = claude_code::env(cfg, "OTEL_LOG_RAW_API_BODIES") else {
         return;
     };
-    let lower = v.value.to_ascii_lowercase();
-    let b = if let Some(dir) = v.value.strip_prefix("file:") {
+    let lower = v.value.trim().to_ascii_lowercase();
+    let b = if let Some(dir) = v.value.trim().strip_prefix("file:") {
         FindingBuilder::new(format!(
             "Claude Code writes raw API bodies to {} on this machine",
             redact::text(dir)
@@ -838,6 +836,32 @@ mod tests {
         for s in [Signal::Prompts, Signal::Responses, Signal::FileContents] {
             assert!(f[0].signals.contains(&s));
         }
+    }
+
+    #[test]
+    fn raw_bodies_value_is_trimmed_everywhere() {
+        let f = run(&proc_cfg(&[
+            ON,
+            ("OTEL_LOGS_EXPORTER", "otlp"),
+            ("OTEL_LOG_RAW_API_BODIES", "1 "),
+        ]));
+        assert_eq!(f.len(), 1);
+        assert!(f[0].signals.contains(&Signal::Prompts));
+        assert!(f[0].detail.contains("whole conversation"));
+        let p = f[0].payload.as_ref().unwrap();
+        let g = p
+            .gates
+            .iter()
+            .find(|g| g.flag == "OTEL_LOG_RAW_API_BODIES")
+            .unwrap();
+        assert!(g.on);
+        // metrics only: the orphan finding agrees too
+        let f = run(&proc_cfg(&[
+            ON,
+            ("OTEL_METRICS_EXPORTER", "otlp"),
+            ("OTEL_LOG_RAW_API_BODIES", " TRUE"),
+        ]));
+        assert!(f.iter().any(|f| f.title.contains("raw API bodies")));
     }
 
     #[test]
