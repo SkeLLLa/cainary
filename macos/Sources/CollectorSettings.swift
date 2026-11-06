@@ -48,7 +48,18 @@ struct CollectorPattern: Codable, Hashable, Identifiable, Sendable {
 
     private enum CodingKeys: String, CodingKey { case name, kind, pattern, caseSensitive }
 
-    static let maxCount = 64
+    /// The collector's limit on all red flags, enabled presets included.
+    static let maxTotal = 64
+    static let maxPatternBytes = 1024
+
+    /// `^[a-z0-9][a-z0-9_-]{0,63}$`, as `redflag::valid_name`.
+    static func validName(_ name: String) -> Bool {
+        let b = Array(name.utf8)
+        guard (1...64).contains(b.count), let first = b.first else { return false }
+        func lower(_ c: UInt8) -> Bool { (0x61...0x7A).contains(c) || (0x30...0x39).contains(c) }
+        guard lower(first) else { return false }
+        return b.allSatisfy { lower($0) || $0 == 0x5F || $0 == 0x2D }
+    }
 }
 
 struct CollectorSettings: Equatable, Sendable {
@@ -86,23 +97,59 @@ struct CollectorSettings: Equatable, Sendable {
         return args
     }
 
+    /// Why a row would stop the collector, or nil if it is fine. A row with neither a name nor a
+    /// pattern is blank (half typed) and not an error. Mirrors the collector's rules; whether a
+    /// regex compiles is left to it.
+    func problem(at index: Int) -> String? {
+        let row = patterns[index]
+        let name = row.name.trimmingCharacters(in: .whitespaces)
+        if name.isEmpty && row.pattern.isEmpty { return nil }
+        if !CollectorPattern.validName(name) {
+            return "Name: 1–64 characters, a–z, 0–9, - and _, starting with a letter or digit."
+        }
+        if CollectorPreset.all.contains(where: { $0.name == name }) {
+            return "That name belongs to a preset."
+        }
+        if patterns[..<index].contains(where: {
+            $0.name.trimmingCharacters(in: .whitespaces) == name
+        }) {
+            return "Another pattern has this name."
+        }
+        if row.pattern.isEmpty { return "The pattern is empty." }
+        if row.pattern.utf8.count > CollectorPattern.maxPatternBytes {
+            return "The pattern is over \(CollectorPattern.maxPatternBytes) bytes."
+        }
+        return nil
+    }
+
+    /// The rows the collector gets: valid ones, as long as the total fits its limit.
+    var validPatterns: [CollectorPattern] {
+        patterns.indices.filter { problem(at: $0) == nil && !patterns[$0].pattern.isEmpty }
+            .map { patterns[$0] }
+    }
+
+    /// Set when presets plus valid patterns exceed the collector's 64.
+    var overLimit: Bool {
+        presets.filter { name in CollectorPreset.all.contains { $0.name == name } }.count
+            + validPatterns.count > CollectorPattern.maxTotal
+    }
+
     /// The first stdin line (without its newline): every known preset on or off, and the user's
     /// patterns. Rows without a name or pattern are half-typed and skipped. Nil if it would exceed
     /// the collector's 1 MiB limit.
     var configLine: Data? {
         var flags: [[String: Any]] = []
-        for pattern in patterns {
-            let name = pattern.name.trimmingCharacters(in: .whitespaces)
-            guard !name.isEmpty, !pattern.pattern.isEmpty else { continue }
+        for pattern in validPatterns {
             flags.append([
-                "name": name, "kind": pattern.kind, "pattern": pattern.pattern,
-                "caseSensitive": pattern.caseSensitive,
+                "name": pattern.name.trimmingCharacters(in: .whitespaces), "kind": pattern.kind,
+                "pattern": pattern.pattern, "caseSensitive": pattern.caseSensitive,
             ])
         }
         var presetFlags: [String: Bool] = [:]
         for preset in CollectorPreset.all { presetFlags[preset.name] = presets.contains(preset.name) }
         let object: [String: Any] = ["v": 1, "redFlags": flags, "presets": presetFlags]
-        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+        guard !overLimit,
+            let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
             data.count <= Self.maxConfigBytes
         else { return nil }
         return data

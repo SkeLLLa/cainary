@@ -241,8 +241,13 @@ private struct CollectorSettingsSection: View {
                     new.patterns.append(CollectorPattern())
                     collector.apply(new)
                 }
-                .disabled(collector.settings.patterns.count >= CollectorPattern.maxCount)
+                .disabled(collector.settings.patterns.count >= CollectorPattern.maxTotal)
                 Spacer()
+            }
+            if collector.settings.overLimit {
+                Text("The collector takes at most 64 red flags, presets included. None are used.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
             }
             Text(
                 "Names use a–z, 0–9, - and _. Patterns reach the collector over a pipe, not its command line."
@@ -294,6 +299,14 @@ private struct CollectorSettingsSection: View {
                 }
             }
             .toggleStyle(.checkbox)
+            if let index = collector.settings.patterns.firstIndex(where: { $0.id == id }),
+                let problem = collector.settings.problem(at: index)
+            {
+                Text("\(problem) This pattern is not used.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 

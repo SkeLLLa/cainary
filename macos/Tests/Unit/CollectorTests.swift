@@ -203,8 +203,46 @@ private func settingsTests() {
     } else {
         check("collector settings: config line parses", false)
     }
-    s.patterns = [CollectorPattern(name: "big", pattern: String(repeating: "x", count: 2 << 20))]
-    check("collector settings: over 1 MiB has no config", s.configLine == nil)
+    validationTests()
+}
+
+@MainActor
+private func validationTests() {
+    func row(_ name: String, _ pattern: String = "x") -> CollectorPattern {
+        CollectorPattern(name: name, pattern: pattern)
+    }
+    var s = CollectorSettings()
+    s.patterns = [
+        row("good"), row("good"), row("Bad"), row("-bad"), row("email"), row("empty", ""),
+        row("long", String(repeating: "x", count: 1025)), row("max", String(repeating: "x", count: 1024)),
+        row(String(repeating: "a", count: 65)), row(String(repeating: "a", count: 64)),
+        row("", ""), row("", "pattern without name"),
+    ]
+    let problems = s.patterns.indices.map { s.problem(at: $0) != nil }
+    check(
+        "collector validation: which rows are invalid",
+        problems == [false, true, true, true, true, true, true, false, true, false, false, true])
+    check("collector validation: blank row is not an error", s.problem(at: 10) == nil)
+    check(
+        "collector validation: only valid rows are sent",
+        s.validPatterns.map(\.name) == ["good", "max", String(repeating: "a", count: 64)])
+    if let line = s.configLine,
+        let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any]
+    {
+        check("collector validation: config skips invalid rows", (object["redFlags"] as? [Any])?.count == 3)
+    } else {
+        check("collector validation: config still built", false)
+    }
+    check("collector validation: name rule", CollectorPattern.validName("a_b-9") && !CollectorPattern.validName("_a")
+        && !CollectorPattern.validName("a.b") && !CollectorPattern.validName("é"))
+
+    // 64 flags in all, presets included.
+    var t = CollectorSettings()
+    t.presets = ["email", "jwt"]
+    t.patterns = (0..<62).map { row("p\($0)") }
+    check("collector validation: 64 is allowed", !t.overLimit && t.configLine != nil)
+    t.patterns.append(row("one-more"))
+    check("collector validation: 65 is refused", t.overLimit && t.configLine == nil)
 }
 
 // MARK: - Client
