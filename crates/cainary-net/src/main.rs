@@ -82,22 +82,35 @@ fn run(args: &[String]) -> u8 {
     }
 }
 
+type Ack = mpsc::Receiver<Result<(), String>>;
+
 /// Reads the config line (if asked), then keeps reading stdin as the lifeline: EOF means the
 /// parent is gone, so exit. A separate thread, so nothing in the output path can delay it.
 fn stdin_thread(
     config_line: bool,
-    drop_caps: bool,
-) -> (mpsc::Receiver<Result<String, String>>, mpsc::Sender<()>) {
+) -> (
+    mpsc::Receiver<Result<String, String>>,
+    mpsc::Sender<()>,
+    Ack,
+) {
     let (tx, rx) = mpsc::channel();
     let (go_tx, go_rx) = mpsc::channel::<()>();
+    let (ack_tx, ack_rx) = mpsc::channel::<Result<(), String>>();
     std::thread::spawn(move || {
         // This thread was started before the bind, so it inherited any bind capability: it has
-        // no use for it (design §16.7.5). The bind thread drops its own right after binding.
+        // no use for it (design §16.7.5). It drops its copy, verified, and says so; the main
+        // thread won't bind or accept until it has heard. The bind thread drops its own right
+        // after binding.
         #[cfg(feature = "tls")]
-        if drop_caps {
-            let _ = cainary_net::tls::privdrop::drop_capabilities();
+        let dropped = cainary_net::tls::privdrop::drop_capabilities()
+            .map_err(|e| format!("can't drop capabilities in the stdin thread: {e}"));
+        #[cfg(not(feature = "tls"))]
+        let dropped: Result<(), String> = Ok(());
+        let failed = dropped.is_err();
+        let _ = ack_tx.send(dropped);
+        if failed {
+            return;
         }
-        let _ = drop_caps;
         let mut r = io::BufReader::new(io::stdin());
         if config_line {
             let mut buf = Vec::new();
@@ -132,7 +145,7 @@ fn stdin_thread(
             }
         }
     });
-    (rx, go_tx)
+    (rx, go_tx, ack_rx)
 }
 
 fn fail(msg: impl std::fmt::Display, code: u8) -> u8 {
@@ -211,8 +224,15 @@ fn serve(o: Options) -> u8 {
         eprintln!("{w}");
     }
 
-    let stdin =
-        (o.exit_on_stdin_eof || o.config_stdin).then(|| stdin_thread(o.config_stdin, o.tls));
+    let stdin = (o.exit_on_stdin_eof || o.config_stdin).then(|| stdin_thread(o.config_stdin));
+    // The thread must have dropped (and verified) its capabilities before anything binds.
+    if let Some((_, _, ack)) = &stdin {
+        match ack.recv_timeout(Duration::from_secs(5)) {
+            Ok(Ok(())) => {}
+            Ok(Err(m)) => return fail(m, 1),
+            Err(_) => return fail("the stdin thread did not report its capability drop", 1),
+        }
+    }
     let mut configs = Vec::new();
     if let Some(path) = &o.red_flags_file {
         match file::load(path) {
@@ -221,7 +241,7 @@ fn serve(o: Options) -> u8 {
         }
     }
     if o.config_stdin {
-        let (rx, _) = stdin.as_ref().expect("the thread was started");
+        let (rx, _, _) = stdin.as_ref().expect("the thread was started");
         match rx.recv_timeout(Duration::from_secs(5)) {
             Ok(Ok(line)) => match config::parse(&line) {
                 Ok(c) => configs.push(c),
@@ -242,7 +262,7 @@ fn serve(o: Options) -> u8 {
         Err(e) => return fail(e.message, e.code),
     };
 
-    if let Some((_, go)) = &stdin {
+    if let Some((_, go, _)) = &stdin {
         let _ = go.send(());
     }
     let log = match &o.log_file {

@@ -14,10 +14,10 @@ mod imp {
 
     #[repr(C)]
     #[derive(Clone, Copy, Default)]
-    struct Data {
-        effective: u32,
-        permitted: u32,
-        inheritable: u32,
+    pub(super) struct Data {
+        pub effective: u32,
+        pub permitted: u32,
+        pub inheritable: u32,
     }
 
     const VERSION_3: u32 = 0x2008_0522;
@@ -45,17 +45,25 @@ mod imp {
         })
     }
 
-    fn any_capability() -> bool {
-        get().is_ok_and(|d| {
-            d.iter()
-                .any(|x| x.effective | x.permitted | x.inheritable != 0)
-        })
+    fn any(d: &[Data; 2]) -> bool {
+        d.iter()
+            .any(|x| x.effective | x.permitted | x.inheritable != 0)
     }
 
-    /// Clears every capability set and sets no_new_privs. Succeeds trivially when there is
-    /// nothing to drop; fails (so the caller exits) if something is left afterwards.
-    pub fn drop_capabilities() -> std::io::Result<()> {
-        if any_capability() {
+    /// The three system calls, so the fail-closed logic can be tested with a fake.
+    pub(super) trait Sys {
+        fn get(&self) -> std::io::Result<[Data; 2]>;
+        fn clear(&self) -> std::io::Result<()>;
+        fn no_new_privs(&self) -> std::io::Result<()>;
+    }
+
+    struct Real;
+
+    impl Sys for Real {
+        fn get(&self) -> std::io::Result<[Data; 2]> {
+            get()
+        }
+        fn clear(&self) -> std::io::Result<()> {
             let mut h = Header {
                 version: VERSION_3,
                 pid: 0,
@@ -67,16 +75,152 @@ mod imp {
             if r != 0 {
                 return Err(std::io::Error::last_os_error());
             }
+            Ok(())
         }
-        // SAFETY: PR_SET_NO_NEW_PRIVS takes plain integer arguments.
-        let r = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
-        if r != 0 {
-            return Err(std::io::Error::last_os_error());
+        fn no_new_privs(&self) -> std::io::Result<()> {
+            // SAFETY: PR_SET_NO_NEW_PRIVS takes plain integer arguments.
+            let r = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
+            if r != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
         }
-        if any_capability() {
+    }
+
+    /// Fail-closed: a failed query is an error (not "no capabilities"), the clear and the
+    /// no_new_privs must both succeed, and a second query must find nothing left.
+    pub(super) fn drop_with(sys: &dyn Sys) -> std::io::Result<()> {
+        let before = sys.get()?;
+        if any(&before) {
+            sys.clear()?;
+        }
+        sys.no_new_privs()?;
+        if any(&sys.get()?) {
             return Err(std::io::Error::other("capabilities remain after the drop"));
         }
         Ok(())
+    }
+
+    /// Clears every capability set of the calling thread and sets no_new_privs. Succeeds when
+    /// there was nothing to drop; any failure to find out, drop or verify is an error.
+    pub fn drop_capabilities() -> std::io::Result<()> {
+        drop_with(&Real)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::cell::Cell;
+        use std::io::{Error, ErrorKind};
+
+        struct Fake {
+            caps: Cell<bool>,
+            get_fails: bool,
+            clear_fails: bool,
+            clear_noop: bool,
+            nnp_fails: bool,
+            cleared: Cell<u32>,
+        }
+
+        fn fake() -> Fake {
+            Fake {
+                caps: Cell::new(true),
+                get_fails: false,
+                clear_fails: false,
+                clear_noop: false,
+                nnp_fails: false,
+                cleared: Cell::new(0),
+            }
+        }
+
+        impl Sys for Fake {
+            fn get(&self) -> std::io::Result<[Data; 2]> {
+                if self.get_fails {
+                    return Err(Error::from(ErrorKind::PermissionDenied));
+                }
+                let bit = if self.caps.get() {
+                    1 << NET_BIND_SERVICE
+                } else {
+                    0
+                };
+                Ok([
+                    Data {
+                        effective: bit,
+                        permitted: bit,
+                        inheritable: 0,
+                    },
+                    Data::default(),
+                ])
+            }
+            fn clear(&self) -> std::io::Result<()> {
+                self.cleared.set(self.cleared.get() + 1);
+                if self.clear_fails {
+                    return Err(Error::from(ErrorKind::PermissionDenied));
+                }
+                if !self.clear_noop {
+                    self.caps.set(false);
+                }
+                Ok(())
+            }
+            fn no_new_privs(&self) -> std::io::Result<()> {
+                if self.nnp_fails {
+                    Err(Error::from(ErrorKind::PermissionDenied))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+
+        #[test]
+        fn a_held_capability_is_cleared_and_verified() {
+            let f = fake();
+            drop_with(&f).unwrap();
+            assert_eq!(f.cleared.get(), 1);
+            assert!(!f.caps.get());
+        }
+
+        #[test]
+        fn nothing_to_drop_is_fine_and_clears_nothing() {
+            let f = fake();
+            f.caps.set(false);
+            drop_with(&f).unwrap();
+            assert_eq!(f.cleared.get(), 0);
+        }
+
+        #[test]
+        fn every_failure_is_fail_closed() {
+            // capget denied: we can't know, so it is an error, and nothing is assumed dropped.
+            let f = Fake {
+                get_fails: true,
+                ..fake()
+            };
+            assert!(drop_with(&f).is_err());
+            assert_eq!(f.cleared.get(), 0);
+            // capset fails.
+            assert!(
+                drop_with(&Fake {
+                    clear_fails: true,
+                    ..fake()
+                })
+                .is_err()
+            );
+            // capset "succeeds" but the capability is still there.
+            assert!(
+                drop_with(&Fake {
+                    clear_noop: true,
+                    ..fake()
+                })
+                .is_err()
+            );
+            // no_new_privs fails.
+            assert!(
+                drop_with(&Fake {
+                    nnp_fails: true,
+                    ..fake()
+                })
+                .is_err()
+            );
+        }
     }
 }
 
@@ -90,7 +234,24 @@ mod imp {
     }
 }
 
-pub use imp::{drop_capabilities, holds_bind_capability};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static DROPS: AtomicUsize = AtomicUsize::new(0);
+
+/// How many times the process has completed a verified drop (the server does one after
+/// binding in every mode of a build with the `tls` feature).
+pub fn completed_drops() -> usize {
+    DROPS.load(Ordering::SeqCst)
+}
+
+/// Drops and verifies; counted only on success.
+pub fn drop_capabilities() -> std::io::Result<()> {
+    imp::drop_capabilities()?;
+    DROPS.fetch_add(1, Ordering::SeqCst);
+    Ok(())
+}
+
+pub use imp::holds_bind_capability;
 
 #[cfg(test)]
 mod tests {

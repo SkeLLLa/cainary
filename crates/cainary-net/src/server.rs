@@ -142,6 +142,8 @@ pub struct Server {
     /// Bound addresses.
     pub addrs: Vec<SocketAddr>,
     pub port: u16,
+    /// A verified capability drop happened between bind and accept (builds with `tls`).
+    pub caps_dropped: bool,
     stop: Arc<AtomicBool>,
     queue: Arc<Queue>,
     active: Arc<AtomicUsize>,
@@ -301,12 +303,17 @@ fn bind_all(cfg: &Config) -> Result<(Vec<TcpListener>, Vec<String>), SetupError>
 
 pub fn run(cfg: Config) -> Result<Server, SetupError> {
     let (listeners, notes) = bind_all(&cfg)?;
-    // Whatever privilege bind needed is dropped before the first accept (design §16.7.5).
+    // Whatever privilege bind needed is dropped before the first accept (design §16.7.5): in
+    // every mode of a build that can hold the capability, since a file capability applies to
+    // the executable however it is invoked. Fail-closed: an error here ends the run.
     #[cfg(feature = "tls")]
-    if cfg.tls.is_some() {
+    let caps_dropped = {
         crate::tls::privdrop::drop_capabilities()
             .map_err(|e| setup_err(1, format!("can't drop capabilities after binding: {e}")))?;
-    }
+        true
+    };
+    #[cfg(not(feature = "tls"))]
+    let caps_dropped = false;
     let addrs: Vec<SocketAddr> = listeners
         .iter()
         .map(|l| l.local_addr().expect("bound"))
@@ -446,6 +453,7 @@ pub fn run(cfg: Config) -> Result<Server, SetupError> {
     Ok(Server {
         addrs,
         port,
+        caps_dropped,
         stop,
         queue,
         active: Arc::clone(&shared.active),

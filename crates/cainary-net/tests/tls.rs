@@ -882,3 +882,18 @@ fn a_record_trickled_after_a_good_first_request_is_cut_off_at_the_idle_deadline(
     run.srv.shutdown();
     let _ = std::fs::remove_dir_all(&run.dir);
 }
+
+#[test]
+fn capabilities_are_dropped_after_bind_in_plain_mode_too() {
+    // A tls-enabled executable may hold the bind capability however it is started.
+    let out = Buf::default();
+    let mut cfg = Config::new(Box::new(out.clone()));
+    cfg.listen = vec!["127.0.0.1".into()];
+    let plain = server::run(cfg).unwrap();
+    assert!(plain.caps_dropped, "plain mode must drop too");
+    plain.shutdown();
+    let run = start("caps");
+    assert!(run.srv.caps_dropped);
+    run.srv.shutdown();
+    let _ = std::fs::remove_dir_all(&run.dir);
+}
