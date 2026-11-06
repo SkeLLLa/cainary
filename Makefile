@@ -1,8 +1,9 @@
 # The only build entry point for cAInary (mise tasks wrap these targets).
 
 .DEFAULT_GOAL := help
+PHONY_RELEASE := release otel-debug linux-build-release linux-run-release
 .PHONY: help build test fmt lint lint-actions check-rust check core-universal app bundle ui-test scan publish-check clean \
-	linux linux-cli linux-build linux-test linux-fmt linux-lint linux-check linux-ui-test linux-run
+	linux linux-cli linux-build linux-test linux-fmt linux-lint linux-check linux-ui-test linux-run $(PHONY_RELEASE)
 
 # cargo needs a writable CARGO_HOME. Normally that is the existing CARGO_HOME or ~/.cargo and
 # nothing changes. When that directory cannot be written (the agent sandbox), use
@@ -50,6 +51,8 @@ export CAINARY_GIT_SHA CAINARY_BUILD_DATE SOURCE_DATE_EPOCH
 help:
 	@echo "Targets:"
 	@echo "  build           debug build of the Rust workspace"
+	@echo "  release         release cainary and cainary-otel-debug -> target/release/"
+	@echo "  otel-debug      run the release cainary-otel-debug (OTEL_DEBUG_ARGS=... for flags)"
 	@echo "  test            cargo test"
 	@echo "  fmt             cargo fmt (in place)"
 	@echo "  lint            cargo fmt --check, clippy -D warnings, swift format, shellcheck"
@@ -67,7 +70,9 @@ help:
 	@echo "  linux-lint      fmt --check and clippy -D warnings for linux/"
 	@echo "  linux-check     linux-lint + linux-test + shellcheck + desktop/AppStream validation (CI)"
 	@echo "  linux-ui-test   offscreen snapshots of the tray windows -> target/ui-snapshots/linux/"
-	@echo "  linux-run       run the tray app against the debug cainary (--dev)"
+	@echo "  linux-run       run the tray app against the debug cainary and collector (--dev)"
+	@echo "  linux-build-release  release build of the Qt tray app -> linux/target/release/"
+	@echo "  linux-run-release    run the release tray against the release cainary and collector (--dev)"
 	@echo "  ui-test         decode the Rust goldens through the Swift model"
 	@echo "  scan            scan this machine (smoke test, not golden-checked)"
 	@echo "  publish-check   cargo publish --dry-run for the published crates (needs crates.io)"
@@ -221,8 +226,19 @@ endif
 
 linux-run: build
 	$(CARGO_CD) env CAINARY_CORE="$(CURDIR)/target/debug/cainary" \
+		CAINARY_OTEL_DEBUG="$(CURDIR)/target/debug/cainary-otel-debug" \
 		CAINARY_ICON_THEME_PATH="$(CURDIR)/linux/data/icons" \
 		$(CARGO) run $(LINUX_MANIFEST) -p cainary-tray -- --dev
+
+linux-build-release:
+	$(CARGO_CMD) build $(LINUX_MANIFEST) --release --locked -p cainary-tray
+
+# --dev makes a release tray honour CAINARY_CORE and CAINARY_OTEL_DEBUG (tray-model/src/locate.rs).
+linux-run-release: release linux-build-release
+	env CAINARY_CORE="$(CURDIR)/target/release/cainary" \
+		CAINARY_OTEL_DEBUG="$(CURDIR)/target/release/cainary-otel-debug" \
+		CAINARY_ICON_THEME_PATH="$(CURDIR)/linux/data/icons" \
+		"$(CURDIR)/linux/target/release/cainary-tray" --dev
 
 linux: linux-cli
 	$(CARGO_CMD) build $(LINUX_MANIFEST) --release --locked -p cainary-tray
@@ -239,6 +255,16 @@ else
 ui-test:
 	$(call skipped,macOS)
 endif
+
+# Release binaries from this checkout, for trying a build without installing it.
+release:
+	$(CARGO_CMD) build $(MANIFEST) --release --locked -p cainary -p cainary-net
+
+OTEL_DEBUG_ARGS ?=
+# Only the collector writes to stdout, so `--json` output can be piped.
+otel-debug:
+	@$(CARGO_CMD) build $(MANIFEST) --release --locked -p cainary-net >&2
+	@"$(CURDIR)/target/release/cainary-otel-debug" $(OTEL_DEBUG_ARGS)
 
 scan:
 	$(CARGO_CMD) run $(MANIFEST) --quiet -p cainary -- scan

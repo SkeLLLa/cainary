@@ -1007,7 +1007,7 @@ state.
   shellcheck on `run:` scripts; CI's `actions-lint` job, and a dependency of `mise run check`),
   `check-rust`, `check` (lint + test + ui-test), `core-universal` (release builds for both Apple targets, `lipo` →
   `target/universal/cainary`), `app`, `bundle` (`RELEASE=1` for the universal release app),
-  `ui-test`, `scan`, `publish-check` (`cargo publish --workspace --dry-run`), `clean` (also
+  `ui-test`, `scan`, `release` (release `cainary` and `cainary-otel-debug` in `target/release/`), `otel-debug` (runs that collector; `OTEL_DEBUG_ARGS=` for flags), `publish-check` (`cargo publish --workspace --dry-run`), `clean` (also
   `linux/target`). The app and bundle steps are in macos.md §4. Checks for the other OS are skipped with a
   note, never failed: on Linux, `lint` skips `swift format` and `ui-test` is a no-op; on macOS, `linux-lint`,
   `linux-test`, `linux-check` and `linux-ui-test` are no-ops (`HOST_OS`, from `uname -s`). The Linux targets use the

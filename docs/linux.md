@@ -278,7 +278,8 @@ the distro, and `podman` (or `docker`) for the container tasks is a host tool.
 
 ```sh
 make linux-build      # debug build of the tray → linux/target/debug/cainary-tray
-make linux-run        # build the debug CLI, then run the tray against it with --dev
+make linux-run        # build the debug CLI and collector, then run the tray against them with --dev
+make linux-run-release  # the same with release builds of all three, without installing anything
 make linux-test       # tests under dbus-run-session with QT_QPA_PLATFORM=offscreen
 make linux-ui-test    # offscreen snapshots → target/ui-snapshots/linux/
 make linux-check      # fmt, clippy -D warnings, tests, shellcheck, desktop and AppStream checks
@@ -291,6 +292,7 @@ The mise tasks wrap the same targets (`mise tasks` lists them):
 | --- | --- |
 | `linux:build`, `linux:test`, `linux:lint`, `linux:fmt` | `make linux-build`, `-test`, `-lint`, `-fmt` |
 | `linux:check`, `linux:ui-test`, `linux:run` | `make linux-check`, `-ui-test`, `-run` |
+| `linux:build:release`, `linux:run:release` | `make linux-build-release`, `-run-release`: the release tray, run with `--dev` against the release `cainary` and `cainary-otel-debug` from `target/release/` (`build:release`), nothing installed |
 | `linux:cli` | the static musl `cainary` for `LINUX_ARCH` (default: this machine) that `make linux` ships beside the tray |
 | `linux:package` | tarball, .deb and .rpm in `dist/` for this machine (needs `cargo-deb`, `cargo-generate-rpm`) |
 | `linux:deps` | the distro packages above; `-- --install` to install them |
