@@ -1297,7 +1297,7 @@ mod fires {
         );
         // And the hidden code really is invisible to the other guards: that's the point.
         let hidden = "#[cfg(test)]\nmod tests {\n}\npub fn sneaky() { std::fs::write(a, b); }\n";
-        assert!(production_code(hidden).contains("sneaky") == false);
+        assert!(!production_code(hidden).contains("sneaky"));
         assert!(!check_tests_last(&one(hidden)).is_empty());
     }
 }
