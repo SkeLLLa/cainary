@@ -49,10 +49,14 @@ pub struct ScopeOut<'a> {
 /// A log record, metric data point, span, or span event.
 #[derive(Debug, Clone)]
 pub struct Record<'a> {
-    pub name: String,
+    /// Borrowed from the document for metrics and spans, so the points of one metric (and the
+    /// events of one span) share one name instead of cloning it per record.
+    pub name: Cow<'a, str>,
     pub kind: ItemKind,
     pub item: Option<&'static Item>,
-    pub parent: Option<String>,
+    /// Metric data points: the OTLP family (`sum`, `gauge`, `histogram`, …).
+    pub family: Option<&'static str>,
+    pub parent: Option<Cow<'a, str>>,
     pub body: Option<&'a Value>,
     pub fields: Vec<Field<'a>>,
 }
@@ -247,16 +251,17 @@ pub fn summarize(classified: &Classified<'_>) -> Summary {
             for record in &scope.records {
                 collect_group_keys(&record.fields, &mut identity, &mut resource);
                 let known = record.item.is_some();
-                let entry = records
-                    .entry(record.name.clone())
-                    .or_insert_with(|| SummaryRecord {
-                        name: record.name.clone(),
-                        kind: record.kind,
-                        count: 0,
-                        known,
-                        what: record.item.map(|item| item.what),
-                        attrs: Vec::new(),
-                    });
+                let entry =
+                    records
+                        .entry(record.name.to_string())
+                        .or_insert_with(|| SummaryRecord {
+                            name: record.name.to_string(),
+                            kind: record.kind,
+                            count: 0,
+                            known,
+                            what: record.item.map(|item| item.what),
+                            attrs: Vec::new(),
+                        });
                 entry.count += 1;
                 entry.known &= known;
                 let mut attrs: BTreeMap<String, SummaryAttr> = entry
@@ -428,9 +433,10 @@ fn classify_logs<'a>(
         }
         *record_count += 1;
         records.push(Record {
-            name,
+            name: Cow::Owned(name),
             kind: ItemKind::Event,
             item,
+            family: None,
             parent: None,
             body,
             fields,
@@ -459,15 +465,15 @@ fn classify_metrics<'a>(
         let object = metric
             .as_object()
             .ok_or(ClassifyError::BadShape { index: Some(index) })?;
-        let name = match object.get("name") {
-            Some(Value::String(name)) => name.clone(),
-            None | Some(Value::Null) => String::new(),
+        let name: Cow<'a, str> = match object.get("name") {
+            Some(Value::String(name)) => Cow::Borrowed(name.as_str()),
+            None | Some(Value::Null) => Cow::Borrowed(""),
             _ => return Err(ClassifyError::BadShape { index: Some(index) }),
         };
         let item = lookup_item(&name, cat, export);
         let mut had_family = false;
-        for family in FAMILIES {
-            let Some(family_value) = object.get(family) else {
+        for family_name in FAMILIES {
+            let Some(family_value) = object.get(family_name) else {
                 continue;
             };
             had_family = true;
@@ -497,6 +503,7 @@ fn classify_metrics<'a>(
                     name: name.clone(),
                     kind: ItemKind::Metric,
                     item,
+                    family: Some(family_name),
                     parent: None,
                     body: None,
                     fields,
@@ -512,6 +519,7 @@ fn classify_metrics<'a>(
                 name,
                 kind: ItemKind::Metric,
                 item,
+                family: None,
                 parent: None,
                 body: None,
                 fields: Vec::new(),
@@ -549,6 +557,7 @@ fn classify_spans<'a>(
             name: name.clone(),
             kind: ItemKind::Span,
             item,
+            family: None,
             parent: None,
             body: None,
             fields,
@@ -580,6 +589,7 @@ fn classify_spans<'a>(
                 name: event_name,
                 kind: ItemKind::SpanEvent,
                 item,
+                family: None,
                 parent: Some(name.clone()),
                 body: None,
                 fields,
@@ -589,14 +599,14 @@ fn classify_spans<'a>(
     Ok(records)
 }
 
-fn string_member(
-    object: &serde_json::Map<String, Value>,
+fn string_member<'a>(
+    object: &'a serde_json::Map<String, Value>,
     key: &str,
     index: usize,
-) -> Result<Option<String>, ClassifyError> {
+) -> Result<Option<Cow<'a, str>>, ClassifyError> {
     match object.get(key) {
         None | Some(Value::Null) => Ok(None),
-        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(Value::String(value)) => Ok(Some(Cow::Borrowed(value.as_str()))),
         _ => Err(ClassifyError::BadShape { index: Some(index) }),
     }
 }
