@@ -766,9 +766,7 @@ fn claude_apply(env: &Env<'_>, dry_run: bool) -> Line {
     line.backup_path = backup_name.map(|n| settings.dir.path().join(n).display().to_string());
     line.message = with_shell(
         h,
-        &format!(
-            "Claude Code will trust the collector certificate once it is restarted. {RESTART}"
-        ),
+        "Claude Code will trust the collector certificate once it is restarted.",
     );
     line
 }
