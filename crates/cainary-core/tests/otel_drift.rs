@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -86,6 +86,18 @@ fn attr_accepts(attr: &Attr, export: Export) -> bool {
     }
 }
 
+fn key_pattern_matches(pattern: &str, key: &str) -> bool {
+    if pattern == "*" {
+        key == "*"
+    } else if let Some(prefix) = pattern.strip_suffix('*') {
+        key.starts_with(prefix)
+    } else if let Some(suffix) = pattern.strip_prefix('*') {
+        key.ends_with(suffix)
+    } else {
+        pattern == key
+    }
+}
+
 #[test]
 fn catalog_versions_match_the_latest_fixture_directory() {
     let dirs = fixture_dirs();
@@ -167,8 +179,10 @@ fn every_fixture_record_and_attribute_is_catalogued() {
 fn every_observed_catalog_item_and_attribute_appears_in_its_fixture() {
     for (vendor, directory, _) in fixture_dirs() {
         let catalog = otel_catalog::catalog(vendor);
-        let mut observed_items = BTreeSet::new();
-        let mut observed_attrs = HashSet::new();
+        let mut fixture_exports = Vec::new();
+        let mut observed_items = Vec::new();
+        let mut observed_global_keys = Vec::new();
+        let mut observed_item_fields = Vec::new();
 
         for entry in fs::read_dir(&directory).expect("fixture vendor directory exists") {
             let path = entry.expect("fixture file entry").path();
@@ -178,24 +192,28 @@ fn every_observed_catalog_item_and_attribute_appears_in_its_fixture() {
             let Some(export) = export_for_file(file_name) else {
                 continue;
             };
+            fixture_exports.push(export);
             let doc: Value =
                 serde_json::from_slice(&fs::read(&path).expect("read sanitized OTLP fixture"))
                     .expect("sanitized OTLP fixture JSON");
             let classified = classify(export, &doc).expect("fixture classifies");
             for resource in &classified.resources {
                 for field in &resource.attrs {
-                    if let Some(attr) = field.attr {
-                        observed_attrs.insert(attr as *const Attr as usize);
-                    }
+                    observed_global_keys.push((export, field.key.clone()));
                 }
                 for scope in &resource.scopes {
                     for record in &scope.records {
                         if let Some(item) = record.item {
-                            observed_items.insert(item.name.to_owned());
+                            observed_items.push((export, record.kind, item as *const _ as usize));
                         }
                         for field in &record.fields {
-                            if let Some(attr) = field.attr {
-                                observed_attrs.insert(attr as *const Attr as usize);
+                            observed_global_keys.push((export, field.key.clone()));
+                            if let Some(item) = record.item {
+                                observed_item_fields.push((
+                                    export,
+                                    item as *const _ as usize,
+                                    field.key.clone(),
+                                ));
                             }
                         }
                     }
@@ -203,38 +221,89 @@ fn every_observed_catalog_item_and_attribute_appears_in_its_fixture() {
             }
         }
 
-        for item in catalog.items.iter().filter(|item| item.observed) {
-            let appears = [Export::Logs, Export::Metrics, Export::Traces]
-                .into_iter()
-                .any(|export| {
-                    catalog.item(item.name, export).is_some() && observed_items.contains(item.name)
-                });
-            assert!(
-                appears,
-                "{} observed item {:?} is absent from its version fixture",
-                vendor_label(vendor),
-                item.name
-            );
-        }
+        fixture_exports.sort_by_key(|export| match export {
+            Export::Logs => 0,
+            Export::Metrics => 1,
+            Export::Traces => 2,
+            Export::Beta => 3,
+        });
+        fixture_exports.dedup();
 
-        let attrs = catalog
-            .identity
-            .iter()
-            .chain(catalog.resource)
-            .chain(catalog.common)
-            .chain(catalog.items.iter().flat_map(|item| item.attrs));
-        for attr in attrs.filter(|attr| attr.observed) {
-            let appears = [Export::Logs, Export::Metrics, Export::Traces]
-                .into_iter()
-                .any(|export| attr_accepts(attr, export))
-                && observed_attrs.contains(&(attr as *const Attr as usize));
-            assert!(
-                appears,
-                "{} observed attribute {:?} is absent from its version fixture",
-                vendor_label(vendor),
-                attr.key
-            );
+        for export in &fixture_exports {
+            for item in catalog.items.iter().filter(|item| item.observed) {
+                let Some(found) = catalog.item(item.name, *export) else {
+                    continue;
+                };
+                if !std::ptr::eq(found, item) {
+                    continue;
+                }
+                let appears =
+                    observed_items.contains(&(*export, item.kind, item as *const _ as usize));
+                assert!(
+                    appears,
+                    "{} observed item {:?} is absent from its {} fixture",
+                    vendor_label(vendor),
+                    item.name,
+                    export_name(*export)
+                );
+            }
+
+            let global_attrs = catalog
+                .identity
+                .iter()
+                .chain(catalog.resource)
+                .chain(catalog.common);
+            for attr in global_attrs.filter(|attr| attr.observed && attr_accepts(attr, *export)) {
+                assert!(
+                    observed_global_keys
+                        .iter()
+                        .any(|(found_export, key)| *found_export == *export
+                            && key_pattern_matches(attr.key, key)),
+                    "{} observed {} attribute {:?} is absent from its version fixture",
+                    vendor_label(vendor),
+                    export_name(*export),
+                    attr.key
+                );
+            }
+
+            for item in catalog.items.iter().filter(|item| item.observed) {
+                let Some(found) = catalog.item(item.name, *export) else {
+                    continue;
+                };
+                if !std::ptr::eq(found, item) {
+                    continue;
+                }
+                for attr in item
+                    .attrs
+                    .iter()
+                    .filter(|attr| attr.observed && attr_accepts(attr, *export))
+                {
+                    assert!(
+                        observed_item_fields
+                            .iter()
+                            .any(|(found_export, item_ptr, key)| {
+                                *found_export == *export
+                                    && *item_ptr == item as *const _ as usize
+                                    && key_pattern_matches(attr.key, key)
+                            }),
+                        "{} observed {} attribute {:?} on {:?} is absent from its version fixture",
+                        vendor_label(vendor),
+                        export_name(*export),
+                        attr.key,
+                        item.name
+                    );
+                }
+            }
         }
+    }
+}
+
+fn export_name(export: Export) -> &'static str {
+    match export {
+        Export::Logs => "logs",
+        Export::Metrics => "metrics",
+        Export::Traces => "traces",
+        Export::Beta => "beta",
     }
 }
 

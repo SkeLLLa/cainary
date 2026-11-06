@@ -128,9 +128,13 @@ const CC_METRICS_DOC: &str =
     "https://code.claude.com/docs/en/monitoring-usage#metrics-cardinality-control";
 const CX_ADVANCED_DOC: &str =
     "https://learn.chatgpt.com/docs/config-file/config-advanced#observability-and-telemetry";
+const CX_METRICS_CATALOG_DOC: &str =
+    "https://learn.chatgpt.com/docs/config-file/config-advanced#metrics-catalog";
 const CX_CONFIG_DOC: &str = "https://github.com/openai/codex/blob/40de81e7af/docs/config.md#otel";
 const CX_SKILL_DOC: &str =
     "https://github.com/openai/codex/blob/main/codex-rs/otel/README.md#skill-invocation-logs";
+const CX_GUARDIAN_DOC: &str =
+    "https://github.com/openai/codex/blob/main/codex-rs/otel/README.md#guardian-assessment-logs";
 
 const fn attr(key: &'static str, group: Group, what: &'static str) -> Attr {
     Attr {
@@ -1068,7 +1072,7 @@ static CC_API_REQUEST: &[Attr] = &[
             Group::Content,
             "the plugin marketplace name",
         ),
-        CC_TD_THIRD_PARTY,
+        CC_TD_OMIT,
     ),
     gated(
         attr("mcp_server.name", Group::Content, "the MCP server name"),
@@ -1113,7 +1117,7 @@ static CC_API_ERROR: &[Attr] = &[
             Group::Content,
             "the plugin marketplace name",
         ),
-        CC_TD_THIRD_PARTY,
+        CC_TD_OMIT,
     ),
     gated(
         attr("mcp_server.name", Group::Content, "the MCP server name"),
@@ -1169,7 +1173,7 @@ static CC_API_REFUSAL: &[Attr] = &[
             Group::Content,
             "the plugin marketplace name",
         ),
-        CC_TD_THIRD_PARTY,
+        CC_TD_OMIT,
     ),
     gated(
         attr("mcp_server.name", Group::Content, "the MCP server name"),
@@ -1381,7 +1385,7 @@ static CC_MCP_CONNECTION: &[Attr] = &[
         "a hash identifying the plugin",
     ),
     gated(
-        seen(attr("plugin.name", Group::Content, "the plugin name")),
+        attr("plugin.name", Group::Content, "the plugin name"),
         CC_TD_THIRD_PARTY,
     ),
     gated(
@@ -1411,11 +1415,11 @@ static CC_PLUGIN_INSTALLED: &[Attr] = &[
     ),
     gated(
         attr("plugin.name", Group::Content, "the plugin name"),
-        CC_TD_THIRD_PARTY,
+        CC_TD_OMIT,
     ),
     gated(
         attr("plugin.version", Group::Content, "the plugin version"),
-        CC_TD_THIRD_PARTY,
+        CC_TD_OMIT,
     ),
     gated(
         attr(
@@ -1423,7 +1427,7 @@ static CC_PLUGIN_INSTALLED: &[Attr] = &[
             Group::Content,
             "the plugin marketplace name",
         ),
-        CC_TD_THIRD_PARTY,
+        CC_TD_OMIT,
     ),
 ];
 
@@ -1511,7 +1515,7 @@ static CC_SKILL_ACTIVATED: &[Attr] = &[
     ),
     gated(
         attr("plugin.name", Group::Content, "the plugin name"),
-        CC_TD_THIRD_PARTY,
+        CC_TD_OMIT,
     ),
     gated(
         attr(
@@ -1519,7 +1523,7 @@ static CC_SKILL_ACTIVATED: &[Attr] = &[
             Group::Content,
             "the plugin marketplace name",
         ),
-        CC_TD_THIRD_PARTY,
+        CC_TD_OMIT,
     ),
 ];
 
@@ -1913,7 +1917,7 @@ static CC_COST_USAGE: &[Attr] = &[
             Group::Content,
             "the plugin marketplace name",
         ),
-        CC_TD_THIRD_PARTY,
+        CC_TD_OMIT,
     ),
     gated(
         attr("mcp_server.name", Group::Content, "the MCP server name"),
@@ -1926,6 +1930,13 @@ static CC_COST_USAGE: &[Attr] = &[
 ];
 static CC_TOKEN_USAGE: &[Attr] = &[
     seen(attr("type", Group::Event, "the kind of token usage")),
+    seen(attr("model", Group::Event, "the model name")),
+    seen(attr(
+        "query_source",
+        Group::Event,
+        "what issued the request",
+    )),
+    seen(attr("effort", Group::Event, "the model effort level")),
     gated(
         attr("agent.name", Group::Content, "the agent name"),
         CC_TD_CUSTOM,
@@ -1944,7 +1955,7 @@ static CC_TOKEN_USAGE: &[Attr] = &[
             Group::Content,
             "the plugin marketplace name",
         ),
-        CC_TD_THIRD_PARTY,
+        CC_TD_OMIT,
     ),
     gated(
         attr("mcp_server.name", Group::Content, "the MCP server name"),
@@ -2357,7 +2368,7 @@ static CC_ITEMS: &[Item] = &[
         CC_API_REFUSAL,
         Some("https://code.claude.com/docs/en/monitoring-usage#api-refusal-event"),
         false,
-        true,
+        false,
         false,
     ),
     event_with(
@@ -2516,7 +2527,7 @@ static CC_ITEMS: &[Item] = &[
     event_with(
         "claude_code.hook_plugin_metrics",
         LOGS,
-        "Metrics from an official plugin's hooks",
+        "Metrics from official plugin hooks, including up to 20 plugin-emitted boolean or numeric keys",
         CC_HOOK_PLUGIN_METRICS,
         None,
         true,
@@ -2581,7 +2592,7 @@ static CC_ITEMS: &[Item] = &[
             off: Off::Omitted,
         }),
         false,
-        Some("https://code.claude.com/docs/en/monitoring-usage#new-context-gates"),
+        Some("https://code.claude.com/docs/en/monitoring-usage#span-attributes"),
         false,
         false,
         false,
@@ -2936,7 +2947,19 @@ static CX_COMMON: &[Attr] = &[
             Group::Event,
             "what started the Codex session",
         )),
-        LOGS_METRICS,
+        LOGS,
+    ),
+    limited(
+        attr("originator", Group::Event, "what started the Codex session"),
+        METRICS,
+    ),
+    limited(
+        attr(
+            "session_source",
+            Group::Event,
+            "what started the Codex session",
+        ),
+        METRICS,
     ),
 ];
 
@@ -3208,6 +3231,25 @@ static CX_AGENT_RESPONSE: &[Attr] = &[
 ];
 
 static CX_GUARDIAN_ATTRS: &[Attr] = &[
+    attr(
+        "conversation.id",
+        Group::Identity,
+        "the reviewed conversation ID",
+    ),
+    attr("turn.id", Group::Event, "the reviewed turn ID"),
+    attr("review.id", Group::Event, "the Guardian review ID"),
+    attr(
+        "target_item.id",
+        Group::Event,
+        "the reviewed target item ID",
+    ),
+    attr("status", Group::Event, "the review status"),
+    attr("risk_level", Group::Event, "the assessed risk level"),
+    attr(
+        "user_authorization",
+        Group::Event,
+        "the user's authorization level",
+    ),
     attr("outcome", Group::Event, "the review outcome"),
     attr(
         "rationale_length",
@@ -3238,6 +3280,11 @@ static CX_SKILL_INVOCATION: &[Attr] = &[
         "the plugin that supplied the skill",
     ),
     attr("user.id", Group::Identity, "the authenticated user ID"),
+    attr(
+        "user.account_id",
+        Group::Identity,
+        "the workspace account ID",
+    ),
 ];
 
 static CX_STARTUP_PHASE: &[Attr] = &[
@@ -3306,6 +3353,27 @@ static CX_METRIC_TOOL_CALL: &[Attr] = &[
     attr("tool", Group::Event, "the tool's name, never the command"),
     attr("success", Group::Event, "whether the tool call succeeded"),
 ];
+
+macro_rules! cx_metric_attrs {
+    ($($key:literal => $what:literal),* $(,)?) => {
+        &[$(attr($key, Group::Event, $what)),*]
+    };
+}
+
+macro_rules! cx_metric {
+    ($name:literal, $unit:expr, $what:literal, $attrs:expr) => {
+        metric(
+            $name,
+            $unit,
+            $what,
+            $attrs,
+            Some(CX_METRICS_CATALOG_DOC),
+            false,
+            false,
+            false,
+        )
+    };
+}
 
 static CX_ITEMS: &[Item] = &[
     event(
@@ -3386,7 +3454,7 @@ static CX_ITEMS: &[Item] = &[
     event_with(
         "codex.agent_response",
         LOGS,
-        "Codex's final reply",
+        "Final answers from the main agent and spawned task agents",
         CX_AGENT_RESPONSE,
         Some(CX_RESPONSES),
         false,
@@ -3402,7 +3470,7 @@ static CX_ITEMS: &[Item] = &[
         CX_GUARDIAN_ATTRS,
         Some(CX_GUARDIAN_GATE),
         true,
-        Some("https://learn.chatgpt.com/docs/config-file/config-advanced#what-gets-emitted"),
+        Some(CX_GUARDIAN_DOC),
         false,
         false,
         false,
@@ -3542,6 +3610,592 @@ static CX_ITEMS: &[Item] = &[
         false,
         false,
         false,
+    ),
+    cx_metric!(
+        "codex.responses_api_overhead.duration_ms",
+        Some("ms"),
+        "Responses API overhead timing",
+        &[]
+    ),
+    cx_metric!(
+        "codex.responses_api_inference_time.duration_ms",
+        Some("ms"),
+        "Responses API inference timing",
+        &[]
+    ),
+    cx_metric!(
+        "codex.responses_api_engine_iapi_ttft.duration_ms",
+        Some("ms"),
+        "Responses API engine IAPI time to first token",
+        &[]
+    ),
+    cx_metric!(
+        "codex.responses_api_engine_service_ttft.duration_ms",
+        Some("ms"),
+        "Responses API engine service time to first token",
+        &[]
+    ),
+    cx_metric!(
+        "codex.responses_api_engine_iapi_tbt.duration_ms",
+        Some("ms"),
+        "Responses API engine IAPI time between tokens",
+        &[]
+    ),
+    cx_metric!(
+        "codex.responses_api_engine_service_tbt.duration_ms",
+        Some("ms"),
+        "Responses API engine service time between tokens",
+        &[]
+    ),
+    cx_metric!(
+        "codex.transport.fallback_to_http",
+        None,
+        "WebSocket to HTTP fallback count",
+        cx_metric_attrs!("from_wire_api" => "whether the request used the wire API")
+    ),
+    cx_metric!(
+        "codex.remote_models.fetch_update.duration_ms",
+        Some("ms"),
+        "Time to fetch remote model definitions",
+        &[]
+    ),
+    cx_metric!(
+        "codex.remote_models.load_cache.duration_ms",
+        Some("ms"),
+        "Time to load the remote model cache",
+        &[]
+    ),
+    cx_metric!(
+        "codex.startup_prewarm.duration_ms",
+        Some("ms"),
+        "Startup prewarm duration by outcome",
+        cx_metric_attrs!("status" => "the prewarm outcome")
+    ),
+    cx_metric!(
+        "codex.startup_prewarm.age_at_first_turn_ms",
+        Some("ms"),
+        "Startup prewarm age when the first turn resolves it",
+        cx_metric_attrs!("status" => "the prewarm outcome")
+    ),
+    cx_metric!(
+        "codex.cloud_requirements.fetch.duration_ms",
+        Some("ms"),
+        "Workspace managed requirements fetch duration",
+        &[]
+    ),
+    cx_metric!(
+        "codex.cloud_requirements.fetch_attempt",
+        None,
+        "Workspace managed requirements fetch attempts",
+        cx_metric_attrs!(
+            "trigger" => "what triggered the fetch",
+            "attempt" => "the attempt number",
+            "outcome" => "the fetch outcome",
+            "status_code" => "the HTTP status code"
+        )
+    ),
+    cx_metric!(
+        "codex.cloud_requirements.fetch_final",
+        None,
+        "Final workspace managed requirements fetch outcome",
+        cx_metric_attrs!(
+            "trigger" => "what triggered the fetch",
+            "outcome" => "the final outcome",
+            "reason" => "why the fetch ended",
+            "attempt_count" => "the number of attempts",
+            "status_code" => "the HTTP status code"
+        )
+    ),
+    cx_metric!(
+        "codex.cloud_requirements.load",
+        None,
+        "Workspace managed requirements load outcome",
+        cx_metric_attrs!(
+            "trigger" => "what triggered the load",
+            "outcome" => "the load outcome"
+        )
+    ),
+    cx_metric!(
+        "codex.turn.e2e_duration_ms",
+        Some("ms"),
+        "End to end time for a full turn",
+        &[]
+    ),
+    cx_metric!(
+        "codex.turn.ttft.duration_ms",
+        Some("ms"),
+        "Time to first token for a turn",
+        &[]
+    ),
+    cx_metric!(
+        "codex.turn.ttfm.duration_ms",
+        Some("ms"),
+        "Time to first model output item for a turn",
+        &[]
+    ),
+    cx_metric!(
+        "codex.turn.network_proxy",
+        None,
+        "Managed network proxy state for the turn",
+        cx_metric_attrs!(
+            "active" => "whether the managed proxy was active",
+            "tmp_mem_enabled" => "whether temporary memory was enabled"
+        )
+    ),
+    cx_metric!(
+        "codex.turn.memory",
+        None,
+        "Per turn memory read availability and citation usage",
+        cx_metric_attrs!(
+            "read_allowed" => "whether memory reads were allowed",
+            "feature_enabled" => "whether the memory feature was enabled",
+            "config_use_memories" => "whether memory use was configured",
+            "has_citations" => "whether the turn included memory citations"
+        )
+    ),
+    cx_metric!(
+        "codex.turn.tool.call",
+        None,
+        "Number of tool calls in the turn",
+        cx_metric_attrs!("tmp_mem_enabled" => "whether temporary memory was enabled")
+    ),
+    cx_metric!(
+        "codex.turn.token_usage",
+        Some("tokens"),
+        "Per turn token usage by token type",
+        cx_metric_attrs!(
+            "token_type" => "the token category",
+            "tmp_mem_enabled" => "whether temporary memory was enabled"
+        )
+    ),
+    cx_metric!(
+        "codex.tool.unified_exec",
+        None,
+        "Unified exec tool calls by TTY mode",
+        cx_metric_attrs!("tty" => "whether the tool ran with a TTY")
+    ),
+    cx_metric!(
+        "codex.approval.requested",
+        None,
+        "Tool approval request results",
+        cx_metric_attrs!(
+            "tool" => "the internal tool name",
+            "approved" => "the approval result"
+        )
+    ),
+    cx_metric!(
+        "codex.mcp.call",
+        None,
+        "MCP tool invocation results",
+        cx_metric_attrs!(
+            "status" => "the call status",
+            "tool" => "the internal tool name",
+            "connector_id" => "the connector ID when available",
+            "connector_name" => "the connector name when available"
+        )
+    ),
+    cx_metric!(
+        "codex.mcp.call.duration_ms",
+        Some("ms"),
+        "MCP tool invocation duration",
+        cx_metric_attrs!(
+            "status" => "the call status",
+            "tool" => "the internal tool name",
+            "connector_id" => "the connector ID when available",
+            "connector_name" => "the connector name when available"
+        )
+    ),
+    cx_metric!(
+        "codex.mcp.tools.list.duration_ms",
+        Some("ms"),
+        "MCP tool list duration",
+        cx_metric_attrs!("cache" => "whether the tool list came from cache")
+    ),
+    cx_metric!(
+        "codex.mcp.tools.fetch_uncached.duration_ms",
+        Some("ms"),
+        "Duration of MCP tool fetches that miss the cache",
+        &[]
+    ),
+    cx_metric!(
+        "codex.mcp.tools.cache_write.duration_ms",
+        Some("ms"),
+        "Duration of Codex Apps MCP tool cache writes",
+        &[]
+    ),
+    cx_metric!(
+        "codex.hooks.run",
+        None,
+        "Hook run counts by hook name source and status",
+        cx_metric_attrs!(
+            "hook_name" => "the hook name",
+            "source" => "where the hook came from",
+            "status" => "the hook result"
+        )
+    ),
+    cx_metric!(
+        "codex.hooks.run.duration_ms",
+        Some("ms"),
+        "Hook run duration",
+        cx_metric_attrs!(
+            "hook_name" => "the hook name",
+            "source" => "where the hook came from",
+            "status" => "the hook result"
+        )
+    ),
+    cx_metric!(
+        "codex.feature.state",
+        None,
+        "Feature values that differ from defaults",
+        cx_metric_attrs!(
+            "feature" => "the feature name",
+            "value" => "the configured feature value"
+        )
+    ),
+    cx_metric!(
+        "codex.status_line",
+        None,
+        "Session started with a configured status line",
+        &[]
+    ),
+    cx_metric!(
+        "codex.model_warning",
+        None,
+        "A warning was sent to the model",
+        &[]
+    ),
+    cx_metric!(
+        "codex.thread.started",
+        None,
+        "New thread counts by Git repository state",
+        cx_metric_attrs!("is_git" => "whether the working directory is in a Git repository")
+    ),
+    cx_metric!(
+        "codex.conversation.turn.count",
+        None,
+        "User and assistant turns recorded at thread end",
+        &[]
+    ),
+    cx_metric!(
+        "codex.thread.fork",
+        None,
+        "New thread counts by fork source",
+        cx_metric_attrs!("source" => "the fork source")
+    ),
+    cx_metric!("codex.thread.rename", None, "Thread rename count", &[]),
+    cx_metric!(
+        "codex.thread.side",
+        None,
+        "Side conversation counts by source",
+        cx_metric_attrs!("source" => "the side conversation source")
+    ),
+    cx_metric!(
+        "codex.thread.skills.enabled_total",
+        None,
+        "Enabled skills per new thread",
+        &[]
+    ),
+    cx_metric!(
+        "codex.thread.skills.kept_total",
+        None,
+        "Enabled skills kept after rendering",
+        &[]
+    ),
+    cx_metric!(
+        "codex.thread.skills.truncated",
+        None,
+        "Whether enabled skill rendering was truncated",
+        &[]
+    ),
+    cx_metric!(
+        "codex.task.compact",
+        None,
+        "Compaction counts by type",
+        cx_metric_attrs!("type" => "the compaction type")
+    ),
+    cx_metric!("codex.task.review", None, "Review trigger count", &[]),
+    cx_metric!("codex.task.undo", None, "Undo action count", &[]),
+    cx_metric!(
+        "codex.task.user_shell",
+        None,
+        "User shell action count",
+        &[]
+    ),
+    cx_metric!(
+        "codex.shell_snapshot",
+        None,
+        "Whether shell snapshot creation succeeded",
+        cx_metric_attrs!(
+            "success" => "whether the snapshot succeeded",
+            "failure_reason" => "why snapshot creation failed"
+        )
+    ),
+    cx_metric!(
+        "codex.shell_snapshot.duration_ms",
+        Some("ms"),
+        "Time to create a shell snapshot",
+        cx_metric_attrs!("success" => "whether the snapshot succeeded")
+    ),
+    cx_metric!(
+        "codex.skill.injected",
+        None,
+        "Skill injection outcomes",
+        cx_metric_attrs!(
+            "status" => "the injection status",
+            "skill" => "the skill name"
+        )
+    ),
+    cx_metric!(
+        "codex.plugins.startup_sync",
+        None,
+        "Curated plugin startup sync attempts",
+        cx_metric_attrs!(
+            "transport" => "the sync transport",
+            "status" => "the sync status"
+        )
+    ),
+    cx_metric!(
+        "codex.plugins.startup_sync.final",
+        None,
+        "Final curated plugin startup sync outcome",
+        cx_metric_attrs!(
+            "transport" => "the sync transport",
+            "status" => "the final sync status"
+        )
+    ),
+    cx_metric!(
+        "codex.multi_agent.spawn",
+        None,
+        "Agent spawn counts by role",
+        cx_metric_attrs!("role" => "the agent role")
+    ),
+    cx_metric!("codex.multi_agent.resume", None, "Agent resume count", &[]),
+    cx_metric!(
+        "codex.multi_agent.nickname_pool_reset",
+        None,
+        "Agent nickname pool reset count",
+        &[]
+    ),
+    cx_metric!(
+        "codex.memory.phase1",
+        None,
+        "Memory phase one job counts",
+        cx_metric_attrs!("status" => "the job status")
+    ),
+    cx_metric!(
+        "codex.memory.phase1.e2e_ms",
+        Some("ms"),
+        "Memory phase one duration",
+        &[]
+    ),
+    cx_metric!(
+        "codex.memory.phase1.output",
+        None,
+        "Memory phase one outputs written",
+        &[]
+    ),
+    cx_metric!(
+        "codex.memory.phase1.token_usage",
+        Some("tokens"),
+        "Memory phase one token usage",
+        cx_metric_attrs!("token_type" => "the token category")
+    ),
+    cx_metric!(
+        "codex.memory.phase2",
+        None,
+        "Memory phase two job counts",
+        cx_metric_attrs!("status" => "the job status")
+    ),
+    cx_metric!(
+        "codex.memory.phase2.e2e_ms",
+        Some("ms"),
+        "Memory phase two duration",
+        &[]
+    ),
+    cx_metric!(
+        "codex.memory.phase2.input",
+        None,
+        "Memory phase two input count",
+        &[]
+    ),
+    cx_metric!(
+        "codex.memory.phase2.token_usage",
+        Some("tokens"),
+        "Memory phase two token usage",
+        cx_metric_attrs!("token_type" => "the token category")
+    ),
+    cx_metric!(
+        "codex.memories.usage",
+        None,
+        "Memory usage by kind tool and outcome",
+        cx_metric_attrs!(
+            "kind" => "the memory kind",
+            "tool" => "the internal tool name",
+            "success" => "whether the memory operation succeeded"
+        )
+    ),
+    cx_metric!(
+        "codex.external_agent_config.detect",
+        None,
+        "External agent configuration detections",
+        cx_metric_attrs!(
+            "migration_type" => "the migration item type",
+            "skills_count" => "the number of skills when applicable"
+        )
+    ),
+    cx_metric!(
+        "codex.external_agent_config.import",
+        None,
+        "External agent configuration imports",
+        cx_metric_attrs!(
+            "migration_type" => "the migration item type",
+            "skills_count" => "the number of skills when applicable"
+        )
+    ),
+    cx_metric!(
+        "codex.db.backfill",
+        None,
+        "Initial state database backfill results",
+        cx_metric_attrs!("status" => "the backfill status")
+    ),
+    cx_metric!(
+        "codex.db.backfill.duration_ms",
+        Some("ms"),
+        "Initial state database backfill duration",
+        cx_metric_attrs!("status" => "the backfill status")
+    ),
+    cx_metric!(
+        "codex.db.error",
+        None,
+        "Errors during state database operations",
+        cx_metric_attrs!("stage" => "the database operation stage")
+    ),
+    cx_metric!(
+        "codex.windows_sandbox.setup_success",
+        None,
+        "Windows sandbox setup successes",
+        cx_metric_attrs!(
+            "originator" => "what started sandbox setup",
+            "mode" => "the sandbox mode"
+        )
+    ),
+    cx_metric!(
+        "codex.windows_sandbox.setup_failure",
+        None,
+        "Windows sandbox setup failures",
+        cx_metric_attrs!(
+            "originator" => "what started sandbox setup",
+            "mode" => "the sandbox mode"
+        )
+    ),
+    cx_metric!(
+        "codex.windows_sandbox.setup_duration_ms",
+        Some("ms"),
+        "Windows sandbox setup duration",
+        cx_metric_attrs!(
+            "result" => "the setup result",
+            "originator" => "what started sandbox setup",
+            "mode" => "the sandbox mode"
+        )
+    ),
+    cx_metric!(
+        "codex.windows_sandbox.elevated_setup_success",
+        None,
+        "Elevated Windows sandbox setup successes",
+        &[]
+    ),
+    cx_metric!(
+        "codex.windows_sandbox.elevated_setup_failure",
+        None,
+        "Elevated Windows sandbox setup failures",
+        cx_metric_attrs!(
+            "code" => "the failure code when available",
+            "message" => "the failure message when available",
+            "originator" => "what started sandbox setup when available"
+        )
+    ),
+    cx_metric!(
+        "codex.windows_sandbox.elevated_setup_canceled",
+        None,
+        "Canceled elevated Windows sandbox setup attempts",
+        &[]
+    ),
+    cx_metric!(
+        "codex.windows_sandbox.elevated_setup_duration_ms",
+        Some("ms"),
+        "Elevated Windows sandbox setup duration",
+        cx_metric_attrs!("result" => "the setup result")
+    ),
+    cx_metric!(
+        "codex.windows_sandbox.elevated_prompt_shown",
+        None,
+        "Elevated sandbox setup prompt count",
+        &[]
+    ),
+    cx_metric!(
+        "codex.windows_sandbox.elevated_prompt_accept",
+        None,
+        "Elevated sandbox setup prompt acceptance count",
+        &[]
+    ),
+    cx_metric!(
+        "codex.windows_sandbox.elevated_prompt_use_legacy",
+        None,
+        "Legacy sandbox selection count from elevated prompt",
+        &[]
+    ),
+    cx_metric!(
+        "codex.windows_sandbox.elevated_prompt_quit",
+        None,
+        "Quit count from elevated sandbox prompt",
+        &[]
+    ),
+    cx_metric!(
+        "codex.windows_sandbox.fallback_prompt_shown",
+        None,
+        "Fallback sandbox prompt count",
+        &[]
+    ),
+    cx_metric!(
+        "codex.windows_sandbox.fallback_retry_elevated",
+        None,
+        "Elevated setup retry count from fallback prompt",
+        &[]
+    ),
+    cx_metric!(
+        "codex.windows_sandbox.fallback_use_legacy",
+        None,
+        "Legacy sandbox selection count from fallback prompt",
+        &[]
+    ),
+    cx_metric!(
+        "codex.windows_sandbox.fallback_prompt_quit",
+        None,
+        "Quit count from fallback sandbox prompt",
+        &[]
+    ),
+    cx_metric!(
+        "codex.windows_sandbox.legacy_setup_preflight_failed",
+        None,
+        "Legacy Windows sandbox preflight failures",
+        cx_metric_attrs!("originator" => "what started sandbox setup when available")
+    ),
+    cx_metric!(
+        "codex.windows_sandbox.setup_elevated_sandbox_command",
+        None,
+        "Elevated sandbox setup command count",
+        &[]
+    ),
+    cx_metric!(
+        "codex.windows_sandbox.createprocessasuserw_failed",
+        None,
+        "Windows CreateProcessAsUserW failures",
+        cx_metric_attrs!(
+            "error_code" => "the Windows error code",
+            "path_kind" => "the path category",
+            "exe" => "the executable name",
+            "level" => "the sandbox level"
+        )
     ),
     open_metric(
         "codex.*",
