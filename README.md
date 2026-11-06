@@ -363,6 +363,35 @@ destination](https://code.claude.com/docs/en/monitoring-usage#how-managed-settin
 `cainary scan` shows what your organization sets. Codex's `requirements.toml` `[otel]` overrides
 `config.toml` the same way.
 
+### When managed settings pin an HTTPS endpoint
+
+If your organization pins Claude Code's logs endpoint to an HTTPS host, no shell variable can
+redirect it. `cainary-otel-debug --tls --tls-host <name>` can take that one host over on your
+machine, in a build with the `tls` cargo feature (release builds have it).
+
+> **This forwards nothing.** While it runs, your organization's collector receives *no* telemetry
+> from this machine, and every other request to that host fails. Use it only where you are allowed
+> to, and stop it when you are done. Never disable certificate verification to make it work.
+
+```fish
+cainary-otel-debug --tls --tls-host otel.example-corp.test --json
+```
+
+It listens on loopback port 8443, makes a throwaway certificate authority that can only vouch for
+the names you gave (its key stays in memory), and prints what to do next, as commands for you to
+run: the `/etc/hosts` lines for that name, a loopback-only `nft` redirect from 443 to 8443 with its
+removal, and how to trust the certificate for the one process that exports telemetry:
+
+```fish
+env NODE_EXTRA_CA_CERTS=$HOME/.local/state/cainary/otel-debug-ca.pem claude -p hi
+```
+
+Start the exporting process after the program prints its certificate path, and restart it after
+every run (each run makes a new authority). `cainary-otel-debug --delete-ca` removes the certificate
+file; a process that already loaded it keeps trusting it until it exits. It never runs `sudo`,
+`setcap` or `nft` itself, and it writes only that public certificate file. See
+[architecture §12.10](docs/architecture.md#1210-endpoint-takeover---tls).
+
 The design, limits and the JSON-lines format are in
 [docs/architecture.md](docs/architecture.md#12-otel-debug-collector-cainary-otel-debug).
 

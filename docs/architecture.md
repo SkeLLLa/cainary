@@ -26,7 +26,11 @@ Design rules, in priority order:
    user names, and runs only while the user runs it: from a terminal, or through the explicit
    "OTel debug collector" toggle in the macOS app or the Linux tray, which start it as a child
    process and stop it with the app. `cainary scan` and `status` never start or contact it.
-   Guards (§10) keep network code out of `cainary-core` and `cainary-cli`.
+   One opt-in mode of that program, `--tls` (the endpoint takeover, §12.10), also accepts TLS
+   connections on loopback, still inbound-only, and writes the *public* certificate of a
+   throwaway CA to the user's state directory (the private key never leaves memory). It forwards
+   nothing and never connects out. Guards (§10) keep network code out of `cainary-core` and
+   `cainary-cli`.
 2. **Truthful.** Every rule cites an official vendor doc. A rule that isn't confirmed by one is
    marked best effort (`maybe`) and worded "may". A source that could not be read, was refused,
    or was cut off by a cap makes the scan *incomplete*, never *clear*. A wrong result is the
@@ -131,10 +135,13 @@ Dependencies, all in `[workspace.dependencies]`:
 | `toml` | Codex config, requirements, managed_config | parse to `toml::Value` → `serde_json::Value` |
 | `plist` | macOS managed preferences, PPPC, app `Info.plist` (binary and XML) | read through its event stream (§5.1) |
 | `libc` | `O_NOFOLLOW`/`O_NONBLOCK`/`O_CLOEXEC` for the guarded open and `fcntl(F_GETPATH)` on macOS (§6.3) | `default-features = false`; used only in `harness/fs.rs` (and in `cainary-net/src/logfile.rs` for the same open flags and the effective uid). The flag values differ between macOS and Linux targets, so they aren't hand-written |
+| `rustls` (`std`, `tls12`, `ring`; no default features) | the takeover's TLS server (§12.10) | **`cainary-net` only, and only under its non-default `tls` feature.** The `ring` provider; never `aws-lc-rs` |
+| `rcgen` (`ring`, `pem`; no default features) | the takeover's ephemeral CA and leaves (§12.10) | same: `cainary-net` under `tls` only |
+| `time` (`std`; no default features) | validity dates for those certificates | already in the lock through `plist`; named by `cainary-net` under `tls` only |
 | `regex` | user red-flag patterns in the collector (§12.5) | **`cainary-net` only.** Linear-time matching, so a hostile pattern or input can't ReDoS, and compile-size limits (1 MiB per regex, 16 MiB in all) |
 
-Nothing else: no `clap` (a small hand-written parser), no `chrono`/`time` (one RFC 3339
-formatter), no `regex` in the core or CLI (substring and token checks), no `dirs`, and no async. `tests/guards.rs`
+Nothing else: no `clap` (a small hand-written parser), no `chrono`, and `time` only under the collector's `tls` feature (one RFC 3339
+formatter elsewhere), no `regex` in the core or CLI (substring and token checks), no `dirs`, and no async. `tests/guards.rs`
 parses `Cargo.lock` and fails if a package outside an allowlist appears, so adding a crate is a
 visible, reviewed change. `regex` pulls in `regex-automata`, `regex-syntax` and `aho-corasick`
 (the direct `aho-corasick` use was dropped after a timing test, §12.5); with `cainary-net` itself
@@ -950,11 +957,14 @@ state.
      anywhere outside tests.
   3. `Command::new` exactly once, in `harness/platform.rs`, with the literal `/usr/sbin/scutil`;
      `libc::` only in `harness/fs.rs`.
-  4. `Cargo.lock` packages ⊆ the allowlist, which is two sets: `CORE_ALLOWED` (the core's
-     closure) and `NET_ONLY` (`cainary-net`, `regex`, `regex-automata`, `regex-syntax`,
-     `aho-corasick`). The **dependency closure** of `cainary` and `cainary-core` (walked through
-     `[[package]].dependencies` in `Cargo.lock`) must not reach any `NET_ONLY` package. A further
-     set (goal 3's `MITM_ONLY`) is one more row in the closure table.
+  4. `Cargo.lock` packages ⊆ the allowlist, which is three sets: `CORE_ALLOWED` (the core's
+     closure), `NET_ONLY` (`cainary-net`, `regex`, `regex-automata`, `regex-syntax`,
+     `aho-corasick`) and `TLS_ONLY` (`rustls`, `ring`, `rcgen`, `rustls-webpki`, `rustls-pki-types`
+     and the rest of their closure, including the optional `x509-parser` family the lock lists for
+     rcgen; no `aws-lc-rs`). The **dependency closure** of `cainary` and `cainary-core` (walked
+     through `[[package]].dependencies` in `Cargo.lock`) must not reach any `NET_ONLY` or
+     `TLS_ONLY` package. A further set (goal 3's `MITM_ONLY`) is one more row in the closure
+     table.
 
   The collector crate has its own source guards, over `crates/cainary-net/src/`:
 
@@ -962,13 +972,20 @@ state.
     (`TcpStream::connect`, `.connect(`, `connect_timeout`, `UdpSocket`, `ToSocketAddrs`,
     `to_socket_addrs`, `lookup_host`, Unix sockets), the identifier `connect` is banned outright,
     and renaming `std`/`core`/`alloc`/`net` in a `use` is refused so an alias can't hide a dial.
-  - **N2:** `std::fs` only in `logfile.rs` (write) and `redflag/file.rs` (read); `OpenOptions` and
-    write-shaped calls only in `logfile.rs`; `std::env` and `std::process` only in `main.rs`.
+  - **N2:** `std::fs` only in `logfile.rs` (write), `redflag/file.rs` (read) and `tls/ca_file.rs`
+    (the certificate directory); `OpenOptions` and write-shaped calls only in `logfile.rs` and
+    `tls/ca_file.rs` (`.write(` is also allowed in `server.rs` and `tls/mod.rs`, which can't open
+    a file); `std::env` and `std::process` only in `main.rs`.
   - **N3:** no `Command` anywhere in the crate; `libc::` only in `logfile.rs` (the open flags and
-    the effective uid). Guard 3's "`Command::new` exactly once" counts the whole workspace.
+    the effective uid), `tls/ca_file.rs` (the same, `flock`, `openat`) and `tls/privdrop.rs`
+    (`capset`, `prctl`). Guard 3's "`Command::new` exactly once" counts the whole workspace.
   - **N4 (manifests):** the `cainary-core` and `cainary-cli` manifests never mention
-    `cainary-net`; the net manifest declares only `cainary-core`, `libc`, `regex`, `serde`,
-    `serde_json` and `toml` (in any dependency table) and sets `publish = false`.
+    `cainary-net`; the net manifest declares only `cainary-core`, `libc`, `rcgen`, `regex`,
+    `rustls`, `serde`, `serde_json`, `time` and `toml` (in any dependency table) and sets
+    `publish = false`.
+  - **N5 (TLS crates):** `rustls`, `rcgen` and `ring` are named only under
+    `cainary-net/src/tls/`, or on a line right after `#[cfg(feature = "tls")]`; `mod tls` is gated
+    the same way.
 
   Every new guard has a `fires` test that feeds a violation in memory.
 
@@ -1058,6 +1075,8 @@ cainary-otel-debug [--port <n>] [--listen <ip>]... [--json] [--show-values] [--o
                    [--red-flag <name>=<text>]... [--red-flag-re <name>=<regex>]... [--match-case <name>]...
                    [--red-flags <file>] [--preset <name>]... [--no-default-red-flags] [--list-presets]
                    [--exit-on-stdin-eof] [--config-stdin]
+                   [--tls --tls-host <name>... [--tls-public-port <n>]]
+cainary-otel-debug --delete-ca
 cainary-otel-debug --version | --help
 ```
 
@@ -1075,6 +1094,7 @@ cainary-otel-debug --version | --help
 | `--preset`, `--no-default-red-flags`, `--list-presets` | enable a preset (also a default-off one), start from none, list the built-ins |
 | `--exit-on-stdin-eof` | a thread reads stdin and exits 0 at EOF or a read error (§12.7) |
 | `--config-stdin` | the first stdin line is a JSON config (§12.7); implies `--exit-on-stdin-eof` |
+| `--tls`, `--tls-host`, `--tls-public-port`, `--delete-ca` | the endpoint takeover (§12.10); needs a build with the `tls` cargo feature, else exit 2 "this build has no TLS support (cargo feature `tls`)". `--tls` defaults `--port` to 8443 |
 
 `--flag=value` works as in `cainary`. A pattern name matches `^[a-z0-9][a-z0-9_-]{0,63}$`. A
 duplicate name, a name equal to a preset, or an unknown `--match-case` name is a usage error.
@@ -1083,7 +1103,7 @@ duplicate name, a name equal to a preset, or an unknown `--match-case` name is a
 
 **Exit codes:** `0` normal, `--once`, stdin EOF, or the reader of stdout went away (a broken
 pipe); `1` setup (port in use, log file or red-flags file unusable, a failed bind); `2` usage
-(including an invalid or oversized pattern and a non-loopback `--listen`); `3` a panic.
+(including an invalid or oversized pattern, a non-loopback `--listen`, a bad `--tls-host` and `--tls` in a build without the feature); `3` a panic. A second `--tls` run for the same certificate directory, and `--delete-ca` while one runs, exit `1`.
 
 ### 12.2 Server
 
@@ -1240,8 +1260,8 @@ true` is set, and the `summary` always stays.
 
 | `type` | Keys after `v`, `type`, `ts` |
 | --- | --- |
-| `hello` (first line) | `generator` (`cainary-otel-debug <version>`), `listen` (bound addresses, plus a note for any that couldn't bind), `endpoint` (`http://127.0.0.1:4318`), `showValues`, `logFile` (path or `null`), `redFlags` (`[{name, kind, preset, caseSensitive}]`), `setup` (`{claudeCode: [...], codex: [...], notes: [...]}`, the §12.8 lines with the real endpoint) |
-| `batch` | `seq`, `signal` (`logs`, `metrics`, `traces`), `path`, `bytes`, `vendor` (`claude-code`, `codex` or `null`), `service` (`{name, version}` or `null`), `catalog` (the catalog label or `null`), `records`, `notInCatalog`, `summary`, `resources` or `resourcesOmitted`, and `scanIncomplete` when set |
+| `hello` (first line) | `generator` (`cainary-otel-debug <version>`), `mode` (`receiver`, or `tls-receiver` for the takeover), `listen` (bound addresses, plus a note for any that couldn't bind), `endpoint` (`http://127.0.0.1:4318`), `showValues`, `logFile` (path or `null`), `redFlags` (`[{name, kind, preset, caseSensitive}]`), `tls` (takeover only: `{hosts, ca: {path, sha256}}`, host names as the user configured them, not a sender identity), `setup` (`{claudeCode: [...], codex: [...], notes: [...], takeover?: [...]}`, the §12.8 lines with the real endpoint; in takeover mode `claudeCode` and `codex` hold the certificate-trust variables and `takeover` the instructions of §12.10) |
+| `batch` | `seq`, `signal` (`logs`, `metrics`, `traces`), `path` (`/v1/<signal>`, or the fixed marker `<custom path>` in takeover mode: request paths are never printed), `host` (takeover only: the validated host name), `bytes`, `vendor` (`claude-code`, `codex` or `null`), `service` (`{name, version}` or `null`), `catalog` (the catalog label or `null`), `records`, `notInCatalog`, `summary`, `resources` or `resourcesOmitted`, and `scanIncomplete` when set |
 | `alert` | `seq`, `pattern`, `preset`, `signal`, `event` (record name or `null`), `events` (up to 8 names), `attribute` (key label or `null`), `where` (`key`, `value`, `body`, `resource`, `scope` or `name`), `count`, `match` |
 | `error` | `source`, then either `status`, `method`, `path`, `message` (for `http`) or `dropped`, `message`, or `message` alone |
 
@@ -1316,3 +1336,63 @@ The collector stays inbound-only for good. The traffic watchdog (`docs/design/ai
 would be a separate `cainary-proxy` binary behind a non-default `mitm` feature, with its own
 `MITM_ONLY` package set; guard 4's closure rule is a table so a third set is one more row. The
 JSON-lines contract is open for a future `leak` type, and `redflag` is reusable.
+
+### 12.10 Endpoint takeover (`--tls`)
+
+For a telemetry host that managed settings pin to HTTPS, which no shell variable can override.
+The user points that host name at loopback, and the collector serves it. It **forwards nothing**:
+while the takeover runs, the organization's collector receives nothing from this machine and every
+other request to that host fails. `--help`, the startup text and the README say so. The
+recommended default for pinned HTTPS endpoints is the later proxy (§12.9); the takeover stays for
+users who can't change how the agent is launched. It is built only with the `tls` cargo feature
+(release builds enable it; a plain `cargo build` doesn't), and the code lives in
+`cainary-net/src/tls/`.
+
+- **Flags.** `--tls --tls-host <name>` (repeatable, 1–32; DNS names of at least two labels, no
+  wildcard or IP, ≤ 253 bytes, lowercased and deduplicated). The default port is **8443**; binding
+  is loopback only, as ever. `--tls-public-port` (default 443 when the bound port isn't 443) is the
+  port an exporter's URL uses. `--delete-ca` removes the certificate file (and refuses while a run
+  holds the lock).
+- **Privilege.** The program prints, and never runs, a loopback-only `nft` redirect of 443 to 8443
+  for locally generated traffic (both address families, exact destinations) with its removal. As
+  an alternative it documents `setcap cap_net_bind_service=+ep` only for an installed binary in a
+  root-owned directory (`/usr/bin/cainary-otel-debug`), never a development path. If the process
+  holds `CAP_NET_BIND_SERVICE` it drops every capability right after binding and before the first
+  accept (`tls/privdrop.rs`; the stdin thread, started earlier, drops its own copy). It never
+  calls `sudo`, `setcap`, `nft` or edits `/etc/hosts`.
+- **CA.** A new CA per start: ECDSA P-256, valid from an hour ago for 30 days, name-constrained
+  (critical) to exactly the `--tls-host` names, `CA:true` with path length 0, `keyCertSign`. The
+  constraints are defence in depth: DNS constraints cover subdomains and enforcement on a directly
+  trusted root depends on the client (rustls/webpki enforces them; it does not enforce a trust
+  anchor's path length). What restricts the names is that the leaf issuer signs only for a
+  configured host, and the SNI allowlist. The private key exists only in memory: it is never
+  serialized, written, printed or logged. Leaves (P-256, CA:false, `digitalSignature`, `serverAuth`,
+  one DNS SAN) are built once per host at startup.
+- **Certificate file.** Only the public certificate is written, to
+  `$XDG_STATE_HOME/cainary/otel-debug-ca.pem` (default `~/.local/state/…`; macOS
+  `~/Library/Application Support/cAInary/`), a path that stays fixed so `NODE_EXTRA_CA_CERTS` is
+  stable across runs. The directory is opened through a descriptor and must be ours with no
+  group/other write (a symlinked final component is refused); the temporary is made with
+  `openat(create_new | O_NOFOLLOW | O_CLOEXEC)`, set to 0644 through its descriptor and renamed
+  in place; an exclusive `flock` on a lock file there is held for the whole run. It is never
+  installed in any trust store.
+- **Server.** TLS 1.2 and 1.3 (rustls, ring), ALPN `http/1.1` only (a client offering only other
+  protocols is refused; offering none is fine), no early data, bounded TLS buffers. The connection
+  slot is taken before any TLS state; an over-limit connection is closed with no handshake and no
+  plaintext reply. An absolute 30 s deadline from accept covers the handshake and the first
+  request, enforced on every TCP read and write by clipping the socket timeout (a trickled
+  handshake or a stalled write can't outlive it); later requests keep the usual deadlines. A
+  handshake is accepted only for a configured SNI (exact, case-insensitive); a refusal is an
+  `error` line (`source: "tls"`, a fixed message, no name) through the usual rate limit.
+- **Requests.** `Host` must be exactly one header whose host equals the connection's SNI, with no
+  port (443) or the bound port or the public port: malformed is 400, a mismatch 421; no loopback
+  aliases. `Origin` and `Sec-Fetch-*` are 403 as before. Routing accepts POST to any path (any
+  other method 405; origin-form only, never `CONNECT`, forwarding, redirects or tunnelling; the
+  query is ignored): the signal is the path suffix `/v1/<signal>`, else the last segment
+  `logs|metrics|traces`, else the body's single OTLP root key; a path/body conflict or no signal
+  is 400. Every §12.2 limit applies. Request paths, queries and headers are never printed.
+- **Startup text** (also `hello.setup.takeover`): the warning, `/etc/hosts` lines for the families
+  actually bound, the redirect and its removal, `env NODE_EXTRA_CA_CERTS=<path> claude`, the
+  Codex variables, the certificate's SHA-256, and the lifecycle (start the exporter after the
+  certificate is published and restart it after every run, since each run makes a new CA;
+  deleting the file doesn't revoke trust a process already loaded).
