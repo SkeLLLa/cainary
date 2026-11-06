@@ -60,8 +60,8 @@
           "id": "claude-2",
           "key": "1c7fbb2495962e21",
           "level": "low",
-          "title": "Claude Code sends usage data to otel.example-corp.com",
-          "detail": "Claude Code's metrics export is on.",
+          "title": "Claude Code sends usage data and your identity to otel.example-corp.com",
+          "detail": "Claude Code's metrics export is on. Every data point is tagged with your account email (when you sign in with a Claude account), your account and organization IDs and the session ID.",
           "surface": "claude-code",
           "sends": [
             "usage",
@@ -80,7 +80,468 @@
               "OTEL_EXPORTER_OTLP_ENDPOINT = https://otel.example-corp.com"
             ]
           },
-          "docs": "https://code.claude.com/docs/en/monitoring-usage"
+          "docs": "https://code.claude.com/docs/en/monitoring-usage",
+          "payload": {
+            "export": "metrics",
+            "catalog": "claude-code 2.1.316",
+            "docs": "https://code.claude.com/docs/en/monitoring-usage#metrics",
+            "gates": [
+              {
+                "flag": "OTEL_LOG_TOOL_DETAILS",
+                "label": "Full shell commands, tool input, and MCP, skill and plugin names",
+                "on": false,
+                "sent": "generic",
+                "value": null,
+                "setBy": null,
+                "path": null,
+                "text": "Full shell commands, tool input, and MCP, skill and plugin names: replaced by \"custom\", because OTEL_LOG_TOOL_DETAILS is unset"
+              },
+              {
+                "flag": "OTEL_METRICS_INCLUDE_SESSION_ID",
+                "label": "Session ID on metrics",
+                "on": true,
+                "sent": "yes",
+                "value": null,
+                "setBy": null,
+                "path": null,
+                "text": "Session ID on metrics: sent, because OTEL_METRICS_INCLUDE_SESSION_ID is unset (on by default)"
+              },
+              {
+                "flag": "OTEL_METRICS_INCLUDE_ACCOUNT_UUID",
+                "label": "Account IDs on metrics",
+                "on": true,
+                "sent": "yes",
+                "value": null,
+                "setBy": null,
+                "path": null,
+                "text": "Account IDs on metrics: sent, because OTEL_METRICS_INCLUDE_ACCOUNT_UUID is unset (on by default)"
+              },
+              {
+                "flag": "OTEL_METRICS_INCLUDE_VERSION",
+                "label": "Claude Code version on metrics",
+                "on": false,
+                "sent": "no",
+                "value": null,
+                "setBy": null,
+                "path": null,
+                "text": "Claude Code version on metrics: not sent, because OTEL_METRICS_INCLUDE_VERSION is unset"
+              },
+              {
+                "flag": "OTEL_METRICS_INCLUDE_ENTRYPOINT",
+                "label": "How Claude Code was started, on metrics",
+                "on": false,
+                "sent": "no",
+                "value": null,
+                "setBy": null,
+                "path": null,
+                "text": "How Claude Code was started, on metrics: not sent, because OTEL_METRICS_INCLUDE_ENTRYPOINT is unset"
+              },
+              {
+                "flag": "OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES",
+                "label": "Your custom attributes on metrics",
+                "on": true,
+                "sent": "yes",
+                "value": null,
+                "setBy": null,
+                "path": null,
+                "text": "Your custom attributes on metrics: sent, because OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES is unset (on by default)"
+              },
+              {
+                "flag": "OTEL_METRICS_INCLUDE_REPOSITORY",
+                "label": "Repository URL, owner and name",
+                "on": false,
+                "sent": "no",
+                "value": null,
+                "setBy": null,
+                "path": null,
+                "text": "Repository URL, owner and name: not sent, because OTEL_METRICS_INCLUDE_REPOSITORY is unset"
+              }
+            ],
+            "identity": [
+              {
+                "key": "user.email",
+                "what": "your account email (when signed in with a Claude account)",
+                "group": "identity"
+              },
+              {
+                "key": "user.account_uuid",
+                "what": "your account UUID",
+                "group": "identity",
+                "flag": "OTEL_METRICS_INCLUDE_ACCOUNT_UUID",
+                "sent": "yes"
+              },
+              {
+                "key": "user.account_id",
+                "what": "your tagged account ID",
+                "group": "identity",
+                "flag": "OTEL_METRICS_INCLUDE_ACCOUNT_UUID",
+                "sent": "yes"
+              },
+              {
+                "key": "organization.id",
+                "what": "your organization's UUID",
+                "group": "identity"
+              },
+              {
+                "key": "user.id",
+                "what": "a random ID for this installation",
+                "group": "identity"
+              },
+              {
+                "key": "session.id",
+                "what": "this session's ID",
+                "group": "identity",
+                "flag": "OTEL_METRICS_INCLUDE_SESSION_ID",
+                "sent": "yes"
+              },
+              {
+                "key": "ccr.session.id",
+                "what": "the cloud session's ID",
+                "group": "identity",
+                "flag": "OTEL_METRICS_INCLUDE_SESSION_ID",
+                "sent": "yes"
+              },
+              {
+                "key": "terminal.type",
+                "what": "your terminal, such as iTerm.app, VS Code or tmux",
+                "group": "identity"
+              },
+              {
+                "key": "app.version",
+                "what": "the Claude Code version",
+                "group": "identity",
+                "flag": "OTEL_METRICS_INCLUDE_VERSION",
+                "sent": "no"
+              },
+              {
+                "key": "app.entrypoint",
+                "what": "how Claude Code was started",
+                "group": "identity",
+                "flag": "OTEL_METRICS_INCLUDE_ENTRYPOINT",
+                "sent": "no"
+              },
+              {
+                "key": "vcs.repository.url.full",
+                "what": "the repository's URL",
+                "group": "identity",
+                "flag": "OTEL_METRICS_INCLUDE_REPOSITORY",
+                "sent": "no"
+              },
+              {
+                "key": "vcs.owner.name",
+                "what": "the repository owner",
+                "group": "identity",
+                "flag": "OTEL_METRICS_INCLUDE_REPOSITORY",
+                "sent": "no"
+              },
+              {
+                "key": "vcs.repository.name",
+                "what": "the repository name",
+                "group": "identity",
+                "flag": "OTEL_METRICS_INCLUDE_REPOSITORY",
+                "sent": "no"
+              },
+              {
+                "key": "vcs.provider.name",
+                "what": "the repository's host",
+                "group": "identity",
+                "flag": "OTEL_METRICS_INCLUDE_REPOSITORY",
+                "sent": "no"
+              },
+              {
+                "key": "user.groups",
+                "what": "your identity provider's groups",
+                "group": "identity",
+                "maybe": true
+              },
+              {
+                "key": "identity.source",
+                "what": "your identity provider, such as gateway-oidc",
+                "group": "identity",
+                "maybe": true
+              }
+            ],
+            "resource": [
+              {
+                "key": "service.name",
+                "what": "\"claude-code\"",
+                "group": "resource"
+              },
+              {
+                "key": "service.version",
+                "what": "the Claude Code version",
+                "group": "resource"
+              },
+              {
+                "key": "os.type",
+                "what": "your operating system type",
+                "group": "resource"
+              },
+              {
+                "key": "os.version",
+                "what": "your operating system version",
+                "group": "resource"
+              },
+              {
+                "key": "host.arch",
+                "what": "your computer's architecture",
+                "group": "resource"
+              },
+              {
+                "key": "wsl.version",
+                "what": "your WSL version",
+                "group": "resource"
+              }
+            ],
+            "records": [
+              {
+                "name": "claude_code.session.count",
+                "kind": "metric",
+                "what": "Count of sessions started",
+                "unit": null,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "start_type",
+                    "what": "how the session was started",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.lines_of_code.count",
+                "kind": "metric",
+                "what": "Lines of code changed",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "type",
+                    "what": "whether lines were added or removed",
+                    "group": "event"
+                  },
+                  {
+                    "key": "model",
+                    "what": "the model name",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.pull_request.count",
+                "kind": "metric",
+                "what": "Pull requests created",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "claude_code.commit.count",
+                "kind": "metric",
+                "what": "Git commits created",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "claude_code.cost.usage",
+                "kind": "metric",
+                "what": "Cost per model request",
+                "unit": "USD",
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "model",
+                    "what": "the model name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "query_source",
+                    "what": "what issued the request",
+                    "group": "event"
+                  },
+                  {
+                    "key": "speed",
+                    "what": "whether fast mode was used",
+                    "group": "event"
+                  },
+                  {
+                    "key": "effort",
+                    "what": "the model effort level",
+                    "group": "event"
+                  },
+                  {
+                    "key": "agent.name",
+                    "what": "the agent name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "generic"
+                  },
+                  {
+                    "key": "skill.name",
+                    "what": "the skill name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "generic"
+                  },
+                  {
+                    "key": "plugin.name",
+                    "what": "the plugin name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "generic"
+                  },
+                  {
+                    "key": "marketplace.name",
+                    "what": "the plugin marketplace name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "generic"
+                  },
+                  {
+                    "key": "mcp_server.name",
+                    "what": "the MCP server name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "generic"
+                  },
+                  {
+                    "key": "mcp_tool.name",
+                    "what": "the MCP tool name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "generic"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.token.usage",
+                "kind": "metric",
+                "what": "Tokens used",
+                "unit": "tokens",
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "type",
+                    "what": "the kind of token usage",
+                    "group": "event"
+                  },
+                  {
+                    "key": "agent.name",
+                    "what": "the agent name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "generic"
+                  },
+                  {
+                    "key": "skill.name",
+                    "what": "the skill name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "generic"
+                  },
+                  {
+                    "key": "plugin.name",
+                    "what": "the plugin name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "generic"
+                  },
+                  {
+                    "key": "marketplace.name",
+                    "what": "the plugin marketplace name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "generic"
+                  },
+                  {
+                    "key": "mcp_server.name",
+                    "what": "the MCP server name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "generic"
+                  },
+                  {
+                    "key": "mcp_tool.name",
+                    "what": "the MCP tool name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "generic"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.code_edit_tool.decision",
+                "kind": "metric",
+                "what": "Edit tool permission decisions",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "tool_name",
+                    "what": "the code editing tool's name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "decision",
+                    "what": "the permission decision",
+                    "group": "event"
+                  },
+                  {
+                    "key": "source",
+                    "what": "where the decision came from",
+                    "group": "event"
+                  },
+                  {
+                    "key": "language",
+                    "what": "the edited file's programming language",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.active_time.total",
+                "kind": "metric",
+                "what": "Active time",
+                "unit": "s",
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "type",
+                    "what": "whether time was user activity or CLI processing",
+                    "group": "event"
+                  }
+                ]
+              }
+            ],
+            "sample": [
+              "resource:",
+              "  service.name = \"claude-code\"",
+              "  service.version = <the Claude Code version>",
+              "  os.type = <your operating system type>",
+              "  os.version = <your operating system version>",
+              "  host.arch = <your computer's architecture>",
+              "  wsl.version = <your WSL version>",
+              "claude_code.token.usage:",
+              "  user.email = <your account email (when signed in with a Claude account)>",
+              "  user.account_uuid = <your account UUID>   (sent: OTEL_METRICS_INCLUDE_ACCOUNT_UUID)",
+              "  user.account_id = <your tagged account ID>   (sent: OTEL_METRICS_INCLUDE_ACCOUNT_UUID)",
+              "  organization.id = <your organization's UUID>",
+              "  user.id = <a random ID for this installation>",
+              "  session.id = <this session's ID>   (sent: OTEL_METRICS_INCLUDE_SESSION_ID)",
+              "  ccr.session.id = <the cloud session's ID>   (sent: OTEL_METRICS_INCLUDE_SESSION_ID)",
+              "  terminal.type = <your terminal, such as iTerm.app, VS Code or tmux>",
+              "  user.groups = <your identity provider's groups>",
+              "  identity.source = <your identity provider, such as gateway-oidc>",
+              "  type = <the kind of token usage>",
+              "  agent.name = \"custom\"",
+              "  skill.name = \"third-party\"",
+              "  plugin.name = \"third-party\"",
+              "  marketplace.name = \"third-party\"",
+              "  mcp_server.name = \"custom\"",
+              "  mcp_tool.name = \"custom\""
+            ]
+          }
         },
         {
           "id": "claude-7",

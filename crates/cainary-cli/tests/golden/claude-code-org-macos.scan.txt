@@ -68,8 +68,8 @@ Claude — HIGH · Conversations are sent
                header Authorization = <redacted>
              docs: https://code.claude.com/docs/en/managed-mcp
 
-  MEDIUM     Claude Code sends tool details to otel.example-corp.com (may)
-             Claude Code's log export is on.
+  MEDIUM     Claude Code sends every shell command in full to otel.example-corp.com (may)
+             Claude Code's log export is on. Every event is tagged with your account email (when you sign in with a Claude account), your account and organization IDs and the session ID. With OTEL_LOG_TOOL_DETAILS on, tool events carry each tool's full input: every Bash command as typed (with any paths, host names or secrets in it), MCP server and tool names, and skill and plugin names.
              sends: tool-details · set by: environment variable
              config: env:OTEL_LOG_TOOL_DETAILS
                OTEL_LOG_TOOL_DETAILS = 1
@@ -82,8 +82,8 @@ Claude — HIGH · Conversations are sent
                monitoring_notice = Use is monitored.
              docs: https://code.claude.com/docs/en/data-usage
 
-  LOW        Claude Code sends usage data to otel.example-corp.com
-             Claude Code's log export is on.
+  LOW        Claude Code sends usage data and your identity to otel.example-corp.com
+             Claude Code's log export is on. Every event is tagged with your account email (when you sign in with a Claude account), your account and organization IDs and the session ID.
              sends: usage, identity · set by: organization (MDM profile)
              config: /Library/Managed Preferences/com.anthropic.claudecode.plist
                CLAUDE_CODE_ENABLE_TELEMETRY = 1
@@ -92,8 +92,8 @@ Claude — HIGH · Conversations are sent
                OTEL_EXPORTER_OTLP_HEADERS = Authorization
              docs: https://code.claude.com/docs/en/monitoring-usage
 
-  LOW        Claude Code sends usage data to otel.example-corp.com
-             Claude Code's metrics export is on.
+  LOW        Claude Code sends usage data and your identity to otel.example-corp.com
+             Claude Code's metrics export is on. Every data point is tagged with your account email (when you sign in with a Claude account), your account and organization IDs and the session ID.
              sends: usage, identity · set by: organization (MDM profile)
              config: /Library/Managed Preferences/com.anthropic.claudecode.plist
                CLAUDE_CODE_ENABLE_TELEMETRY = 1

@@ -128,8 +128,8 @@
           "id": "openai-4",
           "key": "da0fa37197578dc6",
           "level": "medium",
-          "title": "Codex sends traces to traces.example-corp.com",
-          "detail": "",
+          "title": "Codex sends traces of your session to traces.example-corp.com",
+          "detail": "Codex's trace export is on. Codex doesn't document span names or fields, so what they carry may differ from the log events.",
           "surface": "codex",
           "sends": [
             "tool-details",
@@ -138,7 +138,7 @@
           ],
           "setBy": "user",
           "inEffect": true,
-          "maybe": false,
+          "maybe": true,
           "counts": false,
           "config": {
             "path": "~/.codex/config.toml",
@@ -147,7 +147,93 @@
               "endpoint = https://traces.example-corp.com:4317"
             ]
           },
-          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference"
+          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference",
+          "payload": {
+            "export": "traces",
+            "catalog": "codex 0.166.0",
+            "docs": "https://learn.chatgpt.com/docs/config-file/config-advanced#observability-and-telemetry",
+            "maybe": true,
+            "gates": [],
+            "identity": [
+              {
+                "key": "conversation.id",
+                "what": "the conversation ID",
+                "group": "identity",
+                "maybe": true
+              },
+              {
+                "key": "auth_mode",
+                "what": "your authentication mode",
+                "group": "identity",
+                "maybe": true
+              },
+              {
+                "key": "terminal.type",
+                "what": "your terminal type",
+                "group": "identity",
+                "maybe": true
+              }
+            ],
+            "resource": [
+              {
+                "key": "service.name",
+                "what": "the Codex service name, usually codex_cli_rs",
+                "group": "resource"
+              },
+              {
+                "key": "service.version",
+                "what": "the Codex version",
+                "group": "resource"
+              },
+              {
+                "key": "env",
+                "what": "the OpenTelemetry environment label, dev by default",
+                "group": "resource"
+              },
+              {
+                "key": "telemetry.sdk.language",
+                "what": "the telemetry SDK language",
+                "group": "resource",
+                "maybe": true
+              },
+              {
+                "key": "telemetry.sdk.name",
+                "what": "the telemetry SDK name",
+                "group": "resource",
+                "maybe": true
+              },
+              {
+                "key": "telemetry.sdk.version",
+                "what": "the telemetry SDK version",
+                "group": "resource",
+                "maybe": true
+              }
+            ],
+            "records": [
+              {
+                "name": "codex.*",
+                "kind": "span",
+                "what": "Codex spans; their names and fields are undocumented",
+                "unit": null,
+                "maybe": true,
+                "observed": false,
+                "attrs": []
+              }
+            ],
+            "sample": [
+              "resource:",
+              "  service.name = <the Codex service name, usually codex_cli_rs>",
+              "  service.version = <the Codex version>",
+              "  env = <the OpenTelemetry environment label, dev by default>",
+              "  telemetry.sdk.language = <the telemetry SDK language>",
+              "  telemetry.sdk.name = <the telemetry SDK name>",
+              "  telemetry.sdk.version = <the telemetry SDK version>",
+              "codex.*:",
+              "  conversation.id = <the conversation ID>",
+              "  auth_mode = <your authentication mode>",
+              "  terminal.type = <your terminal type>"
+            ]
+          }
         },
         {
           "id": "openai-5",
@@ -170,7 +256,261 @@
               "endpoint = https://metrics.example-corp.com/v1/metrics"
             ]
           },
-          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference"
+          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference",
+          "payload": {
+            "export": "metrics",
+            "catalog": "codex 0.166.0",
+            "docs": "https://learn.chatgpt.com/docs/config-file/config-advanced#otel-metrics-emitted",
+            "gates": [],
+            "identity": [
+              {
+                "key": "auth_mode",
+                "what": "your authentication mode",
+                "group": "identity"
+              }
+            ],
+            "resource": [
+              {
+                "key": "service.name",
+                "what": "the Codex service name, usually codex_cli_rs",
+                "group": "resource"
+              },
+              {
+                "key": "service.version",
+                "what": "the Codex version",
+                "group": "resource"
+              },
+              {
+                "key": "env",
+                "what": "the OpenTelemetry environment label, dev by default",
+                "group": "resource"
+              },
+              {
+                "key": "telemetry.sdk.language",
+                "what": "the telemetry SDK language",
+                "group": "resource",
+                "maybe": true
+              },
+              {
+                "key": "telemetry.sdk.name",
+                "what": "the telemetry SDK name",
+                "group": "resource",
+                "maybe": true
+              },
+              {
+                "key": "telemetry.sdk.version",
+                "what": "the telemetry SDK version",
+                "group": "resource",
+                "maybe": true
+              }
+            ],
+            "records": [
+              {
+                "name": "codex.api_request",
+                "kind": "metric",
+                "what": "API request count by status and outcome",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "status",
+                    "what": "the HTTP status",
+                    "group": "event"
+                  },
+                  {
+                    "key": "success",
+                    "what": "whether the request succeeded",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.api_request.duration_ms",
+                "kind": "metric",
+                "what": "API request duration",
+                "unit": "ms",
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "status",
+                    "what": "the HTTP status",
+                    "group": "event"
+                  },
+                  {
+                    "key": "success",
+                    "what": "whether the request succeeded",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.sse_event",
+                "kind": "metric",
+                "what": "SSE event count by kind and outcome",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "kind",
+                    "what": "the streamed event kind",
+                    "group": "event"
+                  },
+                  {
+                    "key": "success",
+                    "what": "whether handling succeeded",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.sse_event.duration_ms",
+                "kind": "metric",
+                "what": "SSE event processing duration",
+                "unit": "ms",
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "kind",
+                    "what": "the streamed event kind",
+                    "group": "event"
+                  },
+                  {
+                    "key": "success",
+                    "what": "whether handling succeeded",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.websocket.request",
+                "kind": "metric",
+                "what": "WebSocket request count by outcome",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "success",
+                    "what": "whether the WebSocket request succeeded",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.websocket.request.duration_ms",
+                "kind": "metric",
+                "what": "WebSocket request duration",
+                "unit": "ms",
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "success",
+                    "what": "whether the WebSocket request succeeded",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.websocket.event",
+                "kind": "metric",
+                "what": "WebSocket message count by kind and outcome",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "kind",
+                    "what": "the WebSocket event kind",
+                    "group": "event"
+                  },
+                  {
+                    "key": "success",
+                    "what": "whether handling succeeded",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.websocket.event.duration_ms",
+                "kind": "metric",
+                "what": "WebSocket message processing duration",
+                "unit": "ms",
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "kind",
+                    "what": "the WebSocket event kind",
+                    "group": "event"
+                  },
+                  {
+                    "key": "success",
+                    "what": "whether handling succeeded",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.tool.call",
+                "kind": "metric",
+                "what": "Tool invocation count by tool name and outcome",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "tool",
+                    "what": "the tool's name, never the command",
+                    "group": "event"
+                  },
+                  {
+                    "key": "success",
+                    "what": "whether the tool call succeeded",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.tool.call.duration_ms",
+                "kind": "metric",
+                "what": "Tool execution duration by tool name and outcome",
+                "unit": "ms",
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "tool",
+                    "what": "the tool's name, never the command",
+                    "group": "event"
+                  },
+                  {
+                    "key": "success",
+                    "what": "whether the tool call succeeded",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.*",
+                "kind": "metric",
+                "what": "Another Codex runtime metric",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              }
+            ],
+            "sample": [
+              "resource:",
+              "  service.name = <the Codex service name, usually codex_cli_rs>",
+              "  service.version = <the Codex version>",
+              "  env = <the OpenTelemetry environment label, dev by default>",
+              "  telemetry.sdk.language = <the telemetry SDK language>",
+              "  telemetry.sdk.name = <the telemetry SDK name>",
+              "  telemetry.sdk.version = <the telemetry SDK version>",
+              "codex.tool.call:",
+              "  auth_mode = <your authentication mode>",
+              "  app.version = <the Codex version>",
+              "  model = <the model name>",
+              "  originator = <what started the Codex session>",
+              "  tool = <the tool's name, never the command>",
+              "  success = <whether the tool call succeeded>"
+            ]
+          }
         },
         {
           "id": "openai-6",

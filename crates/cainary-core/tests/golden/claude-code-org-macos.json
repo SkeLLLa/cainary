@@ -211,8 +211,8 @@
           "id": "claude-8",
           "key": "ea5e1766af565132",
           "level": "medium",
-          "title": "Claude Code sends tool details to otel.example-corp.com",
-          "detail": "Claude Code's log export is on.",
+          "title": "Claude Code sends every shell command in full to otel.example-corp.com",
+          "detail": "Claude Code's log export is on. Every event is tagged with your account email (when you sign in with a Claude account), your account and organization IDs and the session ID. With OTEL_LOG_TOOL_DETAILS on, tool events carry each tool's full input: every Bash command as typed (with any paths, host names or secrets in it), MCP server and tool names, and skill and plugin names.",
           "surface": "claude-code",
           "sends": [
             "tool-details"
@@ -257,8 +257,8 @@
           "id": "claude-10",
           "key": "c719e852e6a1c615",
           "level": "low",
-          "title": "Claude Code sends usage data to otel.example-corp.com",
-          "detail": "Claude Code's log export is on.",
+          "title": "Claude Code sends usage data and your identity to otel.example-corp.com",
+          "detail": "Claude Code's log export is on. Every event is tagged with your account email (when you sign in with a Claude account), your account and organization IDs and the session ID.",
           "surface": "claude-code",
           "sends": [
             "usage",
@@ -278,14 +278,1866 @@
               "OTEL_EXPORTER_OTLP_HEADERS = Authorization"
             ]
           },
-          "docs": "https://code.claude.com/docs/en/monitoring-usage"
+          "docs": "https://code.claude.com/docs/en/monitoring-usage",
+          "payload": {
+            "export": "logs",
+            "catalog": "claude-code 2.1.316",
+            "docs": "https://code.claude.com/docs/en/monitoring-usage#events",
+            "gates": [
+              {
+                "flag": "OTEL_LOG_USER_PROMPTS",
+                "label": "Prompt text",
+                "on": false,
+                "sent": "redacted",
+                "value": null,
+                "setBy": null,
+                "path": null,
+                "text": "Prompt text: sent as <REDACTED>, because OTEL_LOG_USER_PROMPTS is unset"
+              },
+              {
+                "flag": "OTEL_LOG_ASSISTANT_RESPONSES",
+                "label": "Claude's response text",
+                "on": false,
+                "sent": "redacted",
+                "value": null,
+                "setBy": null,
+                "path": null,
+                "text": "Claude's response text: sent as <REDACTED>, because OTEL_LOG_ASSISTANT_RESPONSES is unset, so it follows OTEL_LOG_USER_PROMPTS, which is unset"
+              },
+              {
+                "flag": "OTEL_LOG_TOOL_DETAILS",
+                "label": "Full shell commands, tool input, and MCP, skill and plugin names",
+                "on": true,
+                "sent": "yes",
+                "value": "1",
+                "setBy": "environment",
+                "path": "env:OTEL_LOG_TOOL_DETAILS",
+                "text": "Full shell commands, tool input, and MCP, skill and plugin names: sent, because OTEL_LOG_TOOL_DETAILS = 1 (set by environment variable)"
+              },
+              {
+                "flag": "OTEL_LOG_RAW_API_BODIES",
+                "label": "Full model requests and responses, the whole conversation",
+                "on": false,
+                "sent": "no",
+                "value": null,
+                "setBy": null,
+                "path": null,
+                "text": "Full model requests and responses, the whole conversation: not sent, because OTEL_LOG_RAW_API_BODIES is unset"
+              },
+              {
+                "flag": "OTEL_LOG_MANAGED_SETTINGS",
+                "label": "Your managed settings (redacted) and their SHA-256",
+                "on": false,
+                "sent": "no",
+                "value": null,
+                "setBy": null,
+                "path": null,
+                "text": "Your managed settings (redacted) and their SHA-256: not sent, because OTEL_LOG_MANAGED_SETTINGS is unset"
+              }
+            ],
+            "identity": [
+              {
+                "key": "user.email",
+                "what": "your account email (when signed in with a Claude account)",
+                "group": "identity"
+              },
+              {
+                "key": "user.account_uuid",
+                "what": "your account UUID",
+                "group": "identity"
+              },
+              {
+                "key": "user.account_id",
+                "what": "your tagged account ID",
+                "group": "identity"
+              },
+              {
+                "key": "organization.id",
+                "what": "your organization's UUID",
+                "group": "identity"
+              },
+              {
+                "key": "user.id",
+                "what": "a random ID for this installation",
+                "group": "identity"
+              },
+              {
+                "key": "session.id",
+                "what": "this session's ID",
+                "group": "identity"
+              },
+              {
+                "key": "ccr.session.id",
+                "what": "the cloud session's ID",
+                "group": "identity"
+              },
+              {
+                "key": "terminal.type",
+                "what": "your terminal, such as iTerm.app, VS Code or tmux",
+                "group": "identity"
+              },
+              {
+                "key": "app.version",
+                "what": "the Claude Code version",
+                "group": "identity",
+                "maybe": true
+              },
+              {
+                "key": "app.entrypoint",
+                "what": "how Claude Code was started",
+                "group": "identity",
+                "maybe": true
+              },
+              {
+                "key": "vcs.repository.url.full",
+                "what": "the repository's URL",
+                "group": "identity"
+              },
+              {
+                "key": "vcs.owner.name",
+                "what": "the repository owner",
+                "group": "identity"
+              },
+              {
+                "key": "vcs.repository.name",
+                "what": "the repository name",
+                "group": "identity"
+              },
+              {
+                "key": "vcs.provider.name",
+                "what": "the repository's host",
+                "group": "identity"
+              },
+              {
+                "key": "user.groups",
+                "what": "your identity provider's groups",
+                "group": "identity",
+                "maybe": true
+              },
+              {
+                "key": "identity.source",
+                "what": "your identity provider, such as gateway-oidc",
+                "group": "identity",
+                "maybe": true
+              }
+            ],
+            "resource": [
+              {
+                "key": "service.name",
+                "what": "\"claude-code\"",
+                "group": "resource"
+              },
+              {
+                "key": "service.version",
+                "what": "the Claude Code version",
+                "group": "resource"
+              },
+              {
+                "key": "os.type",
+                "what": "your operating system type",
+                "group": "resource"
+              },
+              {
+                "key": "os.version",
+                "what": "your operating system version",
+                "group": "resource"
+              },
+              {
+                "key": "host.arch",
+                "what": "your computer's architecture",
+                "group": "resource"
+              },
+              {
+                "key": "wsl.version",
+                "what": "your WSL version",
+                "group": "resource"
+              }
+            ],
+            "records": [
+              {
+                "name": "claude_code.user_prompt",
+                "kind": "event",
+                "what": "You sent a prompt",
+                "unit": null,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "prompt_length",
+                    "what": "the prompt length",
+                    "group": "event"
+                  },
+                  {
+                    "key": "message.uuid",
+                    "what": "the ID of the prompt message",
+                    "group": "event"
+                  },
+                  {
+                    "key": "command_source",
+                    "what": "how the prompt was submitted",
+                    "group": "event"
+                  },
+                  {
+                    "key": "prompt",
+                    "what": "the prompt text",
+                    "group": "content",
+                    "flag": "OTEL_LOG_USER_PROMPTS",
+                    "sent": "redacted"
+                  },
+                  {
+                    "key": "prompt_text",
+                    "what": "the prompt text",
+                    "group": "content",
+                    "flag": "OTEL_LOG_USER_PROMPTS",
+                    "sent": "redacted"
+                  },
+                  {
+                    "key": "command_name",
+                    "what": "the command name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.assistant_response",
+                "kind": "event",
+                "what": "Claude replied",
+                "unit": null,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "response_length",
+                    "what": "the response length in characters",
+                    "group": "event"
+                  },
+                  {
+                    "key": "model",
+                    "what": "the model name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "request_id",
+                    "what": "the model request ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "message.uuid",
+                    "what": "the ID of the response message",
+                    "group": "event"
+                  },
+                  {
+                    "key": "query_source",
+                    "what": "what issued the request",
+                    "group": "event"
+                  },
+                  {
+                    "key": "response",
+                    "what": "Claude's response text",
+                    "group": "content",
+                    "flag": "OTEL_LOG_ASSISTANT_RESPONSES",
+                    "sent": "redacted"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.tool_result",
+                "kind": "event",
+                "what": "A tool finished: name, result, timing, sizes",
+                "unit": null,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "tool_name",
+                    "what": "the tool's name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "tool_use_id",
+                    "what": "the ID of this tool invocation",
+                    "group": "event"
+                  },
+                  {
+                    "key": "request_id",
+                    "what": "the model request ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "success",
+                    "what": "whether the tool succeeded",
+                    "group": "event"
+                  },
+                  {
+                    "key": "duration_ms",
+                    "what": "how long the tool took",
+                    "group": "event"
+                  },
+                  {
+                    "key": "error_type",
+                    "what": "the tool error type",
+                    "group": "event"
+                  },
+                  {
+                    "key": "decision_type",
+                    "what": "the permission decision type",
+                    "group": "event"
+                  },
+                  {
+                    "key": "decision_source",
+                    "what": "where the decision came from",
+                    "group": "event"
+                  },
+                  {
+                    "key": "tool_input_size_bytes",
+                    "what": "the size of the tool input",
+                    "group": "event"
+                  },
+                  {
+                    "key": "tool_result_size_bytes",
+                    "what": "the size of the tool result",
+                    "group": "event"
+                  },
+                  {
+                    "key": "mcp_server_scope",
+                    "what": "where the MCP server was configured",
+                    "group": "event"
+                  },
+                  {
+                    "key": "tool_parameters",
+                    "what": "the tool's parameters, including a Bash command in full",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "tool_input",
+                    "what": "the tool's input",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "error",
+                    "what": "the tool error message",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "vcs.ref.head.*",
+                    "what": "the current version-control reference",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.api_request",
+                "kind": "event",
+                "what": "A model request: model, tokens, cost, latency",
+                "unit": null,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "model",
+                    "what": "the model name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "cost_usd",
+                    "what": "the request cost in US dollars",
+                    "group": "event"
+                  },
+                  {
+                    "key": "cost_usd_micros",
+                    "what": "the request cost in microdollars",
+                    "group": "event"
+                  },
+                  {
+                    "key": "duration_ms",
+                    "what": "how long the request took",
+                    "group": "event"
+                  },
+                  {
+                    "key": "input_tokens",
+                    "what": "the input token count",
+                    "group": "event"
+                  },
+                  {
+                    "key": "output_tokens",
+                    "what": "the output token count",
+                    "group": "event"
+                  },
+                  {
+                    "key": "cache_read_tokens",
+                    "what": "the cache read token count",
+                    "group": "event"
+                  },
+                  {
+                    "key": "cache_creation_tokens",
+                    "what": "the cache creation token count",
+                    "group": "event"
+                  },
+                  {
+                    "key": "cache_creation_5m_tokens",
+                    "what": "the five-minute cache creation token count",
+                    "group": "event"
+                  },
+                  {
+                    "key": "cache_creation_1h_tokens",
+                    "what": "the one-hour cache creation token count",
+                    "group": "event"
+                  },
+                  {
+                    "key": "request_id",
+                    "what": "the model request ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "client_request_id",
+                    "what": "the client-generated request ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "speed",
+                    "what": "whether fast mode was used",
+                    "group": "event"
+                  },
+                  {
+                    "key": "query_source",
+                    "what": "what issued the request",
+                    "group": "event"
+                  },
+                  {
+                    "key": "effort",
+                    "what": "the model effort level",
+                    "group": "event"
+                  },
+                  {
+                    "key": "ttft_ms",
+                    "what": "the time to the first response token",
+                    "group": "event",
+                    "maybe": true
+                  },
+                  {
+                    "key": "agent.name",
+                    "what": "the agent name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "skill.name",
+                    "what": "the skill name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "plugin.name",
+                    "what": "the plugin name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "marketplace.name",
+                    "what": "the plugin marketplace name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "mcp_server.name",
+                    "what": "the MCP server name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "mcp_tool.name",
+                    "what": "the MCP tool name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.api_error",
+                "kind": "event",
+                "what": "A model request failed",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "model",
+                    "what": "the model name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "error",
+                    "what": "the request error",
+                    "group": "event"
+                  },
+                  {
+                    "key": "status_code",
+                    "what": "the HTTP status code",
+                    "group": "event"
+                  },
+                  {
+                    "key": "duration_ms",
+                    "what": "how long the request took",
+                    "group": "event"
+                  },
+                  {
+                    "key": "attempt",
+                    "what": "the attempt number",
+                    "group": "event"
+                  },
+                  {
+                    "key": "request_id",
+                    "what": "the model request ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "client_request_id",
+                    "what": "the client-generated request ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "speed",
+                    "what": "whether fast mode was used",
+                    "group": "event"
+                  },
+                  {
+                    "key": "query_source",
+                    "what": "what issued the request",
+                    "group": "event"
+                  },
+                  {
+                    "key": "effort",
+                    "what": "the model effort level",
+                    "group": "event"
+                  },
+                  {
+                    "key": "agent.name",
+                    "what": "the agent name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "skill.name",
+                    "what": "the skill name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "plugin.name",
+                    "what": "the plugin name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "marketplace.name",
+                    "what": "the plugin marketplace name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "mcp_server.name",
+                    "what": "the MCP server name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "mcp_tool.name",
+                    "what": "the MCP tool name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.api_refusal",
+                "kind": "event",
+                "what": "The model refused a request",
+                "unit": null,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "model",
+                    "what": "the model name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "request_id",
+                    "what": "the model request ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "query_source",
+                    "what": "what issued the request",
+                    "group": "event"
+                  },
+                  {
+                    "key": "speed",
+                    "what": "whether fast mode was used",
+                    "group": "event"
+                  },
+                  {
+                    "key": "attempt",
+                    "what": "the attempt number",
+                    "group": "event"
+                  },
+                  {
+                    "key": "effort",
+                    "what": "the model effort level",
+                    "group": "event"
+                  },
+                  {
+                    "key": "server_fallback_hop",
+                    "what": "whether a server fallback was used",
+                    "group": "event"
+                  },
+                  {
+                    "key": "has_category",
+                    "what": "whether a refusal category is present",
+                    "group": "event"
+                  },
+                  {
+                    "key": "has_explanation",
+                    "what": "whether a refusal explanation is present",
+                    "group": "event"
+                  },
+                  {
+                    "key": "category",
+                    "what": "the refusal category",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "agent.name",
+                    "what": "the agent name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "skill.name",
+                    "what": "the skill name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "plugin.name",
+                    "what": "the plugin name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "marketplace.name",
+                    "what": "the plugin marketplace name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "mcp_server.name",
+                    "what": "the MCP server name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "mcp_tool.name",
+                    "what": "the MCP tool name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.api_request_body",
+                "kind": "event",
+                "what": "The full request sent to the model",
+                "unit": null,
+                "observed": false,
+                "flag": "OTEL_LOG_RAW_API_BODIES",
+                "sent": "no",
+                "attrs": [
+                  {
+                    "key": "body_length",
+                    "what": "the request body length",
+                    "group": "event"
+                  },
+                  {
+                    "key": "body_truncated",
+                    "what": "whether the request body was cut",
+                    "group": "event"
+                  },
+                  {
+                    "key": "model",
+                    "what": "the model name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "query_source",
+                    "what": "what issued the request",
+                    "group": "event"
+                  },
+                  {
+                    "key": "request_body_id",
+                    "what": "the ID of the request body",
+                    "group": "event"
+                  },
+                  {
+                    "key": "body",
+                    "what": "the full model request body",
+                    "group": "content",
+                    "flag": "OTEL_LOG_RAW_API_BODIES",
+                    "sent": "no"
+                  },
+                  {
+                    "key": "body_ref",
+                    "what": "the path of the request body file on this machine",
+                    "group": "content",
+                    "flag": "OTEL_LOG_RAW_API_BODIES",
+                    "sent": "no"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.api_response_body",
+                "kind": "event",
+                "what": "The full response from the model",
+                "unit": null,
+                "observed": false,
+                "flag": "OTEL_LOG_RAW_API_BODIES",
+                "sent": "no",
+                "attrs": [
+                  {
+                    "key": "body_length",
+                    "what": "the response body length",
+                    "group": "event"
+                  },
+                  {
+                    "key": "body_truncated",
+                    "what": "whether the response body was cut",
+                    "group": "event"
+                  },
+                  {
+                    "key": "model",
+                    "what": "the model name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "query_source",
+                    "what": "what issued the request",
+                    "group": "event"
+                  },
+                  {
+                    "key": "request_body_id",
+                    "what": "the ID of the request body",
+                    "group": "event"
+                  },
+                  {
+                    "key": "request_id",
+                    "what": "the model request ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "message.id",
+                    "what": "the response message ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "message.uuid",
+                    "what": "the response transcript entry ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "body",
+                    "what": "the full model response body",
+                    "group": "content",
+                    "flag": "OTEL_LOG_RAW_API_BODIES",
+                    "sent": "no"
+                  },
+                  {
+                    "key": "body_ref",
+                    "what": "the path of the response body file on this machine",
+                    "group": "content",
+                    "flag": "OTEL_LOG_RAW_API_BODIES",
+                    "sent": "no"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.tool_decision",
+                "kind": "event",
+                "what": "A tool use was allowed or denied, and by whom",
+                "unit": null,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "tool_name",
+                    "what": "the tool's name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "tool_use_id",
+                    "what": "the ID of this tool invocation",
+                    "group": "event"
+                  },
+                  {
+                    "key": "request_id",
+                    "what": "the model request ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "decision",
+                    "what": "whether the tool was allowed",
+                    "group": "event"
+                  },
+                  {
+                    "key": "tool_source",
+                    "what": "where the tool came from",
+                    "group": "event"
+                  },
+                  {
+                    "key": "source",
+                    "what": "where the decision came from",
+                    "group": "event"
+                  },
+                  {
+                    "key": "classifier_verdict",
+                    "what": "the permission classifier result",
+                    "group": "event"
+                  },
+                  {
+                    "key": "permission_mode",
+                    "what": "the active permission mode",
+                    "group": "event"
+                  },
+                  {
+                    "key": "classifier_category",
+                    "what": "the permission classifier category",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "tool_parameters",
+                    "what": "the tool's parameters",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.safety_event",
+                "kind": "event",
+                "what": "A rule, policy, hook or sandbox allowed or blocked an action",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "category",
+                    "what": "the safety category",
+                    "group": "event"
+                  },
+                  {
+                    "key": "decision",
+                    "what": "whether the action was allowed",
+                    "group": "event"
+                  },
+                  {
+                    "key": "decision_source",
+                    "what": "where the decision came from",
+                    "group": "event"
+                  },
+                  {
+                    "key": "reason_code",
+                    "what": "the policy reason code",
+                    "group": "event"
+                  },
+                  {
+                    "key": "reason_type",
+                    "what": "the policy reason type",
+                    "group": "event"
+                  },
+                  {
+                    "key": "rule_source",
+                    "what": "where the rule came from",
+                    "group": "event"
+                  },
+                  {
+                    "key": "grant_scope",
+                    "what": "the permission grant scope",
+                    "group": "event"
+                  },
+                  {
+                    "key": "circuit_breaker",
+                    "what": "the circuit breaker state",
+                    "group": "event"
+                  },
+                  {
+                    "key": "hook_event",
+                    "what": "the hook event name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "tool_class",
+                    "what": "the class of tool",
+                    "group": "event"
+                  },
+                  {
+                    "key": "tool_name",
+                    "what": "the tool's name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "tool_source",
+                    "what": "where the tool came from",
+                    "group": "event"
+                  },
+                  {
+                    "key": "permission_mode",
+                    "what": "the active permission mode",
+                    "group": "event"
+                  },
+                  {
+                    "key": "tool_use_id",
+                    "what": "the ID of this tool invocation",
+                    "group": "event"
+                  },
+                  {
+                    "key": "sandbox_violation_count",
+                    "what": "the number of sandbox violations",
+                    "group": "event"
+                  },
+                  {
+                    "key": "sandbox_enabled",
+                    "what": "whether the sandbox is enabled",
+                    "group": "event"
+                  },
+                  {
+                    "key": "classifier_category",
+                    "what": "the permission classifier category",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.permission_mode_changed",
+                "kind": "event",
+                "what": "You switched permission mode",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "from_mode",
+                    "what": "the previous permission mode",
+                    "group": "event"
+                  },
+                  {
+                    "key": "to_mode",
+                    "what": "the new permission mode",
+                    "group": "event"
+                  },
+                  {
+                    "key": "trigger",
+                    "what": "what changed the permission mode",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.auth",
+                "kind": "event",
+                "what": "You logged in or out",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "action",
+                    "what": "whether you logged in or out",
+                    "group": "event"
+                  },
+                  {
+                    "key": "success",
+                    "what": "whether authentication succeeded",
+                    "group": "event"
+                  },
+                  {
+                    "key": "auth_method",
+                    "what": "the authentication method",
+                    "group": "event"
+                  },
+                  {
+                    "key": "error_category",
+                    "what": "the authentication error kind",
+                    "group": "event"
+                  },
+                  {
+                    "key": "status_code",
+                    "what": "the HTTP status code",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.mcp_server_connection",
+                "kind": "event",
+                "what": "An MCP server connected, failed or disconnected",
+                "unit": null,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "status",
+                    "what": "the connection status",
+                    "group": "event"
+                  },
+                  {
+                    "key": "transport_type",
+                    "what": "the transport type",
+                    "group": "event"
+                  },
+                  {
+                    "key": "server_scope",
+                    "what": "where the server was configured",
+                    "group": "event"
+                  },
+                  {
+                    "key": "duration_ms",
+                    "what": "how long the connection took",
+                    "group": "event"
+                  },
+                  {
+                    "key": "error_code",
+                    "what": "the connection error code",
+                    "group": "event"
+                  },
+                  {
+                    "key": "is_plugin",
+                    "what": "whether the server is a plugin",
+                    "group": "event"
+                  },
+                  {
+                    "key": "plugin_id_hash",
+                    "what": "a hash identifying the plugin",
+                    "group": "event"
+                  },
+                  {
+                    "key": "plugin.name",
+                    "what": "the plugin name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "server_name",
+                    "what": "your MCP server's name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "error",
+                    "what": "the connection error",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.internal_error",
+                "kind": "event",
+                "what": "Claude Code hit an internal error",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "error_name",
+                    "what": "the error class name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "error_code",
+                    "what": "the error code",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.plugin_installed",
+                "kind": "event",
+                "what": "A plugin was installed",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "marketplace.is_official",
+                    "what": "whether the marketplace is official",
+                    "group": "event"
+                  },
+                  {
+                    "key": "install.trigger",
+                    "what": "how the plugin installation started",
+                    "group": "event"
+                  },
+                  {
+                    "key": "plugin.name",
+                    "what": "the plugin name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "plugin.version",
+                    "what": "the plugin version",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "marketplace.name",
+                    "what": "the plugin marketplace name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.plugin_loaded",
+                "kind": "event",
+                "what": "A plugin was loaded",
+                "unit": null,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "plugin.version",
+                    "what": "the plugin version",
+                    "group": "event"
+                  },
+                  {
+                    "key": "plugin.scope",
+                    "what": "where the plugin is installed",
+                    "group": "event"
+                  },
+                  {
+                    "key": "enabled_via",
+                    "what": "how the plugin was enabled",
+                    "group": "event"
+                  },
+                  {
+                    "key": "plugin_id_hash",
+                    "what": "a hash identifying the plugin",
+                    "group": "event"
+                  },
+                  {
+                    "key": "has_hooks",
+                    "what": "whether the plugin has hooks",
+                    "group": "event"
+                  },
+                  {
+                    "key": "has_mcp",
+                    "what": "whether the plugin has MCP servers",
+                    "group": "event"
+                  },
+                  {
+                    "key": "host_owned_mcp",
+                    "what": "whether the host owns its MCP servers",
+                    "group": "event"
+                  },
+                  {
+                    "key": "skill_path_count",
+                    "what": "the number of skill paths",
+                    "group": "event"
+                  },
+                  {
+                    "key": "command_path_count",
+                    "what": "the number of command paths",
+                    "group": "event"
+                  },
+                  {
+                    "key": "agent_path_count",
+                    "what": "the number of agent paths",
+                    "group": "event"
+                  },
+                  {
+                    "key": "safe_mode",
+                    "what": "whether safe mode is enabled",
+                    "group": "event"
+                  },
+                  {
+                    "key": "plugin.name",
+                    "what": "the plugin name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "marketplace.name",
+                    "what": "the plugin marketplace name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.skill_activated",
+                "kind": "event",
+                "what": "A skill ran",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "invocation_trigger",
+                    "what": "how the skill was triggered",
+                    "group": "event"
+                  },
+                  {
+                    "key": "skill.source",
+                    "what": "where the skill came from",
+                    "group": "event"
+                  },
+                  {
+                    "key": "skill.kind",
+                    "what": "the kind of skill",
+                    "group": "event"
+                  },
+                  {
+                    "key": "skill.name",
+                    "what": "the skill name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "plugin.name",
+                    "what": "the plugin name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "marketplace.name",
+                    "what": "the plugin marketplace name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.at_mention",
+                "kind": "event",
+                "what": "You mentioned a file, folder, agent or resource",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "mention_type",
+                    "what": "the kind of thing you mentioned",
+                    "group": "event"
+                  },
+                  {
+                    "key": "success",
+                    "what": "whether the mention succeeded",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.api_retries_exhausted",
+                "kind": "event",
+                "what": "A model request gave up after retries",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "model",
+                    "what": "the model name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "error",
+                    "what": "the final request error",
+                    "group": "event"
+                  },
+                  {
+                    "key": "status_code",
+                    "what": "the HTTP status code",
+                    "group": "event"
+                  },
+                  {
+                    "key": "total_attempts",
+                    "what": "the number of attempts",
+                    "group": "event"
+                  },
+                  {
+                    "key": "total_retry_duration_ms",
+                    "what": "the total time spent retrying",
+                    "group": "event"
+                  },
+                  {
+                    "key": "speed",
+                    "what": "whether fast mode was used",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.hook_registered",
+                "kind": "event",
+                "what": "A hook is configured",
+                "unit": null,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "hook_event",
+                    "what": "the hook event name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "hook_type",
+                    "what": "the hook implementation type",
+                    "group": "event"
+                  },
+                  {
+                    "key": "hook_source",
+                    "what": "where the hook came from",
+                    "group": "event"
+                  },
+                  {
+                    "key": "safe_mode",
+                    "what": "whether safe mode is enabled",
+                    "group": "event"
+                  },
+                  {
+                    "key": "plugin.name",
+                    "what": "the plugin name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "plugin_id_hash",
+                    "what": "a hash identifying the plugin",
+                    "group": "event"
+                  },
+                  {
+                    "key": "hook_matcher",
+                    "what": "the hook's matcher",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.hook_execution_start",
+                "kind": "event",
+                "what": "Hooks started for an event",
+                "unit": null,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "hook_event",
+                    "what": "the hook event name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "hook_name",
+                    "what": "the hook name and matcher",
+                    "group": "event"
+                  },
+                  {
+                    "key": "num_hooks",
+                    "what": "the number of matching hooks",
+                    "group": "event"
+                  },
+                  {
+                    "key": "managed_only",
+                    "what": "whether only managed hooks are allowed",
+                    "group": "event"
+                  },
+                  {
+                    "key": "hook_source",
+                    "what": "where the hook came from",
+                    "group": "event"
+                  },
+                  {
+                    "key": "safe_mode",
+                    "what": "whether safe mode is enabled",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.hook_execution_complete",
+                "kind": "event",
+                "what": "Hooks finished: counts, timing, output sizes",
+                "unit": null,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "hook_event",
+                    "what": "the hook event name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "hook_name",
+                    "what": "the hook name and matcher",
+                    "group": "event"
+                  },
+                  {
+                    "key": "num_hooks",
+                    "what": "the number of matching hooks",
+                    "group": "event"
+                  },
+                  {
+                    "key": "num_success",
+                    "what": "the number of successful hooks",
+                    "group": "event"
+                  },
+                  {
+                    "key": "num_blocking",
+                    "what": "the number of blocking hooks",
+                    "group": "event"
+                  },
+                  {
+                    "key": "num_non_blocking_error",
+                    "what": "the number of non-blocking hook errors",
+                    "group": "event"
+                  },
+                  {
+                    "key": "num_cancelled",
+                    "what": "the number of cancelled hooks",
+                    "group": "event"
+                  },
+                  {
+                    "key": "total_duration_ms",
+                    "what": "the combined time spent in hooks",
+                    "group": "event"
+                  },
+                  {
+                    "key": "stdout_chars",
+                    "what": "the number of output characters",
+                    "group": "event"
+                  },
+                  {
+                    "key": "additional_context_chars",
+                    "what": "the number of added context characters",
+                    "group": "event"
+                  },
+                  {
+                    "key": "system_message_chars",
+                    "what": "the number of system message characters",
+                    "group": "event"
+                  },
+                  {
+                    "key": "initial_user_message_chars",
+                    "what": "the number of initial user message characters",
+                    "group": "event"
+                  },
+                  {
+                    "key": "num_outputs_persisted",
+                    "what": "the number of saved hook outputs",
+                    "group": "event"
+                  },
+                  {
+                    "key": "managed_only",
+                    "what": "whether only managed hooks are allowed",
+                    "group": "event"
+                  },
+                  {
+                    "key": "hook_source",
+                    "what": "where the hook came from",
+                    "group": "event"
+                  },
+                  {
+                    "key": "safe_mode",
+                    "what": "whether safe mode is enabled",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.hook_plugin_metrics",
+                "kind": "event",
+                "what": "Metrics from an official plugin's hooks",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "plugin_id",
+                    "what": "the plugin identifier",
+                    "group": "event"
+                  },
+                  {
+                    "key": "hook_event",
+                    "what": "the hook event name",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.compaction",
+                "kind": "event",
+                "what": "The conversation was compacted",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "trigger",
+                    "what": "whether compaction was automatic or manual",
+                    "group": "event"
+                  },
+                  {
+                    "key": "success",
+                    "what": "whether compaction succeeded",
+                    "group": "event"
+                  },
+                  {
+                    "key": "duration_ms",
+                    "what": "how long compaction took",
+                    "group": "event"
+                  },
+                  {
+                    "key": "pre_tokens",
+                    "what": "the estimated token count before",
+                    "group": "event"
+                  },
+                  {
+                    "key": "post_tokens",
+                    "what": "the estimated token count after",
+                    "group": "event"
+                  },
+                  {
+                    "key": "error",
+                    "what": "the compaction error",
+                    "group": "event"
+                  },
+                  {
+                    "key": "precompute_reuse",
+                    "what": "whether a precomputed summary was reused",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.subagent_completed",
+                "kind": "event",
+                "what": "A subagent finished",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "agent.source",
+                    "what": "where the agent came from",
+                    "group": "event"
+                  },
+                  {
+                    "key": "is_built_in",
+                    "what": "whether the agent is built in",
+                    "group": "event"
+                  },
+                  {
+                    "key": "is_async",
+                    "what": "whether the agent ran asynchronously",
+                    "group": "event"
+                  },
+                  {
+                    "key": "total_tokens",
+                    "what": "the total token count",
+                    "group": "event"
+                  },
+                  {
+                    "key": "total_tool_uses",
+                    "what": "the number of tool uses",
+                    "group": "event"
+                  },
+                  {
+                    "key": "duration_ms",
+                    "what": "how long the agent ran",
+                    "group": "event"
+                  },
+                  {
+                    "key": "model",
+                    "what": "the model name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "final_model",
+                    "what": "the final model name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "model_swapped",
+                    "what": "whether the model changed",
+                    "group": "event"
+                  },
+                  {
+                    "key": "plugin_id_hash",
+                    "what": "a hash identifying the plugin",
+                    "group": "event"
+                  },
+                  {
+                    "key": "plugin.name",
+                    "what": "the plugin name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "agent_type",
+                    "what": "the agent type",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.feedback_survey",
+                "kind": "event",
+                "what": "You saw or answered a feedback survey",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "event_type",
+                    "what": "the survey event type",
+                    "group": "event"
+                  },
+                  {
+                    "key": "appearance_id",
+                    "what": "the ID of this survey instance",
+                    "group": "event"
+                  },
+                  {
+                    "key": "survey_type",
+                    "what": "the kind of survey",
+                    "group": "event"
+                  },
+                  {
+                    "key": "response",
+                    "what": "your survey response",
+                    "group": "event"
+                  },
+                  {
+                    "key": "enabled_via_override",
+                    "what": "whether a setting enabled the survey",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.retention_sweep",
+                "kind": "event",
+                "what": "Old local transcripts were cleaned up",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "result",
+                    "what": "the cleanup result",
+                    "group": "event"
+                  },
+                  {
+                    "key": "period_days",
+                    "what": "the retention period in days",
+                    "group": "event"
+                  },
+                  {
+                    "key": "used_default",
+                    "what": "whether the default period was used",
+                    "group": "event"
+                  },
+                  {
+                    "key": "skip_reason",
+                    "what": "why cleanup was skipped",
+                    "group": "event"
+                  },
+                  {
+                    "key": "transcripts_deleted",
+                    "what": "the number of transcripts deleted",
+                    "group": "event"
+                  },
+                  {
+                    "key": "transcripts_exempted_desktop",
+                    "what": "the number of desktop transcripts kept",
+                    "group": "event"
+                  },
+                  {
+                    "key": "session_files_deleted",
+                    "what": "the number of session files deleted",
+                    "group": "event"
+                  },
+                  {
+                    "key": "artifacts_deleted",
+                    "what": "the number of artifacts deleted",
+                    "group": "event"
+                  },
+                  {
+                    "key": "files_retained_fresh",
+                    "what": "the number of recent files kept",
+                    "group": "event"
+                  },
+                  {
+                    "key": "files_past_cutoff",
+                    "what": "the number of old files found",
+                    "group": "event"
+                  },
+                  {
+                    "key": "error_count",
+                    "what": "the number of cleanup errors",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.managed_settings_resolved",
+                "kind": "event",
+                "what": "Managed settings were applied: sources and helper state",
+                "unit": null,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "managed_settings.trigger",
+                    "what": "what caused managed settings to be applied",
+                    "group": "event"
+                  },
+                  {
+                    "key": "error.type",
+                    "what": "the settings error type",
+                    "group": "event"
+                  },
+                  {
+                    "key": "managed_settings.sources",
+                    "what": "the managed settings sources",
+                    "group": "event"
+                  },
+                  {
+                    "key": "managed_settings.source_behavior",
+                    "what": "how managed settings sources behave",
+                    "group": "event"
+                  },
+                  {
+                    "key": "managed_settings.helper.state",
+                    "what": "the managed helper state",
+                    "group": "event"
+                  },
+                  {
+                    "key": "managed_settings.helper.applied",
+                    "what": "whether the managed helper was applied",
+                    "group": "event"
+                  },
+                  {
+                    "key": "managed_settings.helper.entry",
+                    "what": "the managed helper entry",
+                    "group": "event"
+                  },
+                  {
+                    "key": "managed_settings.helper.path",
+                    "what": "the path of the managed helper",
+                    "group": "event"
+                  },
+                  {
+                    "key": "managed_settings.settings_truncated",
+                    "what": "whether the settings were cut",
+                    "group": "event"
+                  },
+                  {
+                    "key": "managed_settings.resolved_sha256",
+                    "what": "the SHA-256 digest of the settings",
+                    "group": "content",
+                    "flag": "OTEL_LOG_MANAGED_SETTINGS",
+                    "sent": "no"
+                  },
+                  {
+                    "key": "managed_settings.settings",
+                    "what": "the managed settings after redaction",
+                    "group": "content",
+                    "flag": "OTEL_LOG_MANAGED_SETTINGS",
+                    "sent": "no"
+                  }
+                ]
+              }
+            ],
+            "sample": [
+              "resource:",
+              "  service.name = \"claude-code\"",
+              "  service.version = <the Claude Code version>",
+              "  os.type = <your operating system type>",
+              "  os.version = <your operating system version>",
+              "  host.arch = <your computer's architecture>",
+              "  wsl.version = <your WSL version>",
+              "claude_code.tool_result:",
+              "  user.email = <your account email (when signed in with a Claude account)>",
+              "  user.account_uuid = <your account UUID>",
+              "  user.account_id = <your tagged account ID>",
+              "  organization.id = <your organization's UUID>",
+              "  user.id = <a random ID for this installation>",
+              "  session.id = <this session's ID>",
+              "  ccr.session.id = <the cloud session's ID>",
+              "  terminal.type = <your terminal, such as iTerm.app, VS Code or tmux>",
+              "  app.version = <the Claude Code version>",
+              "  app.entrypoint = <how Claude Code was started>",
+              "  vcs.repository.url.full = <the repository's URL>",
+              "  vcs.owner.name = <the repository owner>",
+              "  vcs.repository.name = <the repository name>",
+              "  vcs.provider.name = <the repository's host>",
+              "  user.groups = <your identity provider's groups>",
+              "  identity.source = <your identity provider, such as gateway-oidc>",
+              "  event.name = <the event name>",
+              "  event.timestamp = <when the event occurred>",
+              "  event.sequence = <the event's sequence number>",
+              "  prompt.id = <the ID linking events from one prompt>",
+              "  workspace.host_paths = <your workspace folders>",
+              "  tool_name = <the tool's name>",
+              "  tool_use_id = <the ID of this tool invocation>",
+              "  request_id = <the model request ID>",
+              "  success = <whether the tool succeeded>",
+              "  duration_ms = <how long the tool took>",
+              "  error_type = <the tool error type>",
+              "  decision_type = <the permission decision type>",
+              "  decision_source = <where the decision came from>",
+              "  tool_input_size_bytes = <the size of the tool input>",
+              "  tool_result_size_bytes = <the size of the tool result>",
+              "  mcp_server_scope = <where the MCP server was configured>",
+              "  tool_parameters = <the tool's parameters, including a Bash command in full>   (sent: OTEL_LOG_TOOL_DETAILS)",
+              "  tool_input = <the tool's input>   (sent: OTEL_LOG_TOOL_DETAILS)",
+              "  error = <the tool error message>   (sent: OTEL_LOG_TOOL_DETAILS)",
+              "  vcs.ref.head.* = <the current version-control reference>   (sent: OTEL_LOG_TOOL_DETAILS)"
+            ]
+          }
         },
         {
           "id": "claude-11",
           "key": "3d9ae5a668e32ff3",
           "level": "low",
-          "title": "Claude Code sends usage data to otel.example-corp.com",
-          "detail": "Claude Code's metrics export is on.",
+          "title": "Claude Code sends usage data and your identity to otel.example-corp.com",
+          "detail": "Claude Code's metrics export is on. Every data point is tagged with your account email (when you sign in with a Claude account), your account and organization IDs and the session ID.",
           "surface": "claude-code",
           "sends": [
             "usage",
@@ -305,7 +2157,468 @@
               "OTEL_EXPORTER_OTLP_HEADERS = Authorization"
             ]
           },
-          "docs": "https://code.claude.com/docs/en/monitoring-usage"
+          "docs": "https://code.claude.com/docs/en/monitoring-usage",
+          "payload": {
+            "export": "metrics",
+            "catalog": "claude-code 2.1.316",
+            "docs": "https://code.claude.com/docs/en/monitoring-usage#metrics",
+            "gates": [
+              {
+                "flag": "OTEL_LOG_TOOL_DETAILS",
+                "label": "Full shell commands, tool input, and MCP, skill and plugin names",
+                "on": true,
+                "sent": "yes",
+                "value": "1",
+                "setBy": "environment",
+                "path": "env:OTEL_LOG_TOOL_DETAILS",
+                "text": "Full shell commands, tool input, and MCP, skill and plugin names: sent, because OTEL_LOG_TOOL_DETAILS = 1 (set by environment variable)"
+              },
+              {
+                "flag": "OTEL_METRICS_INCLUDE_SESSION_ID",
+                "label": "Session ID on metrics",
+                "on": true,
+                "sent": "yes",
+                "value": null,
+                "setBy": null,
+                "path": null,
+                "text": "Session ID on metrics: sent, because OTEL_METRICS_INCLUDE_SESSION_ID is unset (on by default)"
+              },
+              {
+                "flag": "OTEL_METRICS_INCLUDE_ACCOUNT_UUID",
+                "label": "Account IDs on metrics",
+                "on": true,
+                "sent": "yes",
+                "value": null,
+                "setBy": null,
+                "path": null,
+                "text": "Account IDs on metrics: sent, because OTEL_METRICS_INCLUDE_ACCOUNT_UUID is unset (on by default)"
+              },
+              {
+                "flag": "OTEL_METRICS_INCLUDE_VERSION",
+                "label": "Claude Code version on metrics",
+                "on": false,
+                "sent": "no",
+                "value": null,
+                "setBy": null,
+                "path": null,
+                "text": "Claude Code version on metrics: not sent, because OTEL_METRICS_INCLUDE_VERSION is unset"
+              },
+              {
+                "flag": "OTEL_METRICS_INCLUDE_ENTRYPOINT",
+                "label": "How Claude Code was started, on metrics",
+                "on": false,
+                "sent": "no",
+                "value": null,
+                "setBy": null,
+                "path": null,
+                "text": "How Claude Code was started, on metrics: not sent, because OTEL_METRICS_INCLUDE_ENTRYPOINT is unset"
+              },
+              {
+                "flag": "OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES",
+                "label": "Your custom attributes on metrics",
+                "on": true,
+                "sent": "yes",
+                "value": null,
+                "setBy": null,
+                "path": null,
+                "text": "Your custom attributes on metrics: sent, because OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES is unset (on by default)"
+              },
+              {
+                "flag": "OTEL_METRICS_INCLUDE_REPOSITORY",
+                "label": "Repository URL, owner and name",
+                "on": false,
+                "sent": "no",
+                "value": null,
+                "setBy": null,
+                "path": null,
+                "text": "Repository URL, owner and name: not sent, because OTEL_METRICS_INCLUDE_REPOSITORY is unset"
+              }
+            ],
+            "identity": [
+              {
+                "key": "user.email",
+                "what": "your account email (when signed in with a Claude account)",
+                "group": "identity"
+              },
+              {
+                "key": "user.account_uuid",
+                "what": "your account UUID",
+                "group": "identity",
+                "flag": "OTEL_METRICS_INCLUDE_ACCOUNT_UUID",
+                "sent": "yes"
+              },
+              {
+                "key": "user.account_id",
+                "what": "your tagged account ID",
+                "group": "identity",
+                "flag": "OTEL_METRICS_INCLUDE_ACCOUNT_UUID",
+                "sent": "yes"
+              },
+              {
+                "key": "organization.id",
+                "what": "your organization's UUID",
+                "group": "identity"
+              },
+              {
+                "key": "user.id",
+                "what": "a random ID for this installation",
+                "group": "identity"
+              },
+              {
+                "key": "session.id",
+                "what": "this session's ID",
+                "group": "identity",
+                "flag": "OTEL_METRICS_INCLUDE_SESSION_ID",
+                "sent": "yes"
+              },
+              {
+                "key": "ccr.session.id",
+                "what": "the cloud session's ID",
+                "group": "identity",
+                "flag": "OTEL_METRICS_INCLUDE_SESSION_ID",
+                "sent": "yes"
+              },
+              {
+                "key": "terminal.type",
+                "what": "your terminal, such as iTerm.app, VS Code or tmux",
+                "group": "identity"
+              },
+              {
+                "key": "app.version",
+                "what": "the Claude Code version",
+                "group": "identity",
+                "flag": "OTEL_METRICS_INCLUDE_VERSION",
+                "sent": "no"
+              },
+              {
+                "key": "app.entrypoint",
+                "what": "how Claude Code was started",
+                "group": "identity",
+                "flag": "OTEL_METRICS_INCLUDE_ENTRYPOINT",
+                "sent": "no"
+              },
+              {
+                "key": "vcs.repository.url.full",
+                "what": "the repository's URL",
+                "group": "identity",
+                "flag": "OTEL_METRICS_INCLUDE_REPOSITORY",
+                "sent": "no"
+              },
+              {
+                "key": "vcs.owner.name",
+                "what": "the repository owner",
+                "group": "identity",
+                "flag": "OTEL_METRICS_INCLUDE_REPOSITORY",
+                "sent": "no"
+              },
+              {
+                "key": "vcs.repository.name",
+                "what": "the repository name",
+                "group": "identity",
+                "flag": "OTEL_METRICS_INCLUDE_REPOSITORY",
+                "sent": "no"
+              },
+              {
+                "key": "vcs.provider.name",
+                "what": "the repository's host",
+                "group": "identity",
+                "flag": "OTEL_METRICS_INCLUDE_REPOSITORY",
+                "sent": "no"
+              },
+              {
+                "key": "user.groups",
+                "what": "your identity provider's groups",
+                "group": "identity",
+                "maybe": true
+              },
+              {
+                "key": "identity.source",
+                "what": "your identity provider, such as gateway-oidc",
+                "group": "identity",
+                "maybe": true
+              }
+            ],
+            "resource": [
+              {
+                "key": "service.name",
+                "what": "\"claude-code\"",
+                "group": "resource"
+              },
+              {
+                "key": "service.version",
+                "what": "the Claude Code version",
+                "group": "resource"
+              },
+              {
+                "key": "os.type",
+                "what": "your operating system type",
+                "group": "resource"
+              },
+              {
+                "key": "os.version",
+                "what": "your operating system version",
+                "group": "resource"
+              },
+              {
+                "key": "host.arch",
+                "what": "your computer's architecture",
+                "group": "resource"
+              },
+              {
+                "key": "wsl.version",
+                "what": "your WSL version",
+                "group": "resource"
+              }
+            ],
+            "records": [
+              {
+                "name": "claude_code.session.count",
+                "kind": "metric",
+                "what": "Count of sessions started",
+                "unit": null,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "start_type",
+                    "what": "how the session was started",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.lines_of_code.count",
+                "kind": "metric",
+                "what": "Lines of code changed",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "type",
+                    "what": "whether lines were added or removed",
+                    "group": "event"
+                  },
+                  {
+                    "key": "model",
+                    "what": "the model name",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.pull_request.count",
+                "kind": "metric",
+                "what": "Pull requests created",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "claude_code.commit.count",
+                "kind": "metric",
+                "what": "Git commits created",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "claude_code.cost.usage",
+                "kind": "metric",
+                "what": "Cost per model request",
+                "unit": "USD",
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "model",
+                    "what": "the model name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "query_source",
+                    "what": "what issued the request",
+                    "group": "event"
+                  },
+                  {
+                    "key": "speed",
+                    "what": "whether fast mode was used",
+                    "group": "event"
+                  },
+                  {
+                    "key": "effort",
+                    "what": "the model effort level",
+                    "group": "event"
+                  },
+                  {
+                    "key": "agent.name",
+                    "what": "the agent name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "skill.name",
+                    "what": "the skill name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "plugin.name",
+                    "what": "the plugin name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "marketplace.name",
+                    "what": "the plugin marketplace name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "mcp_server.name",
+                    "what": "the MCP server name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "mcp_tool.name",
+                    "what": "the MCP tool name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.token.usage",
+                "kind": "metric",
+                "what": "Tokens used",
+                "unit": "tokens",
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "type",
+                    "what": "the kind of token usage",
+                    "group": "event"
+                  },
+                  {
+                    "key": "agent.name",
+                    "what": "the agent name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "skill.name",
+                    "what": "the skill name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "plugin.name",
+                    "what": "the plugin name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "marketplace.name",
+                    "what": "the plugin marketplace name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "mcp_server.name",
+                    "what": "the MCP server name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  },
+                  {
+                    "key": "mcp_tool.name",
+                    "what": "the MCP tool name",
+                    "group": "content",
+                    "flag": "OTEL_LOG_TOOL_DETAILS",
+                    "sent": "yes"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.code_edit_tool.decision",
+                "kind": "metric",
+                "what": "Edit tool permission decisions",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "tool_name",
+                    "what": "the code editing tool's name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "decision",
+                    "what": "the permission decision",
+                    "group": "event"
+                  },
+                  {
+                    "key": "source",
+                    "what": "where the decision came from",
+                    "group": "event"
+                  },
+                  {
+                    "key": "language",
+                    "what": "the edited file's programming language",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "claude_code.active_time.total",
+                "kind": "metric",
+                "what": "Active time",
+                "unit": "s",
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "type",
+                    "what": "whether time was user activity or CLI processing",
+                    "group": "event"
+                  }
+                ]
+              }
+            ],
+            "sample": [
+              "resource:",
+              "  service.name = \"claude-code\"",
+              "  service.version = <the Claude Code version>",
+              "  os.type = <your operating system type>",
+              "  os.version = <your operating system version>",
+              "  host.arch = <your computer's architecture>",
+              "  wsl.version = <your WSL version>",
+              "claude_code.token.usage:",
+              "  user.email = <your account email (when signed in with a Claude account)>",
+              "  user.account_uuid = <your account UUID>   (sent: OTEL_METRICS_INCLUDE_ACCOUNT_UUID)",
+              "  user.account_id = <your tagged account ID>   (sent: OTEL_METRICS_INCLUDE_ACCOUNT_UUID)",
+              "  organization.id = <your organization's UUID>",
+              "  user.id = <a random ID for this installation>",
+              "  session.id = <this session's ID>   (sent: OTEL_METRICS_INCLUDE_SESSION_ID)",
+              "  ccr.session.id = <the cloud session's ID>   (sent: OTEL_METRICS_INCLUDE_SESSION_ID)",
+              "  terminal.type = <your terminal, such as iTerm.app, VS Code or tmux>",
+              "  user.groups = <your identity provider's groups>",
+              "  identity.source = <your identity provider, such as gateway-oidc>",
+              "  type = <the kind of token usage>",
+              "  agent.name = <the agent name>   (sent: OTEL_LOG_TOOL_DETAILS)",
+              "  skill.name = <the skill name>   (sent: OTEL_LOG_TOOL_DETAILS)",
+              "  plugin.name = <the plugin name>   (sent: OTEL_LOG_TOOL_DETAILS)",
+              "  marketplace.name = <the plugin marketplace name>   (sent: OTEL_LOG_TOOL_DETAILS)",
+              "  mcp_server.name = <the MCP server name>   (sent: OTEL_LOG_TOOL_DETAILS)",
+              "  mcp_tool.name = <the MCP tool name>   (sent: OTEL_LOG_TOOL_DETAILS)"
+            ]
+          }
         },
         {
           "id": "claude-12",
