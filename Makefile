@@ -243,9 +243,11 @@ linux-build-release:
 	$(CARGO_CMD) build $(LINUX_MANIFEST) --release --locked -p cainary-tray
 
 # --dev makes a release tray honour CAINARY_CORE and CAINARY_OTEL_DEBUG (tray-model/src/locate.rs).
+# CAINARY_OTEL_DEBUG=<path> runs another collector, e.g. a root-owned copy allowed to bind port 443.
+CAINARY_OTEL_DEBUG ?= $(CURDIR)/target/release/cainary-otel-debug
 linux-run-release: release linux-build-release
 	env CAINARY_CORE="$(CURDIR)/target/release/cainary" \
-		CAINARY_OTEL_DEBUG="$(CURDIR)/target/release/cainary-otel-debug" \
+		CAINARY_OTEL_DEBUG="$(CAINARY_OTEL_DEBUG)" \
 		CAINARY_ICON_THEME_PATH="$(CURDIR)/linux/data/icons" \
 		"$(CURDIR)/linux/target/release/cainary-tray" --dev
 
