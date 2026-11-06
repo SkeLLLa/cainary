@@ -527,7 +527,7 @@
                     "what": "the plugin marketplace name",
                     "group": "content",
                     "flag": "OTEL_LOG_TOOL_DETAILS",
-                    "sent": "generic"
+                    "sent": "no"
                   },
                   {
                     "key": "mcp_server.name",
@@ -628,7 +628,7 @@
                     "what": "the plugin marketplace name",
                     "group": "content",
                     "flag": "OTEL_LOG_TOOL_DETAILS",
-                    "sent": "generic"
+                    "sent": "no"
                   },
                   {
                     "key": "mcp_server.name",
@@ -651,7 +651,7 @@
                 "kind": "event",
                 "what": "The model refused a request",
                 "unit": null,
-                "observed": true,
+                "observed": false,
                 "attrs": [
                   {
                     "key": "model",
@@ -731,7 +731,7 @@
                     "what": "the plugin marketplace name",
                     "group": "content",
                     "flag": "OTEL_LOG_TOOL_DETAILS",
-                    "sent": "generic"
+                    "sent": "no"
                   },
                   {
                     "key": "mcp_server.name",
@@ -1187,21 +1187,21 @@
                     "what": "the plugin name",
                     "group": "content",
                     "flag": "OTEL_LOG_TOOL_DETAILS",
-                    "sent": "generic"
+                    "sent": "no"
                   },
                   {
                     "key": "plugin.version",
                     "what": "the plugin version",
                     "group": "content",
                     "flag": "OTEL_LOG_TOOL_DETAILS",
-                    "sent": "generic"
+                    "sent": "no"
                   },
                   {
                     "key": "marketplace.name",
                     "what": "the plugin marketplace name",
                     "group": "content",
                     "flag": "OTEL_LOG_TOOL_DETAILS",
-                    "sent": "generic"
+                    "sent": "no"
                   }
                 ]
               },
@@ -1317,14 +1317,14 @@
                     "what": "the plugin name",
                     "group": "content",
                     "flag": "OTEL_LOG_TOOL_DETAILS",
-                    "sent": "generic"
+                    "sent": "no"
                   },
                   {
                     "key": "marketplace.name",
                     "what": "the plugin marketplace name",
                     "group": "content",
                     "flag": "OTEL_LOG_TOOL_DETAILS",
-                    "sent": "generic"
+                    "sent": "no"
                   }
                 ]
               },
@@ -1565,7 +1565,7 @@
               {
                 "name": "claude_code.hook_plugin_metrics",
                 "kind": "event",
-                "what": "Metrics from an official plugin's hooks",
+                "what": "Metrics from official plugin hooks, including up to 20 plugin-emitted boolean or numeric keys",
                 "unit": null,
                 "observed": false,
                 "attrs": [

@@ -574,7 +574,7 @@
               {
                 "name": "codex.agent_response",
                 "kind": "event",
-                "what": "Codex's final reply",
+                "what": "Final answers from the main agent and spawned task agents",
                 "unit": null,
                 "observed": false,
                 "flag": "otel.log_agent_responses",
@@ -642,6 +642,41 @@
                 "sent": "no",
                 "attrs": [
                   {
+                    "key": "conversation.id",
+                    "what": "the reviewed conversation ID",
+                    "group": "identity"
+                  },
+                  {
+                    "key": "turn.id",
+                    "what": "the reviewed turn ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "review.id",
+                    "what": "the Guardian review ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "target_item.id",
+                    "what": "the reviewed target item ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "status",
+                    "what": "the review status",
+                    "group": "event"
+                  },
+                  {
+                    "key": "risk_level",
+                    "what": "the assessed risk level",
+                    "group": "event"
+                  },
+                  {
+                    "key": "user_authorization",
+                    "what": "the user's authorization level",
+                    "group": "event"
+                  },
+                  {
                     "key": "outcome",
                     "what": "the review outcome",
                     "group": "event"
@@ -703,6 +738,11 @@
                   {
                     "key": "user.id",
                     "what": "the authenticated user ID",
+                    "group": "identity"
+                  },
+                  {
+                    "key": "user.account_id",
+                    "what": "the workspace account ID",
                     "group": "identity"
                   }
                 ]

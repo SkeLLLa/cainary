@@ -486,6 +486,1174 @@
                 ]
               },
               {
+                "name": "codex.responses_api_overhead.duration_ms",
+                "kind": "metric",
+                "what": "Responses API overhead timing",
+                "unit": "ms",
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.responses_api_inference_time.duration_ms",
+                "kind": "metric",
+                "what": "Responses API inference timing",
+                "unit": "ms",
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.responses_api_engine_iapi_ttft.duration_ms",
+                "kind": "metric",
+                "what": "Responses API engine IAPI time to first token",
+                "unit": "ms",
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.responses_api_engine_service_ttft.duration_ms",
+                "kind": "metric",
+                "what": "Responses API engine service time to first token",
+                "unit": "ms",
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.responses_api_engine_iapi_tbt.duration_ms",
+                "kind": "metric",
+                "what": "Responses API engine IAPI time between tokens",
+                "unit": "ms",
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.responses_api_engine_service_tbt.duration_ms",
+                "kind": "metric",
+                "what": "Responses API engine service time between tokens",
+                "unit": "ms",
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.transport.fallback_to_http",
+                "kind": "metric",
+                "what": "WebSocket to HTTP fallback count",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "from_wire_api",
+                    "what": "whether the request used the wire API",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.remote_models.fetch_update.duration_ms",
+                "kind": "metric",
+                "what": "Time to fetch remote model definitions",
+                "unit": "ms",
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.remote_models.load_cache.duration_ms",
+                "kind": "metric",
+                "what": "Time to load the remote model cache",
+                "unit": "ms",
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.startup_prewarm.duration_ms",
+                "kind": "metric",
+                "what": "Startup prewarm duration by outcome",
+                "unit": "ms",
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "status",
+                    "what": "the prewarm outcome",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.startup_prewarm.age_at_first_turn_ms",
+                "kind": "metric",
+                "what": "Startup prewarm age when the first turn resolves it",
+                "unit": "ms",
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "status",
+                    "what": "the prewarm outcome",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.cloud_requirements.fetch.duration_ms",
+                "kind": "metric",
+                "what": "Workspace managed requirements fetch duration",
+                "unit": "ms",
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.cloud_requirements.fetch_attempt",
+                "kind": "metric",
+                "what": "Workspace managed requirements fetch attempts",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "trigger",
+                    "what": "what triggered the fetch",
+                    "group": "event"
+                  },
+                  {
+                    "key": "attempt",
+                    "what": "the attempt number",
+                    "group": "event"
+                  },
+                  {
+                    "key": "outcome",
+                    "what": "the fetch outcome",
+                    "group": "event"
+                  },
+                  {
+                    "key": "status_code",
+                    "what": "the HTTP status code",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.cloud_requirements.fetch_final",
+                "kind": "metric",
+                "what": "Final workspace managed requirements fetch outcome",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "trigger",
+                    "what": "what triggered the fetch",
+                    "group": "event"
+                  },
+                  {
+                    "key": "outcome",
+                    "what": "the final outcome",
+                    "group": "event"
+                  },
+                  {
+                    "key": "reason",
+                    "what": "why the fetch ended",
+                    "group": "event"
+                  },
+                  {
+                    "key": "attempt_count",
+                    "what": "the number of attempts",
+                    "group": "event"
+                  },
+                  {
+                    "key": "status_code",
+                    "what": "the HTTP status code",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.cloud_requirements.load",
+                "kind": "metric",
+                "what": "Workspace managed requirements load outcome",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "trigger",
+                    "what": "what triggered the load",
+                    "group": "event"
+                  },
+                  {
+                    "key": "outcome",
+                    "what": "the load outcome",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.turn.e2e_duration_ms",
+                "kind": "metric",
+                "what": "End to end time for a full turn",
+                "unit": "ms",
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.turn.ttft.duration_ms",
+                "kind": "metric",
+                "what": "Time to first token for a turn",
+                "unit": "ms",
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.turn.ttfm.duration_ms",
+                "kind": "metric",
+                "what": "Time to first model output item for a turn",
+                "unit": "ms",
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.turn.network_proxy",
+                "kind": "metric",
+                "what": "Managed network proxy state for the turn",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "active",
+                    "what": "whether the managed proxy was active",
+                    "group": "event"
+                  },
+                  {
+                    "key": "tmp_mem_enabled",
+                    "what": "whether temporary memory was enabled",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.turn.memory",
+                "kind": "metric",
+                "what": "Per turn memory read availability and citation usage",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "read_allowed",
+                    "what": "whether memory reads were allowed",
+                    "group": "event"
+                  },
+                  {
+                    "key": "feature_enabled",
+                    "what": "whether the memory feature was enabled",
+                    "group": "event"
+                  },
+                  {
+                    "key": "config_use_memories",
+                    "what": "whether memory use was configured",
+                    "group": "event"
+                  },
+                  {
+                    "key": "has_citations",
+                    "what": "whether the turn included memory citations",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.turn.tool.call",
+                "kind": "metric",
+                "what": "Number of tool calls in the turn",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "tmp_mem_enabled",
+                    "what": "whether temporary memory was enabled",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.turn.token_usage",
+                "kind": "metric",
+                "what": "Per turn token usage by token type",
+                "unit": "tokens",
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "token_type",
+                    "what": "the token category",
+                    "group": "event"
+                  },
+                  {
+                    "key": "tmp_mem_enabled",
+                    "what": "whether temporary memory was enabled",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.tool.unified_exec",
+                "kind": "metric",
+                "what": "Unified exec tool calls by TTY mode",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "tty",
+                    "what": "whether the tool ran with a TTY",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.approval.requested",
+                "kind": "metric",
+                "what": "Tool approval request results",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "tool",
+                    "what": "the internal tool name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "approved",
+                    "what": "the approval result",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.mcp.call",
+                "kind": "metric",
+                "what": "MCP tool invocation results",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "status",
+                    "what": "the call status",
+                    "group": "event"
+                  },
+                  {
+                    "key": "tool",
+                    "what": "the internal tool name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "connector_id",
+                    "what": "the connector ID when available",
+                    "group": "event"
+                  },
+                  {
+                    "key": "connector_name",
+                    "what": "the connector name when available",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.mcp.call.duration_ms",
+                "kind": "metric",
+                "what": "MCP tool invocation duration",
+                "unit": "ms",
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "status",
+                    "what": "the call status",
+                    "group": "event"
+                  },
+                  {
+                    "key": "tool",
+                    "what": "the internal tool name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "connector_id",
+                    "what": "the connector ID when available",
+                    "group": "event"
+                  },
+                  {
+                    "key": "connector_name",
+                    "what": "the connector name when available",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.mcp.tools.list.duration_ms",
+                "kind": "metric",
+                "what": "MCP tool list duration",
+                "unit": "ms",
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "cache",
+                    "what": "whether the tool list came from cache",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.mcp.tools.fetch_uncached.duration_ms",
+                "kind": "metric",
+                "what": "Duration of MCP tool fetches that miss the cache",
+                "unit": "ms",
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.mcp.tools.cache_write.duration_ms",
+                "kind": "metric",
+                "what": "Duration of Codex Apps MCP tool cache writes",
+                "unit": "ms",
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.hooks.run",
+                "kind": "metric",
+                "what": "Hook run counts by hook name source and status",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "hook_name",
+                    "what": "the hook name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "source",
+                    "what": "where the hook came from",
+                    "group": "event"
+                  },
+                  {
+                    "key": "status",
+                    "what": "the hook result",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.hooks.run.duration_ms",
+                "kind": "metric",
+                "what": "Hook run duration",
+                "unit": "ms",
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "hook_name",
+                    "what": "the hook name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "source",
+                    "what": "where the hook came from",
+                    "group": "event"
+                  },
+                  {
+                    "key": "status",
+                    "what": "the hook result",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.feature.state",
+                "kind": "metric",
+                "what": "Feature values that differ from defaults",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "feature",
+                    "what": "the feature name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "value",
+                    "what": "the configured feature value",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.status_line",
+                "kind": "metric",
+                "what": "Session started with a configured status line",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.model_warning",
+                "kind": "metric",
+                "what": "A warning was sent to the model",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.thread.started",
+                "kind": "metric",
+                "what": "New thread counts by Git repository state",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "is_git",
+                    "what": "whether the working directory is in a Git repository",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.conversation.turn.count",
+                "kind": "metric",
+                "what": "User and assistant turns recorded at thread end",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.thread.fork",
+                "kind": "metric",
+                "what": "New thread counts by fork source",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "source",
+                    "what": "the fork source",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.thread.rename",
+                "kind": "metric",
+                "what": "Thread rename count",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.thread.side",
+                "kind": "metric",
+                "what": "Side conversation counts by source",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "source",
+                    "what": "the side conversation source",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.thread.skills.enabled_total",
+                "kind": "metric",
+                "what": "Enabled skills per new thread",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.thread.skills.kept_total",
+                "kind": "metric",
+                "what": "Enabled skills kept after rendering",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.thread.skills.truncated",
+                "kind": "metric",
+                "what": "Whether enabled skill rendering was truncated",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.task.compact",
+                "kind": "metric",
+                "what": "Compaction counts by type",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "type",
+                    "what": "the compaction type",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.task.review",
+                "kind": "metric",
+                "what": "Review trigger count",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.task.undo",
+                "kind": "metric",
+                "what": "Undo action count",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.task.user_shell",
+                "kind": "metric",
+                "what": "User shell action count",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.shell_snapshot",
+                "kind": "metric",
+                "what": "Whether shell snapshot creation succeeded",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "success",
+                    "what": "whether the snapshot succeeded",
+                    "group": "event"
+                  },
+                  {
+                    "key": "failure_reason",
+                    "what": "why snapshot creation failed",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.shell_snapshot.duration_ms",
+                "kind": "metric",
+                "what": "Time to create a shell snapshot",
+                "unit": "ms",
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "success",
+                    "what": "whether the snapshot succeeded",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.skill.injected",
+                "kind": "metric",
+                "what": "Skill injection outcomes",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "status",
+                    "what": "the injection status",
+                    "group": "event"
+                  },
+                  {
+                    "key": "skill",
+                    "what": "the skill name",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.plugins.startup_sync",
+                "kind": "metric",
+                "what": "Curated plugin startup sync attempts",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "transport",
+                    "what": "the sync transport",
+                    "group": "event"
+                  },
+                  {
+                    "key": "status",
+                    "what": "the sync status",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.plugins.startup_sync.final",
+                "kind": "metric",
+                "what": "Final curated plugin startup sync outcome",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "transport",
+                    "what": "the sync transport",
+                    "group": "event"
+                  },
+                  {
+                    "key": "status",
+                    "what": "the final sync status",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.multi_agent.spawn",
+                "kind": "metric",
+                "what": "Agent spawn counts by role",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "role",
+                    "what": "the agent role",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.multi_agent.resume",
+                "kind": "metric",
+                "what": "Agent resume count",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.multi_agent.nickname_pool_reset",
+                "kind": "metric",
+                "what": "Agent nickname pool reset count",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.memory.phase1",
+                "kind": "metric",
+                "what": "Memory phase one job counts",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "status",
+                    "what": "the job status",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.memory.phase1.e2e_ms",
+                "kind": "metric",
+                "what": "Memory phase one duration",
+                "unit": "ms",
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.memory.phase1.output",
+                "kind": "metric",
+                "what": "Memory phase one outputs written",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.memory.phase1.token_usage",
+                "kind": "metric",
+                "what": "Memory phase one token usage",
+                "unit": "tokens",
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "token_type",
+                    "what": "the token category",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.memory.phase2",
+                "kind": "metric",
+                "what": "Memory phase two job counts",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "status",
+                    "what": "the job status",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.memory.phase2.e2e_ms",
+                "kind": "metric",
+                "what": "Memory phase two duration",
+                "unit": "ms",
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.memory.phase2.input",
+                "kind": "metric",
+                "what": "Memory phase two input count",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.memory.phase2.token_usage",
+                "kind": "metric",
+                "what": "Memory phase two token usage",
+                "unit": "tokens",
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "token_type",
+                    "what": "the token category",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.memories.usage",
+                "kind": "metric",
+                "what": "Memory usage by kind tool and outcome",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "kind",
+                    "what": "the memory kind",
+                    "group": "event"
+                  },
+                  {
+                    "key": "tool",
+                    "what": "the internal tool name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "success",
+                    "what": "whether the memory operation succeeded",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.external_agent_config.detect",
+                "kind": "metric",
+                "what": "External agent configuration detections",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "migration_type",
+                    "what": "the migration item type",
+                    "group": "event"
+                  },
+                  {
+                    "key": "skills_count",
+                    "what": "the number of skills when applicable",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.external_agent_config.import",
+                "kind": "metric",
+                "what": "External agent configuration imports",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "migration_type",
+                    "what": "the migration item type",
+                    "group": "event"
+                  },
+                  {
+                    "key": "skills_count",
+                    "what": "the number of skills when applicable",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.db.backfill",
+                "kind": "metric",
+                "what": "Initial state database backfill results",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "status",
+                    "what": "the backfill status",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.db.backfill.duration_ms",
+                "kind": "metric",
+                "what": "Initial state database backfill duration",
+                "unit": "ms",
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "status",
+                    "what": "the backfill status",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.db.error",
+                "kind": "metric",
+                "what": "Errors during state database operations",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "stage",
+                    "what": "the database operation stage",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.windows_sandbox.setup_success",
+                "kind": "metric",
+                "what": "Windows sandbox setup successes",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "originator",
+                    "what": "what started sandbox setup",
+                    "group": "event"
+                  },
+                  {
+                    "key": "mode",
+                    "what": "the sandbox mode",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.windows_sandbox.setup_failure",
+                "kind": "metric",
+                "what": "Windows sandbox setup failures",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "originator",
+                    "what": "what started sandbox setup",
+                    "group": "event"
+                  },
+                  {
+                    "key": "mode",
+                    "what": "the sandbox mode",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.windows_sandbox.setup_duration_ms",
+                "kind": "metric",
+                "what": "Windows sandbox setup duration",
+                "unit": "ms",
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "result",
+                    "what": "the setup result",
+                    "group": "event"
+                  },
+                  {
+                    "key": "originator",
+                    "what": "what started sandbox setup",
+                    "group": "event"
+                  },
+                  {
+                    "key": "mode",
+                    "what": "the sandbox mode",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.windows_sandbox.elevated_setup_success",
+                "kind": "metric",
+                "what": "Elevated Windows sandbox setup successes",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.windows_sandbox.elevated_setup_failure",
+                "kind": "metric",
+                "what": "Elevated Windows sandbox setup failures",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "code",
+                    "what": "the failure code when available",
+                    "group": "event"
+                  },
+                  {
+                    "key": "message",
+                    "what": "the failure message when available",
+                    "group": "event"
+                  },
+                  {
+                    "key": "originator",
+                    "what": "what started sandbox setup when available",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.windows_sandbox.elevated_setup_canceled",
+                "kind": "metric",
+                "what": "Canceled elevated Windows sandbox setup attempts",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.windows_sandbox.elevated_setup_duration_ms",
+                "kind": "metric",
+                "what": "Elevated Windows sandbox setup duration",
+                "unit": "ms",
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "result",
+                    "what": "the setup result",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.windows_sandbox.elevated_prompt_shown",
+                "kind": "metric",
+                "what": "Elevated sandbox setup prompt count",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.windows_sandbox.elevated_prompt_accept",
+                "kind": "metric",
+                "what": "Elevated sandbox setup prompt acceptance count",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.windows_sandbox.elevated_prompt_use_legacy",
+                "kind": "metric",
+                "what": "Legacy sandbox selection count from elevated prompt",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.windows_sandbox.elevated_prompt_quit",
+                "kind": "metric",
+                "what": "Quit count from elevated sandbox prompt",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.windows_sandbox.fallback_prompt_shown",
+                "kind": "metric",
+                "what": "Fallback sandbox prompt count",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.windows_sandbox.fallback_retry_elevated",
+                "kind": "metric",
+                "what": "Elevated setup retry count from fallback prompt",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.windows_sandbox.fallback_use_legacy",
+                "kind": "metric",
+                "what": "Legacy sandbox selection count from fallback prompt",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.windows_sandbox.fallback_prompt_quit",
+                "kind": "metric",
+                "what": "Quit count from fallback sandbox prompt",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.windows_sandbox.legacy_setup_preflight_failed",
+                "kind": "metric",
+                "what": "Legacy Windows sandbox preflight failures",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "originator",
+                    "what": "what started sandbox setup when available",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.windows_sandbox.setup_elevated_sandbox_command",
+                "kind": "metric",
+                "what": "Elevated sandbox setup command count",
+                "unit": null,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.windows_sandbox.createprocessasuserw_failed",
+                "kind": "metric",
+                "what": "Windows CreateProcessAsUserW failures",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "error_code",
+                    "what": "the Windows error code",
+                    "group": "event"
+                  },
+                  {
+                    "key": "path_kind",
+                    "what": "the path category",
+                    "group": "event"
+                  },
+                  {
+                    "key": "exe",
+                    "what": "the executable name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "level",
+                    "what": "the sandbox level",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
                 "name": "codex.*",
                 "kind": "metric",
                 "what": "Another Codex runtime metric",
@@ -507,6 +1675,7 @@
               "  app.version = <the Codex version>",
               "  model = <the model name>",
               "  originator = <what started the Codex session>",
+              "  session_source = <what started the Codex session>",
               "  tool = <the tool's name, never the command>",
               "  success = <whether the tool call succeeded>"
             ]

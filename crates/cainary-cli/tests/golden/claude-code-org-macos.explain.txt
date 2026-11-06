@@ -71,7 +71,7 @@ Events (28; * seen on the wire in claude-code 2.1.316; (may) = not in the vendor
           query_source, effort
     content: agent.name (sent), skill.name (sent), plugin.name (sent), marketplace.name (sent),
              mcp_server.name (sent), mcp_tool.name (sent)
-  claude_code.api_refusal *
+  claude_code.api_refusal
     The model refused a request
     keys: model, request_id, query_source, speed, attempt, effort, server_fallback_hop,
           has_category, has_explanation
@@ -143,7 +143,7 @@ Events (28; * seen on the wire in claude-code 2.1.316; (may) = not in the vendor
           system_message_chars, initial_user_message_chars, num_outputs_persisted, managed_only,
           hook_source, safe_mode
   claude_code.hook_plugin_metrics
-    Metrics from an official plugin's hooks
+    Metrics from official plugin hooks, including up to 20 plugin-emitted boolean or numeric keys
     keys: plugin_id, hook_event
   claude_code.compaction
     The conversation was compacted

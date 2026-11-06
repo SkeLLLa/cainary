@@ -870,7 +870,7 @@
                 "kind": "event",
                 "what": "The model refused a request",
                 "unit": null,
-                "observed": true,
+                "observed": false,
                 "attrs": [
                   {
                     "key": "model",
@@ -1784,7 +1784,7 @@
               {
                 "name": "claude_code.hook_plugin_metrics",
                 "kind": "event",
-                "what": "Metrics from an official plugin's hooks",
+                "what": "Metrics from official plugin hooks, including up to 20 plugin-emitted boolean or numeric keys",
                 "unit": null,
                 "observed": false,
                 "attrs": [
@@ -2504,6 +2504,21 @@
                     "group": "event"
                   },
                   {
+                    "key": "model",
+                    "what": "the model name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "query_source",
+                    "what": "what issued the request",
+                    "group": "event"
+                  },
+                  {
+                    "key": "effort",
+                    "what": "the model effort level",
+                    "group": "event"
+                  },
+                  {
                     "key": "agent.name",
                     "what": "the agent name",
                     "group": "content",
@@ -2611,6 +2626,9 @@
               "  user.groups = <your identity provider's groups>",
               "  identity.source = <your identity provider, such as gateway-oidc>",
               "  type = <the kind of token usage>",
+              "  model = <the model name>",
+              "  query_source = <what issued the request>",
+              "  effort = <the model effort level>",
               "  agent.name = <the agent name>   (sent: OTEL_LOG_TOOL_DETAILS)",
               "  skill.name = <the skill name>   (sent: OTEL_LOG_TOOL_DETAILS)",
               "  plugin.name = <the plugin name>   (sent: OTEL_LOG_TOOL_DETAILS)",

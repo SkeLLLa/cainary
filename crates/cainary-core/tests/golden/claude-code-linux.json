@@ -90,11 +90,11 @@
                 "flag": "OTEL_LOG_TOOL_DETAILS",
                 "label": "Full shell commands, tool input, and MCP, skill and plugin names",
                 "on": false,
-                "sent": "generic",
+                "sent": "no",
                 "value": null,
                 "setBy": null,
                 "path": null,
-                "text": "Full shell commands, tool input, and MCP, skill and plugin names: replaced by \"custom\", because OTEL_LOG_TOOL_DETAILS is unset"
+                "text": "Full shell commands, tool input, and MCP, skill and plugin names: not sent, because OTEL_LOG_TOOL_DETAILS is unset"
               },
               {
                 "flag": "OTEL_METRICS_INCLUDE_SESSION_ID",
@@ -396,7 +396,7 @@
                     "what": "the plugin marketplace name",
                     "group": "content",
                     "flag": "OTEL_LOG_TOOL_DETAILS",
-                    "sent": "generic"
+                    "sent": "no"
                   },
                   {
                     "key": "mcp_server.name",
@@ -427,6 +427,21 @@
                     "group": "event"
                   },
                   {
+                    "key": "model",
+                    "what": "the model name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "query_source",
+                    "what": "what issued the request",
+                    "group": "event"
+                  },
+                  {
+                    "key": "effort",
+                    "what": "the model effort level",
+                    "group": "event"
+                  },
+                  {
                     "key": "agent.name",
                     "what": "the agent name",
                     "group": "content",
@@ -452,7 +467,7 @@
                     "what": "the plugin marketplace name",
                     "group": "content",
                     "flag": "OTEL_LOG_TOOL_DETAILS",
-                    "sent": "generic"
+                    "sent": "no"
                   },
                   {
                     "key": "mcp_server.name",
@@ -534,10 +549,12 @@
               "  user.groups = <your identity provider's groups>",
               "  identity.source = <your identity provider, such as gateway-oidc>",
               "  type = <the kind of token usage>",
+              "  model = <the model name>",
+              "  query_source = <what issued the request>",
+              "  effort = <the model effort level>",
               "  agent.name = \"custom\"",
               "  skill.name = \"third-party\"",
               "  plugin.name = \"third-party\"",
-              "  marketplace.name = \"third-party\"",
               "  mcp_server.name = \"custom\"",
               "  mcp_tool.name = \"custom\""
             ]
