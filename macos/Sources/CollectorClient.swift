@@ -71,6 +71,18 @@ final class CollectorClient: @unchecked Sendable {
         child.standardInput = stdin
         child.standardOutput = stdout
         child.standardError = stderr
+        // Close-on-exec on every fd before `run()`, so a scan launched at the same moment can't
+        // inherit the lifeline's write end (the child gets its own ends through dup2). A write to
+        // a dead child is EPIPE, not a signal.
+        let inFD = stdin.fileHandleForWriting.fileDescriptor
+        for handle in [
+            stdin.fileHandleForReading, stdin.fileHandleForWriting, stdout.fileHandleForReading,
+            stdout.fileHandleForWriting, stderr.fileHandleForReading, stderr.fileHandleForWriting,
+        ] {
+            _ = fcntl(handle.fileDescriptor, F_SETFD, FD_CLOEXEC)
+        }
+        _ = fcntl(inFD, F_SETNOSIGPIPE, 1)
+        _ = fcntl(inFD, F_SETFL, fcntl(inFD, F_GETFL) | O_NONBLOCK)
         do {
             try child.run()
         } catch {
@@ -80,16 +92,6 @@ final class CollectorClient: @unchecked Sendable {
         try? stdin.fileHandleForReading.close()
         try? stdout.fileHandleForWriting.close()
         try? stderr.fileHandleForWriting.close()
-        // Our ends never leak into another child, and a write to a dead child is EPIPE, not a signal.
-        let inFD = stdin.fileHandleForWriting.fileDescriptor
-        for fd in [
-            inFD, stdout.fileHandleForReading.fileDescriptor,
-            stderr.fileHandleForReading.fileDescriptor,
-        ] {
-            _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
-        }
-        _ = fcntl(inFD, F_SETNOSIGPIPE, 1)
-        _ = fcntl(inFD, F_SETFL, fcntl(inFD, F_GETFL) | O_NONBLOCK)
 
         lock.lock()
         process = child
