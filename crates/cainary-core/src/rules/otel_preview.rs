@@ -84,13 +84,17 @@ fn attrs_of(list: &'static [Attr], export: Export) -> impl Iterator<Item = &'sta
     list.iter().filter(move |a| accepts(a.only, export))
 }
 
-/// Every gate that applies to `export`, with the flag it names.
-fn gates_of(cat: &Catalog, export: Export) -> Vec<Gate> {
+/// Every gate that applies to `export`, with the flag it names. The `*` identity entry stands
+/// for the names in `OTEL_RESOURCE_ATTRIBUTES`; with none set its gate has nothing to send.
+fn gates_of(cat: &Catalog, export: Export, extra: &[String]) -> Vec<Gate> {
     let mut out = Vec::new();
     for a in attrs_of(cat.identity, export)
         .chain(attrs_of(cat.resource, export))
         .chain(attrs_of(cat.common, export))
     {
+        if a.key == "*" && extra.is_empty() {
+            continue;
+        }
         out.extend(a.gate);
     }
     for i in items_of(cat, export) {
@@ -115,6 +119,7 @@ fn attr_out(cat: &Catalog, key: &str, what: String, a: &Attr, flag: Lookup) -> A
         what,
         group: a.group,
         maybe: a.best_effort,
+        when: a.when.map(str::to_string),
         flag: a.gate.map(|g| g.flag.to_string()),
         sent: a.gate.map(|g| sent_of(cat, &g, flag)),
     }
@@ -163,7 +168,12 @@ fn off_of(gates: &[Gate], name: &str) -> Off {
         .map_or(Off::Omitted, |g| g.off)
 }
 
-fn gate_state(cat: &Catalog, f: &Flag, off: Off, flag: Lookup) -> GateState {
+fn gate_state(cat: &Catalog, f: &Flag, export: Export, off: Off, flag: Lookup) -> GateState {
+    let label = f
+        .labels
+        .iter()
+        .find(|(e, _)| *e == export)
+        .map_or(f.label, |(_, l)| *l);
     let input = flag(f.name);
     let on = on_under(cat, f.rule, f.name, flag, 0);
     let raw = input.value.as_deref().unwrap_or("");
@@ -189,7 +199,7 @@ fn gate_state(cat: &Catalog, f: &Flag, off: Off, flag: Lookup) -> GateState {
     let why = why_text(cat, f, &input, flag);
     GateState {
         flag: f.name.to_string(),
-        label: f.label.to_string(),
+        label: label.to_string(),
         on,
         sent,
         value: input
@@ -198,7 +208,7 @@ fn gate_state(cat: &Catalog, f: &Flag, off: Off, flag: Lookup) -> GateState {
             .map(|v| redact::value(f.name, &Value::from(v))),
         set_by: input.set_by,
         path: input.path.clone(),
-        text: format!("{}: {state}, because {why}", f.label),
+        text: format!("{label}: {state}, because {why}"),
     }
 }
 
@@ -283,12 +293,12 @@ fn docs_of(cat: &Catalog, export: Export) -> String {
 /// What `export` carries, for the flags `flag` resolves. `extra_identity` names the attributes
 /// `OTEL_RESOURCE_ATTRIBUTES` adds (names only).
 pub fn build(cat: &Catalog, export: Export, flag: Lookup, extra_identity: &[String]) -> Payload {
-    let all = gates_of(cat, export);
+    let all = gates_of(cat, export, extra_identity);
     let gates: Vec<GateState> = cat
         .flags
         .iter()
         .filter(|f| all.iter().any(|g| g.flag == f.name))
-        .map(|f| gate_state(cat, f, off_of(&all, f.name), flag))
+        .map(|f| gate_state(cat, f, export, off_of(&all, f.name), flag))
         .collect();
     let records: Vec<RecordOut> = items_of(cat, export)
         .map(|i| record_out(cat, i, export, flag))
@@ -536,5 +546,110 @@ mod tests {
         assert!(!p.sample.iter().any(|l| l.contains("tool_parameters")));
         // never a raw value
         assert!(p.sample.iter().all(|l| !l.contains("sk-")));
+    }
+
+    #[test]
+    fn identity_carries_its_condition() {
+        let p = build(&CLAUDE_CODE, Export::Logs, &lookup(&[]), &[]);
+        let id = |k: &str| p.identity.iter().find(|a| a.key == k).unwrap();
+        assert_eq!(id("user.email").when, None);
+        assert_eq!(id("session.id").when, None);
+        assert_eq!(id("ccr.session.id").when.as_deref(), Some("cloud sessions"));
+        assert_eq!(
+            id("user.groups").when.as_deref(),
+            Some("Claude apps gateway sessions")
+        );
+        assert_eq!(
+            id("vcs.owner.name").when.as_deref(),
+            Some("inside a git repository")
+        );
+        assert!(id("app.version").maybe);
+        let p = build(&CLAUDE_CODE, Export::Metrics, &lookup(&[]), &[]);
+        let ccr = p
+            .identity
+            .iter()
+            .find(|a| a.key == "ccr.session.id")
+            .unwrap();
+        assert_eq!(ccr.when.as_deref(), Some("cloud sessions"));
+        let json = serde_json::to_string(&p.identity[0]).unwrap();
+        assert!(!json.contains("\"when\""));
+    }
+
+    #[test]
+    fn gate_labels_follow_the_export() {
+        let label = |e: Export| {
+            build(
+                &CLAUDE_CODE,
+                e,
+                &lookup(&[("OTEL_LOG_TOOL_DETAILS", "1")]),
+                &[],
+            )
+            .gates
+            .iter()
+            .find(|g| g.flag == "OTEL_LOG_TOOL_DETAILS")
+            .map(|g| g.text.clone())
+        };
+        assert!(
+            label(Export::Logs)
+                .unwrap()
+                .starts_with("Full shell commands, tool input")
+        );
+        assert!(
+            label(Export::Traces)
+                .unwrap()
+                .starts_with("Full shell commands, tool input")
+        );
+        let m = label(Export::Metrics).unwrap();
+        assert!(m.starts_with("Agent, MCP, skill and plugin names on metrics (no commands): sent"));
+        assert!(!m.contains("shell command"));
+        assert!(!label(Export::Beta).unwrap().contains("Full shell commands"));
+    }
+
+    #[test]
+    fn only_flags_that_gate_something_in_the_export_are_listed() {
+        let flags = |c: &Catalog, e: Export| -> Vec<String> {
+            build(c, e, &lookup(&[]), &[])
+                .gates
+                .into_iter()
+                .map(|g| g.flag)
+                .collect()
+        };
+        let m = flags(&CLAUDE_CODE, Export::Metrics);
+        assert!(!m.contains(&"OTEL_LOG_USER_PROMPTS".to_string()));
+        assert!(!m.contains(&"OTEL_LOG_RAW_API_BODIES".to_string()));
+        let t = flags(&CLAUDE_CODE, Export::Traces);
+        assert!(!t.iter().any(|f| f.starts_with("OTEL_METRICS_INCLUDE")));
+        assert!(
+            !flags(&CODEX, Export::Traces)
+                .iter()
+                .any(|f| f.starts_with("otel."))
+        );
+        assert!(
+            !flags(&CODEX, Export::Metrics)
+                .iter()
+                .any(|f| f.starts_with("otel."))
+        );
+    }
+
+    #[test]
+    fn the_custom_attributes_gate_needs_attributes() {
+        let none = build(&CLAUDE_CODE, Export::Metrics, &lookup(&[]), &[]);
+        assert!(
+            !none
+                .gates
+                .iter()
+                .any(|g| g.flag == "OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES")
+        );
+        let some = build(
+            &CLAUDE_CODE,
+            Export::Metrics,
+            &lookup(&[]),
+            &["team".into()],
+        );
+        assert!(
+            some.gates
+                .iter()
+                .any(|g| g.flag == "OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES")
+        );
     }
 }

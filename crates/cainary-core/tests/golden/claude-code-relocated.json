@@ -150,7 +150,8 @@
               {
                 "key": "ccr.session.id",
                 "what": "the cloud session's ID",
-                "group": "identity"
+                "group": "identity",
+                "when": "cloud sessions"
               },
               {
                 "key": "terminal.type",
@@ -172,34 +173,40 @@
               {
                 "key": "vcs.repository.url.full",
                 "what": "the repository's URL",
-                "group": "identity"
+                "group": "identity",
+                "when": "inside a git repository"
               },
               {
                 "key": "vcs.owner.name",
                 "what": "the repository owner",
-                "group": "identity"
+                "group": "identity",
+                "when": "inside a git repository"
               },
               {
                 "key": "vcs.repository.name",
                 "what": "the repository name",
-                "group": "identity"
+                "group": "identity",
+                "when": "inside a git repository"
               },
               {
                 "key": "vcs.provider.name",
                 "what": "the repository's host",
-                "group": "identity"
+                "group": "identity",
+                "when": "inside a git repository"
               },
               {
                 "key": "user.groups",
                 "what": "your identity provider's groups",
                 "group": "identity",
-                "maybe": true
+                "maybe": true,
+                "when": "Claude apps gateway sessions"
               },
               {
                 "key": "identity.source",
                 "what": "your identity provider, such as gateway-oidc",
                 "group": "identity",
-                "maybe": true
+                "maybe": true,
+                "when": "Claude apps gateway sessions"
               }
             ],
             "resource": [

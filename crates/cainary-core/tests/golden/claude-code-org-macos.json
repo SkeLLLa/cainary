@@ -369,7 +369,8 @@
               {
                 "key": "ccr.session.id",
                 "what": "the cloud session's ID",
-                "group": "identity"
+                "group": "identity",
+                "when": "cloud sessions"
               },
               {
                 "key": "terminal.type",
@@ -391,34 +392,40 @@
               {
                 "key": "vcs.repository.url.full",
                 "what": "the repository's URL",
-                "group": "identity"
+                "group": "identity",
+                "when": "inside a git repository"
               },
               {
                 "key": "vcs.owner.name",
                 "what": "the repository owner",
-                "group": "identity"
+                "group": "identity",
+                "when": "inside a git repository"
               },
               {
                 "key": "vcs.repository.name",
                 "what": "the repository name",
-                "group": "identity"
+                "group": "identity",
+                "when": "inside a git repository"
               },
               {
                 "key": "vcs.provider.name",
                 "what": "the repository's host",
-                "group": "identity"
+                "group": "identity",
+                "when": "inside a git repository"
               },
               {
                 "key": "user.groups",
                 "what": "your identity provider's groups",
                 "group": "identity",
-                "maybe": true
+                "maybe": true,
+                "when": "Claude apps gateway sessions"
               },
               {
                 "key": "identity.source",
                 "what": "your identity provider, such as gateway-oidc",
                 "group": "identity",
-                "maybe": true
+                "maybe": true,
+                "when": "Claude apps gateway sessions"
               }
             ],
             "resource": [
@@ -2165,13 +2172,13 @@
             "gates": [
               {
                 "flag": "OTEL_LOG_TOOL_DETAILS",
-                "label": "Full shell commands, tool input, and MCP, skill and plugin names",
+                "label": "Agent, MCP, skill and plugin names on metrics (no commands)",
                 "on": true,
                 "sent": "yes",
                 "value": "1",
                 "setBy": "environment",
                 "path": "env:OTEL_LOG_TOOL_DETAILS",
-                "text": "Full shell commands, tool input, and MCP, skill and plugin names: sent, because OTEL_LOG_TOOL_DETAILS = 1 (set by environment variable)"
+                "text": "Agent, MCP, skill and plugin names on metrics (no commands): sent, because OTEL_LOG_TOOL_DETAILS = 1 (set by environment variable)"
               },
               {
                 "flag": "OTEL_METRICS_INCLUDE_SESSION_ID",
@@ -2212,16 +2219,6 @@
                 "setBy": null,
                 "path": null,
                 "text": "How Claude Code was started, on metrics: not sent, because OTEL_METRICS_INCLUDE_ENTRYPOINT is unset"
-              },
-              {
-                "flag": "OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES",
-                "label": "Your custom attributes on metrics",
-                "on": true,
-                "sent": "yes",
-                "value": null,
-                "setBy": null,
-                "path": null,
-                "text": "Your custom attributes on metrics: sent, because OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES is unset (on by default)"
               },
               {
                 "flag": "OTEL_METRICS_INCLUDE_REPOSITORY",
@@ -2275,6 +2272,7 @@
                 "key": "ccr.session.id",
                 "what": "the cloud session's ID",
                 "group": "identity",
+                "when": "cloud sessions",
                 "flag": "OTEL_METRICS_INCLUDE_SESSION_ID",
                 "sent": "yes"
               },
@@ -2301,6 +2299,7 @@
                 "key": "vcs.repository.url.full",
                 "what": "the repository's URL",
                 "group": "identity",
+                "when": "inside a git repository",
                 "flag": "OTEL_METRICS_INCLUDE_REPOSITORY",
                 "sent": "no"
               },
@@ -2308,6 +2307,7 @@
                 "key": "vcs.owner.name",
                 "what": "the repository owner",
                 "group": "identity",
+                "when": "inside a git repository",
                 "flag": "OTEL_METRICS_INCLUDE_REPOSITORY",
                 "sent": "no"
               },
@@ -2315,6 +2315,7 @@
                 "key": "vcs.repository.name",
                 "what": "the repository name",
                 "group": "identity",
+                "when": "inside a git repository",
                 "flag": "OTEL_METRICS_INCLUDE_REPOSITORY",
                 "sent": "no"
               },
@@ -2322,6 +2323,7 @@
                 "key": "vcs.provider.name",
                 "what": "the repository's host",
                 "group": "identity",
+                "when": "inside a git repository",
                 "flag": "OTEL_METRICS_INCLUDE_REPOSITORY",
                 "sent": "no"
               },
@@ -2329,13 +2331,15 @@
                 "key": "user.groups",
                 "what": "your identity provider's groups",
                 "group": "identity",
-                "maybe": true
+                "maybe": true,
+                "when": "Claude apps gateway sessions"
               },
               {
                 "key": "identity.source",
                 "what": "your identity provider, such as gateway-oidc",
                 "group": "identity",
-                "maybe": true
+                "maybe": true,
+                "when": "Claude apps gateway sessions"
               }
             ],
             "resource": [

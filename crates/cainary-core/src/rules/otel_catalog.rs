@@ -62,6 +62,8 @@ pub struct Flag {
     pub rule: Rule,
     pub label: &'static str,
     pub doc: &'static str,
+    /// What the flag gates in one export, where that differs from `label`.
+    pub labels: &'static [(Export, &'static str)],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +81,8 @@ pub struct Attr {
     pub value: Option<&'static str>,
     pub gate: Option<Gate>,
     pub only: Option<&'static [Export]>,
+    /// The attribute is sent only in this situation ("cloud sessions"); `None` = always.
+    pub when: Option<&'static str>,
     pub best_effort: bool,
     pub observed: bool,
 }
@@ -144,9 +148,15 @@ const fn attr(key: &'static str, group: Group, what: &'static str) -> Attr {
         value: None,
         gate: None,
         only: None,
+        when: None,
         best_effort: false,
         observed: false,
     }
+}
+
+const fn when(mut a: Attr, condition: &'static str) -> Attr {
+    a.when = Some(condition);
+    a
 }
 
 const fn seen(mut a: Attr) -> Attr {
@@ -180,7 +190,13 @@ const fn flag(name: &'static str, rule: Rule, label: &'static str, doc: &'static
         rule,
         label,
         doc,
+        labels: &[],
     }
+}
+
+const fn labelled(mut f: Flag, labels: &'static [(Export, &'static str)]) -> Flag {
+    f.labels = labels;
+    f
 }
 
 const fn event(
@@ -511,11 +527,23 @@ static CC_FLAGS: &[Flag] = &[
         "Claude's response text",
         CC_COMMON_DOC,
     ),
-    flag(
-        "OTEL_LOG_TOOL_DETAILS",
-        Rule::Truthy,
-        "Full shell commands, tool input, and MCP, skill and plugin names",
-        CC_COMMON_DOC,
+    labelled(
+        flag(
+            "OTEL_LOG_TOOL_DETAILS",
+            Rule::Truthy,
+            "Full shell commands, tool input, and MCP, skill and plugin names",
+            CC_COMMON_DOC,
+        ),
+        &[
+            (
+                Export::Metrics,
+                "Agent, MCP, skill and plugin names on metrics (no commands)",
+            ),
+            (
+                Export::Beta,
+                "Workflow names, errors, hook definitions, and command and file details in tool output",
+            ),
+        ],
     ),
     flag(
         "OTEL_LOG_TOOL_CONTENT",
@@ -639,12 +667,18 @@ static CC_IDENTITY: &[Attr] = &[
         METRICS,
     ),
     limited(
-        attr("ccr.session.id", Group::Identity, "the cloud session's ID"),
+        when(
+            attr("ccr.session.id", Group::Identity, "the cloud session's ID"),
+            "cloud sessions",
+        ),
         LOGS_TRACES_BETA,
     ),
     limited(
         gated(
-            attr("ccr.session.id", Group::Identity, "the cloud session's ID"),
+            when(
+                attr("ccr.session.id", Group::Identity, "the cloud session's ID"),
+                "cloud sessions",
+            ),
             CC_SESSION_METRICS,
         ),
         METRICS,
@@ -685,82 +719,112 @@ static CC_IDENTITY: &[Attr] = &[
         CC_ENTRYPOINT_METRICS,
     ),
     limited(
-        attr(
-            "vcs.repository.url.full",
-            Group::Identity,
-            "the repository's URL",
-        ),
-        LOGS,
-    ),
-    gated(
-        limited(
+        when(
             attr(
                 "vcs.repository.url.full",
                 Group::Identity,
                 "the repository's URL",
             ),
+            "inside a git repository",
+        ),
+        LOGS,
+    ),
+    gated(
+        limited(
+            when(
+                attr(
+                    "vcs.repository.url.full",
+                    Group::Identity,
+                    "the repository's URL",
+                ),
+                "inside a git repository",
+            ),
             METRICS,
         ),
         CC_REPOSITORY_METRICS,
     ),
     limited(
-        attr("vcs.owner.name", Group::Identity, "the repository owner"),
-        LOGS,
-    ),
-    gated(
-        limited(
+        when(
             attr("vcs.owner.name", Group::Identity, "the repository owner"),
-            METRICS,
-        ),
-        CC_REPOSITORY_METRICS,
-    ),
-    limited(
-        attr(
-            "vcs.repository.name",
-            Group::Identity,
-            "the repository name",
+            "inside a git repository",
         ),
         LOGS,
     ),
     gated(
         limited(
+            when(
+                attr("vcs.owner.name", Group::Identity, "the repository owner"),
+                "inside a git repository",
+            ),
+            METRICS,
+        ),
+        CC_REPOSITORY_METRICS,
+    ),
+    limited(
+        when(
             attr(
                 "vcs.repository.name",
                 Group::Identity,
                 "the repository name",
             ),
-            METRICS,
-        ),
-        CC_REPOSITORY_METRICS,
-    ),
-    limited(
-        attr(
-            "vcs.provider.name",
-            Group::Identity,
-            "the repository's host",
+            "inside a git repository",
         ),
         LOGS,
     ),
     gated(
         limited(
-            attr(
-                "vcs.provider.name",
-                Group::Identity,
-                "the repository's host",
+            when(
+                attr(
+                    "vcs.repository.name",
+                    Group::Identity,
+                    "the repository name",
+                ),
+                "inside a git repository",
             ),
             METRICS,
         ),
         CC_REPOSITORY_METRICS,
     ),
-    maybe(attr(
-        "user.groups",
-        Group::Identity,
-        "your identity provider's groups",
+    limited(
+        when(
+            attr(
+                "vcs.provider.name",
+                Group::Identity,
+                "the repository's host",
+            ),
+            "inside a git repository",
+        ),
+        LOGS,
+    ),
+    gated(
+        limited(
+            when(
+                attr(
+                    "vcs.provider.name",
+                    Group::Identity,
+                    "the repository's host",
+                ),
+                "inside a git repository",
+            ),
+            METRICS,
+        ),
+        CC_REPOSITORY_METRICS,
+    ),
+    maybe(when(
+        attr(
+            "user.groups",
+            Group::Identity,
+            "your identity provider's groups",
+        ),
+        "Claude apps gateway sessions",
     )),
-    maybe(attr(
-        "identity.source",
-        Group::Identity,
-        "your identity provider, such as gateway-oidc",
+    maybe(when(
+        attr(
+            "identity.source",
+            Group::Identity,
+            "your identity provider, such as gateway-oidc",
+        ),
+        "Claude apps gateway sessions",
     )),
     limited(
         attr(

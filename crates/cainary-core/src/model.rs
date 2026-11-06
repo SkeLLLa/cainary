@@ -449,6 +449,9 @@ pub struct AttrOut {
     pub group: Group,
     #[serde(skip_serializing_if = "is_false")]
     pub maybe: bool,
+    /// Sent only in this situation ("cloud sessions"); absent = whenever the record is sent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flag: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
