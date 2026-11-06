@@ -28,7 +28,7 @@ ApplicationWindow {
         { key: "daily", text: qsTr("Daily") }
     ]
     readonly property var collector: {
-        const defaults = { enabled: false, port: 4318, log_to_file: false, log_path: "", presets: [], notify: true, patterns: [], logPathSuggestion: "" };
+        const defaults = { enabled: false, port: 4318, log_to_file: false, log_path: "", presets: [], notify: true, patterns: [], patternErrors: [], overLimit: false, logPathSuggestion: "" };
         try {
             const value = JSON.parse(SettingsController.collectorJson);
             return {
@@ -39,6 +39,8 @@ ApplicationWindow {
                 presets: value.presets || [],
                 notify: value.notify !== false,
                 patterns: value.patterns || [],
+                patternErrors: value.patternErrors || [],
+                overLimit: value.overLimit === true,
                 logPathSuggestion: value.logPathSuggestion || ""
             };
         } catch (error) {
@@ -223,41 +225,61 @@ ApplicationWindow {
                     Label { text: qsTr("Custom patterns"); font.weight: Font.DemiBold }
                     Repeater {
                         model: win.collector.patterns
-                        delegate: RowLayout {
+                        delegate: ColumnLayout {
                             required property int index
                             required property var modelData
                             Layout.fillWidth: true
-                            TextField {
-                                text: modelData.name
-                                placeholderText: qsTr("Name")
-                                onEditingFinished: win.updatePattern(index, "name", text)
-                                Layout.preferredWidth: 110
-                            }
-                            TextField {
-                                text: modelData.pattern
-                                placeholderText: qsTr("Pattern")
-                                onEditingFinished: win.updatePattern(index, "pattern", text)
+                            RowLayout {
                                 Layout.fillWidth: true
+                                TextField {
+                                    text: modelData.name
+                                    placeholderText: qsTr("Name")
+                                    onEditingFinished: win.updatePattern(index, "name", text)
+                                    Layout.preferredWidth: 110
+                                }
+                                TextField {
+                                    text: modelData.pattern
+                                    placeholderText: qsTr("Pattern")
+                                    onEditingFinished: win.updatePattern(index, "pattern", text)
+                                    Layout.fillWidth: true
+                                }
+                                CheckBox {
+                                    text: qsTr("Regex")
+                                    checked: modelData.kind === "regex"
+                                    onToggled: win.updatePattern(index, "kind", checked ? "regex" : "text")
+                                }
+                                CheckBox {
+                                    text: qsTr("Match case")
+                                    checked: modelData.case_sensitive
+                                    onToggled: win.updatePattern(index, "case_sensitive", checked)
+                                }
+                                ToolButton {
+                                    text: "−"
+                                    Accessible.name: qsTr("Remove pattern")
+                                    onClicked: win.changeCollector(next => { next.patterns.splice(index, 1); })
+                                }
                             }
-                            CheckBox {
-                                text: qsTr("Regex")
-                                checked: modelData.kind === "regex"
-                                onToggled: win.updatePattern(index, "kind", checked ? "regex" : "text")
-                            }
-                            CheckBox {
-                                text: qsTr("Match case")
-                                checked: modelData.case_sensitive
-                                onToggled: win.updatePattern(index, "case_sensitive", checked)
-                            }
-                            ToolButton {
-                                text: "−"
-                                Accessible.name: qsTr("Remove pattern")
-                                onClicked: win.changeCollector(next => { next.patterns.splice(index, 1); })
+                            Label {
+                                visible: index < win.collector.patternErrors.length
+                                    && win.collector.patternErrors[index] !== ""
+                                text: index < win.collector.patternErrors.length
+                                    ? win.collector.patternErrors[index] + qsTr(" This pattern is not used.") : ""
+                                color: win.warning
+                                wrapMode: Text.Wrap
+                                Layout.fillWidth: true
                             }
                         }
                     }
+                    Label {
+                        visible: win.collector.overLimit
+                        text: qsTr("The enabled presets and valid patterns exceed the collector limit of 64. Turn off a preset or remove a pattern.")
+                        color: win.warning
+                        wrapMode: Text.Wrap
+                        Layout.fillWidth: true
+                    }
                     Button {
                         text: qsTr("Add pattern")
+                        enabled: win.collector.patterns.length < 64
                         onClicked: win.changeCollector(next => {
                             next.patterns.push({ name: "", kind: "text", pattern: "", case_sensitive: false });
                         })

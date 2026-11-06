@@ -72,9 +72,8 @@ pub fn config_stdin(settings: &CollectorSettings) -> Result<Vec<u8>, String> {
     let config = StdinConfig {
         v: 1,
         red_flags: settings
-            .patterns
-            .iter()
-            .filter(|pattern| !pattern.name.trim().is_empty() && !pattern.pattern.is_empty())
+            .valid_patterns()
+            .into_iter()
             .map(|pattern| RedFlagInput {
                 name: &pattern.name,
                 kind: match pattern.kind {
@@ -331,15 +330,38 @@ pub enum State {
     Failed,
 }
 
+#[derive(Clone, Debug)]
+struct StoredBatch {
+    batch: Batch,
+    line_bytes: usize,
+    raw_records: String,
+}
+
+impl StoredBatch {
+    fn new(batch: Batch, line_bytes: usize) -> Self {
+        let raw_records = serde_json::to_string_pretty(&batch.resources).unwrap_or_default();
+        Self {
+            batch,
+            line_bytes,
+            raw_records,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct StoredAlert {
+    alert: Alert,
+    line_bytes: usize,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Model {
     pub state: State,
     pub message: String,
     pub hello: Option<Hello>,
-    batches: VecDeque<Batch>,
-    alerts: VecDeque<Alert>,
+    batches: VecDeque<StoredBatch>,
+    alerts: VecDeque<StoredAlert>,
     errors: VecDeque<ErrorLine>,
-    retained_lines: VecDeque<String>,
     retained_bytes: usize,
     notified: HashMap<String, Instant>,
 }
@@ -369,15 +391,6 @@ impl Model {
             self.failed("Stopped: output too large");
             return (true, None);
         }
-        self.retained_bytes += line.len();
-        self.retained_lines.push_back(line.clone());
-        while self.retained_bytes > MAX_RETAINED {
-            if let Some(old) = self.retained_lines.pop_front() {
-                self.retained_bytes = self.retained_bytes.saturating_sub(old.len());
-            } else {
-                break;
-            }
-        }
         match decode_line(&line) {
             Err(DecodeError::UpdateRequired) => {
                 self.stopped("Update cAInary");
@@ -394,17 +407,18 @@ impl Model {
                 (false, None)
             }
             Ok(Line::Batch(batch)) => {
-                self.batches.push_back(batch);
-                while self.batches.len() > MAX_BATCHES {
-                    self.batches.pop_front();
-                }
+                self.retained_bytes += line.len();
+                self.batches.push_back(StoredBatch::new(batch, line.len()));
+                self.trim_retained();
                 (false, None)
             }
             Ok(Line::Alert(alert)) => {
-                self.alerts.push_back(alert.clone());
-                while self.alerts.len() > MAX_ALERTS {
-                    self.alerts.pop_front();
-                }
+                self.retained_bytes += line.len();
+                self.alerts.push_back(StoredAlert {
+                    alert: alert.clone(),
+                    line_bytes: line.len(),
+                });
+                self.trim_retained();
                 (false, Some(alert))
             }
             Ok(Line::Error(error)) => {
@@ -415,6 +429,38 @@ impl Model {
                 (false, None)
             }
             Ok(Line::Unknown) => (false, None),
+        }
+    }
+
+    fn trim_retained(&mut self) {
+        while self.batches.len() > MAX_BATCHES {
+            self.drop_oldest_batch();
+        }
+        while self.alerts.len() > MAX_ALERTS {
+            self.drop_oldest_alert();
+        }
+        while self.retained_bytes > MAX_RETAINED {
+            if self.batches.len() > 1 {
+                self.drop_oldest_batch();
+            } else if !self.alerts.is_empty() {
+                self.drop_oldest_alert();
+            } else if !self.batches.is_empty() {
+                self.drop_oldest_batch();
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn drop_oldest_batch(&mut self) {
+        if let Some(batch) = self.batches.pop_front() {
+            self.retained_bytes = self.retained_bytes.saturating_sub(batch.line_bytes);
+        }
+    }
+
+    fn drop_oldest_alert(&mut self) {
+        if let Some(alert) = self.alerts.pop_front() {
+            self.retained_bytes = self.retained_bytes.saturating_sub(alert.line_bytes);
         }
     }
 
@@ -545,8 +591,9 @@ pub struct SummaryAttributeView {
     pub known: bool,
 }
 
-impl From<&Batch> for BatchView {
-    fn from(batch: &Batch) -> Self {
+impl From<&StoredBatch> for BatchView {
+    fn from(stored: &StoredBatch) -> Self {
+        let batch = &stored.batch;
         Self {
             id: batch.seq,
             timestamp: batch.ts.clone(),
@@ -570,7 +617,7 @@ impl From<&Batch> for BatchView {
                 .iter()
                 .map(SummaryRecordView::from)
                 .collect(),
-            raw_records: serde_json::to_string_pretty(&batch.resources).unwrap_or_default(),
+            raw_records: stored.raw_records.clone(),
             resources_omitted: batch.resources_omitted,
         }
     }
@@ -618,8 +665,9 @@ pub struct AlertView {
     pub matched: String,
 }
 
-impl From<&Alert> for AlertView {
-    fn from(alert: &Alert) -> Self {
+impl From<&StoredAlert> for AlertView {
+    fn from(stored: &StoredAlert) -> Self {
+        let alert = &stored.alert;
         Self {
             timestamp: alert.ts.clone(),
             pattern: alert.pattern.clone(),
@@ -706,22 +754,28 @@ mod tests {
     #[test]
     fn config_stdin_keeps_patterns_out_of_arguments() {
         let settings = CollectorSettings {
-            patterns: vec![CollectorPattern {
-                name: "customer".into(),
-                kind: CollectorPatternKind::Text,
-                pattern: "acme-private-pattern".into(),
-                case_sensitive: false,
-            }],
+            patterns: vec![
+                CollectorPattern {
+                    name: "customer".into(),
+                    kind: CollectorPatternKind::Text,
+                    pattern: "acme-private-pattern".into(),
+                    case_sensitive: false,
+                },
+                CollectorPattern {
+                    name: "too-long".into(),
+                    kind: CollectorPatternKind::Text,
+                    pattern: "x".repeat(crate::settings::COLLECTOR_MAX_PATTERN_BYTES + 1),
+                    case_sensitive: false,
+                },
+            ],
             ..CollectorSettings::default()
         };
         let args = child_args(&settings).unwrap();
         assert!(args.iter().all(|arg| !arg.contains("acme-private-pattern")));
         let config = config_stdin(&settings).unwrap();
-        assert!(
-            String::from_utf8(config)
-                .unwrap()
-                .contains("acme-private-pattern")
-        );
+        let config: Value = serde_json::from_slice(&config).unwrap();
+        assert!(config.to_string().contains("acme-private-pattern"));
+        assert_eq!(config["redFlags"].as_array().unwrap().len(), 1);
     }
 
     #[test]
@@ -739,7 +793,33 @@ mod tests {
         for _ in 0..5 {
             model.accept(line.clone());
         }
+        assert_eq!(model.retained_bytes, 0, "unknown lines are not retained");
+    }
+
+    #[test]
+    fn fifty_large_batches_stay_under_the_retained_byte_limit() {
+        let padding = "x".repeat(2 << 20);
+        let mut model = Model::default();
+        for seq in 0..50 {
+            let line = format!(
+                r#"{{"v":1,"type":"batch","seq":{seq},"resources":[{{"padding":"{padding}"}}]}}"#
+            );
+            assert!(line.len() < MAX_LINE);
+            model.accept(line);
+        }
+
         assert!(model.retained_bytes <= MAX_RETAINED);
+        assert_eq!(
+            model.retained_bytes,
+            model
+                .batches
+                .iter()
+                .map(|batch| batch.line_bytes)
+                .sum::<usize>()
+        );
+        assert_eq!(model.batches.back().unwrap().batch.seq, 49);
+        assert!(model.batches.front().unwrap().batch.seq > 0);
+        assert!(model.batches.len() < 50);
     }
 
     #[test]
@@ -777,5 +857,6 @@ mod tests {
         }
         assert_eq!(model.batches.len(), MAX_BATCHES);
         assert_eq!(model.alerts.len(), MAX_ALERTS);
+        assert!(model.retained_bytes <= MAX_RETAINED);
     }
 }

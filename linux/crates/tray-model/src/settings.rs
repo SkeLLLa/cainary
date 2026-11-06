@@ -100,6 +100,11 @@ pub const COLLECTOR_PRESETS: [&str; 8] = [
     "slack-token",
 ];
 
+pub const COLLECTOR_MAX_PATTERNS: usize = 64;
+pub const COLLECTOR_MAX_PATTERN_BYTES: usize = 1024;
+const MAX_STORED_CUSTOM_PATTERNS: usize = 64;
+const MAX_STORED_PATTERN_FIELD_BYTES: usize = 16 * 1024;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CollectorSettings {
@@ -130,27 +135,86 @@ impl Default for CollectorSettings {
 }
 
 impl CollectorSettings {
-    pub fn valid(&self) -> bool {
-        (1024..=u16::MAX).contains(&self.port)
-            && self.patterns.len() <= 64
+    /// The input is bounded enough to retain in tray.toml and pass through the settings command.
+    /// Individual rows may still be invalid so the UI can explain and skip them.
+    pub fn safe_to_store(&self) -> bool {
+        self.patterns.len() <= MAX_STORED_CUSTOM_PATTERNS
+            && self.patterns.iter().all(|pattern| {
+                pattern.name.len() <= MAX_STORED_PATTERN_FIELD_BYTES
+                    && pattern.pattern.len() <= MAX_STORED_PATTERN_FIELD_BYTES
+            })
+            && self.presets.len() <= COLLECTOR_PRESETS.len()
             && self
                 .presets
                 .iter()
                 .all(|name| COLLECTOR_PRESETS.contains(&name.as_str()))
-            && self.patterns.iter().all(|pattern| {
-                (pattern.name.trim().is_empty() && pattern.pattern.is_empty())
-                    || (!pattern.name.trim().is_empty()
-                        && !pattern.pattern.is_empty()
-                        && valid_collector_pattern_name(&pattern.name)
-                        && !COLLECTOR_PRESETS.contains(&pattern.name.as_str())
-                        && pattern.pattern.len() <= 16 * 1024)
+    }
+
+    pub fn valid(&self) -> bool {
+        (1024..=u16::MAX).contains(&self.port) && self.safe_to_store() && !self.over_limit()
+    }
+
+    /// A row with neither field filled in is blank, not an error. Invalid rows are shown inline
+    /// and omitted from the helper's config, matching the Linux collector settings contract.
+    pub fn pattern_problem(&self, index: usize) -> Option<&'static str> {
+        let pattern = self.patterns.get(index)?;
+        if pattern.name.is_empty() && pattern.pattern.is_empty() {
+            return None;
+        }
+        if !valid_collector_pattern_name(&pattern.name) {
+            return Some(
+                "Name: 1–64 characters, a–z, 0–9, - and _, starting with a letter or digit.",
+            );
+        }
+        if COLLECTOR_PRESETS.contains(&pattern.name.as_str()) {
+            return Some("That name belongs to a preset.");
+        }
+        if self.patterns[..index]
+            .iter()
+            .any(|prior| prior.name == pattern.name)
+        {
+            return Some("Another pattern has this name.");
+        }
+        if pattern.pattern.is_empty() {
+            return Some("The pattern is empty.");
+        }
+        if pattern.pattern.len() > COLLECTOR_MAX_PATTERN_BYTES {
+            return Some("The pattern is over 1024 bytes.");
+        }
+        None
+    }
+
+    /// The settings passed to the helper, excluding incomplete or invalid rows.
+    pub fn valid_patterns(&self) -> Vec<&CollectorPattern> {
+        self.patterns
+            .iter()
+            .enumerate()
+            .filter_map(|(index, pattern)| {
+                (self.pattern_problem(index).is_none() && !pattern.pattern.is_empty())
+                    .then_some(pattern)
             })
-            && self.patterns.iter().enumerate().all(|(index, pattern)| {
-                pattern.name.trim().is_empty()
-                    || !self.patterns[..index]
-                        .iter()
-                        .any(|prior| prior.name == pattern.name)
-            })
+            .collect()
+    }
+
+    /// Includes selected presets in the helper's shared 64-pattern cap.
+    pub fn over_limit(&self) -> bool {
+        let selected_presets = self
+            .presets
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        selected_presets + self.valid_patterns().len() > COLLECTOR_MAX_PATTERNS
+    }
+
+    /// Whether a change affects the helper process, rather than tray-only notification behavior.
+    pub fn requires_restart(&self, next: &Self) -> bool {
+        self.enabled != next.enabled
+            || self.port != next.port
+            || self.log_to_file != next.log_to_file
+            || self.log_path != next.log_path
+            || self.presets != next.presets
+            || self.patterns != next.patterns
     }
 
     pub fn suggested_log_path() -> String {

@@ -565,7 +565,7 @@ fn handle_command(
                 );
                 return;
             };
-            if !next.valid() {
+            if !next.safe_to_store() {
                 publish_settings(
                     settings,
                     launch_at_login_error,
@@ -578,10 +578,13 @@ fn handle_command(
             if current.collector == next {
                 return;
             }
+            let restart = current.collector.requires_restart(&next);
             current.collector = next.clone();
             save_settings(&current, settings_path);
             drop(current);
-            collector_runtime.restart(next);
+            if restart {
+                collector_runtime.restart(next);
+            }
             publish_settings(
                 settings,
                 launch_at_login_error,
@@ -884,6 +887,25 @@ fn collector_settings_json(settings: &CollectorSettings) -> String {
         object.insert(
             "logPathSuggestion".into(),
             serde_json::Value::String(CollectorSettings::suggested_log_path()),
+        );
+        object.insert(
+            "patternErrors".into(),
+            serde_json::Value::Array(
+                settings
+                    .patterns
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| {
+                        serde_json::Value::String(
+                            settings.pattern_problem(index).unwrap_or_default().into(),
+                        )
+                    })
+                    .collect(),
+            ),
+        );
+        object.insert(
+            "overLimit".into(),
+            serde_json::Value::Bool(settings.over_limit()),
         );
     }
     serde_json::to_string(&value).unwrap_or_else(|_| "{}".into())
@@ -1225,7 +1247,10 @@ impl Notifier for AppNotifier {
 
 #[cfg(test)]
 mod tests {
-    use super::view_changed;
+    use super::{collector_settings_json, view_changed};
+    use cainary_tray_model::settings::{
+        COLLECTOR_MAX_PATTERN_BYTES, CollectorPattern, CollectorPatternKind, CollectorSettings,
+    };
 
     #[test]
     fn an_equal_view_is_not_published_twice() {
@@ -1234,5 +1259,25 @@ mod tests {
         assert!(!view_changed(&mut last, "{\"a\":1}"));
         assert!(view_changed(&mut last, "{\"a\":2}"));
         assert_eq!(last, "{\"a\":2}");
+    }
+
+    #[test]
+    fn collector_settings_publish_inline_pattern_errors() {
+        let settings = CollectorSettings {
+            patterns: vec![CollectorPattern {
+                name: "customer".into(),
+                kind: CollectorPatternKind::Regex,
+                pattern: "x".repeat(COLLECTOR_MAX_PATTERN_BYTES + 1),
+                case_sensitive: false,
+            }],
+            ..CollectorSettings::default()
+        };
+        let value: serde_json::Value =
+            serde_json::from_str(&collector_settings_json(&settings)).unwrap();
+        assert_eq!(
+            value["patternErrors"][0].as_str(),
+            Some("The pattern is over 1024 bytes.")
+        );
+        assert_eq!(value["overLimit"].as_bool(), Some(false));
     }
 }

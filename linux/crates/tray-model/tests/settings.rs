@@ -77,12 +77,109 @@ fn collector_patterns_use_child_name_rules() {
     assert!(settings.valid());
 
     settings.patterns[0].name = "Customer-ID".into();
-    assert!(!settings.valid());
+    assert!(settings.valid());
+    assert!(settings.pattern_problem(0).is_some());
+    assert!(settings.valid_patterns().is_empty());
     settings.patterns[0].name = "email".into();
-    assert!(!settings.valid());
+    assert_eq!(
+        settings.pattern_problem(0),
+        Some("That name belongs to a preset.")
+    );
     settings.patterns[0].name = "customer-id".into();
     settings.patterns.push(pattern("customer-id"));
+    assert_eq!(
+        settings.pattern_problem(1),
+        Some("Another pattern has this name.")
+    );
+    assert_eq!(settings.valid_patterns().len(), 1);
+}
+
+#[test]
+fn collector_pattern_limits_match_the_helper() {
+    let pattern = |name: String, value: String| CollectorPattern {
+        name,
+        kind: CollectorPatternKind::Regex,
+        pattern: value,
+        case_sensitive: false,
+    };
+    let mut settings = CollectorSettings::default();
+    settings
+        .patterns
+        .push(pattern("p".into(), "x".repeat(1024)));
+    assert_eq!(settings.pattern_problem(0), None);
+    settings.patterns[0].pattern.push('x');
+    assert_eq!(
+        settings.pattern_problem(0),
+        Some("The pattern is over 1024 bytes.")
+    );
+    assert!(settings.valid());
+    assert!(settings.valid_patterns().is_empty());
+
+    settings.patterns[0] = pattern("a".repeat(65), "x".into());
+    assert!(settings.pattern_problem(0).is_some());
+    settings.patterns[0] = pattern("a".repeat(64), "x".into());
+    assert_eq!(settings.pattern_problem(0), None);
+
+    settings.patterns[0] = pattern(String::new(), String::new());
+    assert_eq!(settings.pattern_problem(0), None, "empty rows are allowed");
+    assert!(settings.valid_patterns().is_empty());
+    settings.patterns[0] = pattern("named".into(), String::new());
+    assert_eq!(settings.pattern_problem(0), Some("The pattern is empty."));
+}
+
+#[test]
+fn collector_pattern_limit_includes_selected_presets() {
+    let pattern = |index| CollectorPattern {
+        name: format!("custom-{index}"),
+        kind: CollectorPatternKind::Text,
+        pattern: format!("value-{index}"),
+        case_sensitive: false,
+    };
+    let mut settings = CollectorSettings {
+        patterns: (0..56).map(pattern).collect(),
+        ..CollectorSettings::default()
+    };
+    assert!(!settings.over_limit());
+    assert!(settings.valid());
+    settings.patterns.push(pattern(56));
+    assert!(settings.over_limit());
     assert!(!settings.valid());
+    assert!(
+        settings.safe_to_store(),
+        "over-limit settings remain editable"
+    );
+}
+
+#[test]
+fn collector_notify_does_not_require_a_child_restart() {
+    let current = CollectorSettings::default();
+    let mut next = current.clone();
+    next.notify = false;
+    assert!(!current.requires_restart(&next));
+
+    next = current.clone();
+    next.enabled = !next.enabled;
+    assert!(current.requires_restart(&next));
+    next = current.clone();
+    next.port += 1;
+    assert!(current.requires_restart(&next));
+    next = current.clone();
+    next.log_to_file = !next.log_to_file;
+    assert!(current.requires_restart(&next));
+    next = current.clone();
+    next.log_path.push_str("/next");
+    assert!(current.requires_restart(&next));
+    next = current.clone();
+    next.presets.pop();
+    assert!(current.requires_restart(&next));
+    next = current.clone();
+    next.patterns.push(CollectorPattern {
+        name: "custom".into(),
+        kind: CollectorPatternKind::Text,
+        pattern: "value".into(),
+        case_sensitive: false,
+    });
+    assert!(current.requires_restart(&next));
 }
 
 #[test]
