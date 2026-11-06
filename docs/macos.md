@@ -280,6 +280,9 @@ the app never talks to it over the network: it reads the child's stdout.
   | `otelCollectorPresets` ([String], the presets that are on) | absent: the default-on set (everything but `ipv4`) |
   | `otelCollectorPatterns` (Data, JSON `[{name, kind, pattern, caseSensitive}]`) | none |
   | `otelCollectorNotify` (Bool) | `true` |
+  | `otelCollectorTls` (Bool) | `false` |
+  | `otelCollectorTlsHosts` ([String]) | none |
+  | `otelCollectorTlsPort` (Int, 1–65535) | `8443` |
 
   The toggle is intent: when it is on, the collector starts at launch. Changing any option that
   reaches the child (port, log file, presets, patterns) restarts a running one after a short pause;
@@ -310,6 +313,38 @@ the app never talks to it over the network: it reads the child's stdout.
 - **Notifications:** a red flag posts a plain-text notification titled `Red flag: <pattern>` with
   the body `<event> · <attribute> (<match>)`, at most one per pattern per 60 s. Control and bidi
   characters are escaped first. A click opens the pane.
+- **HTTPS takeover** (design §16, §17; `TakeoverSettingsSection`, `TrustStore`, `TrustClient`).
+  For an agent whose managed settings pin its telemetry to an HTTPS host. The collector forwards
+  nothing: while it runs, your organization's collector receives nothing for those names.
+  - **Settings:** "Use HTTPS takeover" adds `--tls`, one `--tls-host <name>` per valid host
+    (lowercase DNS name with at least two labels, no wildcard, no IP, at most 32; invalid rows are
+    flagged and skipped) and `--port <takeover port>` (default 8443, replacing the plain port).
+    Host suggestions are the `http(s)` hosts in the evidence of findings that carry a `payload`
+    in the last scan. Patterns still go over `--config-stdin`. With the switch on and no valid
+    host, the collector doesn't start and says why.
+  - **Pane:** in takeover mode (`hello.mode == "tls-receiver"`) it lists the names, the CA path
+    and SHA-256, and the `setup.takeover` steps with **Copy**. Pointing the host names at this Mac
+    (for example `/etc/hosts`) stays your step; the app never does it.
+  - **Listen errors:** after an `error` line with `source: "listen"` and an exit, the child's whole
+    stderr (the privileged-port note) shows in a selectable box under the section. On macOS low
+    ports are normally allowed, so this is rare.
+  - **Trust buttons**, each a one-shot `cainary-otel-debug` call (stdin `/dev/null`, pipes
+    close-on-exec, 1 MiB stdout cap, 15 s timeout then SIGKILL; `OneShot` in `TrustClient.swift`):
+    - **Let Claude Code trust the collector…** runs `--trust claude-code --dry-run --json` and
+      opens a sheet with the exact change (`env.NODE_EXTRA_CA_CERTS: <from> → <to>`), the settings
+      path, the backup path, that Claude Code must be restarted, and "Your org's collector
+      receives nothing while the takeover is active". Only **Confirm** runs
+      `--trust claude-code --json`; Cancel writes nothing. A `refused` result (managed settings,
+      symlink, …) shows its reason and no sheet.
+    - **Undo Claude Code trust** (`--trust claude-code --undo --json`) is enabled when
+      `--trust-status --json` says `applied`. The status refreshes when Settings opens and after
+      every action.
+    - **Prepare Codex bundle** (`--trust codex --json`) shows the helper's `command`
+      (`env CODEX_CA_CERTIFICATE=… codex`) with **Copy**, and **Remove** (`--undo`).
+    - The no-write alternative `env NODE_EXTRA_CA_CERTS=<ca path> claude` is shown with **Copy**
+      (the path is single-quoted, since the macOS state directory has a space).
+    - The only file these ever change is `env.NODE_EXTRA_CA_CERTS` in `~/.claude/settings.json`,
+      by the helper, after a backup; the app writes nothing itself.
 - **Sandbox and entitlements:** none. The app is not sandboxed and has no entitlements, so
   `com.apple.security.network.server` isn't needed, and the hardened runtime doesn't restrict
   listening sockets. The child binds loopback only. Whether the Application Firewall prompts for
@@ -335,6 +370,7 @@ the app never talks to it over the network: it reads the child's stdout.
 | `Sources/Navigation.swift` | `ObservableObject`: `selection`, `expanded` |
 | `Sources/PayloadView.swift` | "What it sends" (§2.3), `CopyBlock`, `SentChip` |
 | `Sources/CollectorClient.swift`, `CollectorLines.swift`, `CollectorSettings.swift`, `CollectorStore.swift`, `CollectorView.swift` | the OTel debug collector (§2.8) |
+| `Sources/TrustClient.swift`, `TrustStore.swift` | the takeover's one-shot trust calls and their state (§2.8) |
 | `Sources/Style.swift` | level style, `LevelChip`, display names (signal, origin, surface), `WindowAccessor` |
 | `Sources/MenuBarIcon.swift` | `image(MenuState, IconStyle) -> NSImage`, the label view |
 | `Sources/EntryIcon.swift` | §2.2 icons |
@@ -436,6 +472,13 @@ every `Sources/*.swift` except `main.swift`, plus `Tests/Support/*.swift`:
   escaped stderr, and with a real stub child: start at launch, one restart for two edits, no
   restart for a notify change, off and quit reap it. Not covered here: the no-orphan test that
   SIGKILLs a helper process holding the lifeline, and a scan running while the collector is up.
+- **`TrustTests.swift`** (§2.8, HTTPS takeover): the takeover settings and argv (patterns stay out
+  of it), prefs round trip, host validation and suggestions from the org golden; the one-shot
+  calls against `Tests/stubs/trust.sh` (a stateful stub of `--trust` and `--trust-status`; refusal
+  exits 1 and is still a report; a timeout kills `trust-hang.sh`; `trust-big.sh` is over the cap);
+  the confirm flow (preview writes nothing, Cancel applies nothing, Confirm applies and refreshes
+  the status, Undo, Codex prepare and remove, refusal has no sheet); the TLS `hello`; and the
+  listen-error note.
 - **`TrackerTests.swift`**, `ChangeTracker` with explicit times: nothing is due before
   `confirmAfter`, even if a scan runs; due after; a flap (seen, then gone at the confirm) posts
   nothing; notify A, a scan sees only B, then A+B → A is due again after a new confirm; unhandled
