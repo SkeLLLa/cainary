@@ -914,15 +914,6 @@ fn capabilities_are_dropped_after_bind_in_plain_mode_too() {
 
 // ── handshake error categories (design §16.7, fixed messages, aggregated) ───────────────────
 
-fn tls_messages(run: &Run, n: usize) -> Vec<String> {
-    run.out
-        .wait_for("error", n)
-        .into_iter()
-        .filter(|e| e["source"] == "tls")
-        .map(|e| e["message"].as_str().unwrap().to_string())
-        .collect()
-}
-
 fn wait_tls(run: &Run, needle: &str) -> String {
     let end = Instant::now() + Duration::from_secs(5);
     loop {
