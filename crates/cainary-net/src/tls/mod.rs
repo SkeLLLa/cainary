@@ -169,7 +169,7 @@ impl Tls {
         let Some(sni) = sni else {
             return Err(Refusal::NoSni);
         };
-        if !self.ca.hosts().iter().any(|h| *h == sni) {
+        if !self.ca.hosts().contains(&sni) {
             return Err(Refusal::ServerName);
         }
         if !alpn_ok {
