@@ -57,6 +57,7 @@ services track and send. It includes the static cainary command-line scanner.
 """
 assets = [
   ["target/release/bin/cainary", "usr/bin/cainary", "755"],
+  ["target/release/bin/cainary-otel-debug", "usr/bin/cainary-otel-debug", "755"],
   ["target/release/bin/cainary-tray", "usr/bin/cainary-tray", "755"],
   ["target/release/share/applications/ua.SkeLLLa.cAInary.desktop", "usr/share/applications/ua.SkeLLLa.cAInary.desktop", "644"],
   ["target/release/share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml", "usr/share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml", "644"],
@@ -80,6 +81,7 @@ summary = "Qt 6 tray app for AI tool and device monitoring reports"
 license = "GPL-3.0-or-later"
 assets = [
   { source = "target/release/bin/cainary", dest = "/usr/bin/cainary", mode = "755" },
+  { source = "target/release/bin/cainary-otel-debug", dest = "/usr/bin/cainary-otel-debug", mode = "755" },
   { source = "target/release/bin/cainary-tray", dest = "/usr/bin/cainary-tray", mode = "755" },
   { source = "target/release/share/applications/ua.SkeLLLa.cAInary.desktop", dest = "/usr/share/applications/ua.SkeLLLa.cAInary.desktop", mode = "644" },
   { source = "target/release/share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml", dest = "/usr/share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml", mode = "644" },
