@@ -334,6 +334,10 @@ private struct FindingRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
             }
+            if let payload = finding.payload {
+                PayloadView(
+                    payload: payload, key: "\(finding.key)#payload", expanded: $expanded)
+            }
             HStack(spacing: 12) {
                 if let url = revealURL {
                     Button("Reveal in Finder") {
@@ -380,7 +384,7 @@ private struct FindingRow: View {
     }
 }
 
-private struct Tag: View {
+struct Tag: View {
     let text: String
     init(_ text: String) { self.text = text }
 

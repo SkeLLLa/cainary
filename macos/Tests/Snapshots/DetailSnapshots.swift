@@ -4,7 +4,7 @@ import SwiftUI
 // The Details entry pane on fixtures, scanned by the real helper. EntryDetailView is rendered
 // directly: the split view and its ScrollView don't render in ImageRenderer.
 
-/// An `EntryDetailView` with every finding row open (or none).
+/// An `EntryDetailView` with every finding row open, and every "What it sends" with it (or none).
 private struct DetailHost: View {
     let entry: Entry
     let expandAll: Bool
@@ -12,7 +12,8 @@ private struct DetailHost: View {
     var body: some View {
         EntryDetailView(
             entry: entry,
-            expanded: .constant(expandAll ? Set(entry.findings.map(\.key)) : [])
+            expanded: .constant(
+                expandAll ? Set(entry.findings.flatMap { [$0.key, "\($0.key)#payload"] }) : [])
         )
         .frame(width: 570, alignment: .topLeading)
     }

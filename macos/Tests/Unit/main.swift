@@ -10,6 +10,7 @@ enum UnitTests {
         signal(SIGPIPE, SIG_IGN)
 
         decodeTests()
+        payloadTests()
         trackerTests()
         notifierTests()
         statusMenuTests()

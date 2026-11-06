@@ -178,6 +178,131 @@ struct Finding: Codable, Hashable, Sendable {
     var maybe: Bool
     var config: Config
     var docs: String?
+    /// What an in-effect telemetry export sends (§3.7). Nil when absent or unreadable.
+    var payload: Payload?
+}
+
+extension Finding {
+    /// A malformed `payload` hides the preview; it never fails the report (design §2.3).
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        key = try c.decode(String.self, forKey: .key)
+        level = try c.decode(Level.self, forKey: .level)
+        title = try c.decode(String.self, forKey: .title)
+        detail = try c.decode(String.self, forKey: .detail)
+        surface = try c.decode(Surface.self, forKey: .surface)
+        sends = try c.decode([Signal].self, forKey: .sends)
+        setBy = try c.decode(Origin.self, forKey: .setBy)
+        inEffect = try c.decode(Bool.self, forKey: .inEffect)
+        maybe = try c.decode(Bool.self, forKey: .maybe)
+        config = try c.decode(Config.self, forKey: .config)
+        docs = try c.decodeIfPresent(String.self, forKey: .docs)
+        payload = try? c.decodeIfPresent(Payload.self, forKey: .payload)
+    }
+}
+
+/// Which signal a payload describes: `logs`, `metrics`, `traces` or `beta`.
+struct Export: OpenEnum {
+    let slug: String
+    init(slug: String) { self.slug = slug }
+}
+
+/// Whether a gated value leaves the machine: `yes`, `redacted`, `generic`, `no` or `local`.
+struct Sent: OpenEnum {
+    let slug: String
+    init(slug: String) { self.slug = slug }
+}
+
+/// What a record is: `event`, `metric` or `span`.
+struct ItemKind: OpenEnum {
+    let slug: String
+    init(slug: String) { self.slug = slug }
+}
+
+/// What one export carries, built by the core from its catalog and the resolved config. The app
+/// prints it as is.
+struct Payload: Codable, Hashable, Sendable {
+    var export: Export
+    var catalog: String
+    var docs: String
+    var maybe: Bool
+    var gates: [PayloadGate]
+    var identity: [PayloadAttr]
+    var resource: [PayloadAttr]
+    var records: [PayloadRecord]
+    var sample: [String]
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        export = try c.decode(Export.self, forKey: .export)
+        catalog = try c.decode(String.self, forKey: .catalog)
+        docs = try c.decode(String.self, forKey: .docs)
+        maybe = try c.decodeIfPresent(Bool.self, forKey: .maybe) ?? false
+        gates = try c.decode([PayloadGate].self, forKey: .gates)
+        identity = try c.decode([PayloadAttr].self, forKey: .identity)
+        resource = try c.decode([PayloadAttr].self, forKey: .resource)
+        records = try c.decode([PayloadRecord].self, forKey: .records)
+        sample = try c.decode([String].self, forKey: .sample)
+    }
+}
+
+/// One content flag: its state in this scan and the core's one-line explanation (`text`).
+struct PayloadGate: Codable, Hashable, Sendable {
+    var flag: String
+    var label: String
+    var on: Bool
+    var sent: Sent
+    var value: String?
+    var setBy: Origin?
+    var path: String?
+    var text: String
+}
+
+/// An attribute with what it holds. `flag` and `sent` are set on gated (content) attributes.
+struct PayloadAttr: Codable, Hashable, Sendable {
+    var key: String
+    var what: String
+    var group: String
+    var maybe: Bool
+    var flag: String?
+    var sent: Sent?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        key = try c.decode(String.self, forKey: .key)
+        what = try c.decode(String.self, forKey: .what)
+        group = try c.decode(String.self, forKey: .group)
+        maybe = try c.decodeIfPresent(Bool.self, forKey: .maybe) ?? false
+        flag = try c.decodeIfPresent(String.self, forKey: .flag)
+        sent = try c.decodeIfPresent(Sent.self, forKey: .sent)
+    }
+}
+
+/// An event, metric or span in the export. `observed` means seen on the wire, not only in docs.
+struct PayloadRecord: Codable, Hashable, Sendable {
+    var name: String
+    var kind: ItemKind
+    var what: String
+    var unit: String?
+    var maybe: Bool
+    var observed: Bool
+    var flag: String?
+    var sent: Sent?
+    var attrs: [PayloadAttr]
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        kind = try c.decode(ItemKind.self, forKey: .kind)
+        what = try c.decode(String.self, forKey: .what)
+        unit = try c.decodeIfPresent(String.self, forKey: .unit)
+        maybe = try c.decodeIfPresent(Bool.self, forKey: .maybe) ?? false
+        observed = try c.decode(Bool.self, forKey: .observed)
+        flag = try c.decodeIfPresent(String.self, forKey: .flag)
+        sent = try c.decodeIfPresent(Sent.self, forKey: .sent)
+        attrs = try c.decode([PayloadAttr].self, forKey: .attrs)
+    }
 }
 
 struct Entry: Codable, Hashable, Sendable {

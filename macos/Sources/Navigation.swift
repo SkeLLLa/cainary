@@ -5,7 +5,7 @@ import Foundation
 @MainActor
 final class Navigation: ObservableObject {
     @Published var selection: DetailSelection?
-    /// Finding `key`s whose rows are expanded.
+    /// Finding `key`s whose rows are expanded, and "<key>#payload" for an open "What it sends".
     @Published var expanded: Set<String> = []
     /// The popover's "What the levels mean" section.
     @Published var legendExpanded = false
