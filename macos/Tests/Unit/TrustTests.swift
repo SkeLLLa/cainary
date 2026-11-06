@@ -128,7 +128,17 @@ private func flowChecks() async {
 
     await store.refresh()
     check("trust flow: not applied at first", !store.claudeCodeApplied && store.codexCommand == nil)
-    check("trust flow: no-write command shown", store.noWriteCommand?.hasPrefix("env NODE_EXTRA_CA_CERTS=") == true)
+    check("trust flow: no-write command shown", store.noWriteCommand?.hasPrefix("env NODE_EXTRA_CA_CERTS=") == true && !store.caMissing)
+    FileManager.default.createFile(atPath: dir.appendingPathComponent("noca").path, contents: Data())
+    await store.refresh()
+    check("trust flow: no certificate yet hides the command", store.caMissing && store.noWriteCommand == nil)
+    try? FileManager.default.removeItem(at: dir.appendingPathComponent("noca"))
+    await store.refresh()
+    check("trust flow: certificate back", !store.caMissing && store.noWriteCommand != nil)
+
+    // The sheet shows the helper's preview message as it is.
+    let note = "Close Claude Code first; restart it afterwards."
+    check("trust flow: sheet carries the message", TrustConfirmView(report: TrustReport(action: "preview", message: note), onConfirm: {}, onCancel: {}).report.message == note)
 
     // Preview shows the sheet and writes nothing.
     await store.requestClaudeCodeTrust()
@@ -200,6 +210,14 @@ private func realOutputChecks() {
         case .report(let r): reports.append(r)
         case .status(let s): statuses.append(s)
         case .failed(let why): check("trust real: line \(i) decodes (\(why))", false)
+        }
+    }
+    check("trust real: older status has no caExists", statuses.allSatisfy { $0.caExists == nil })
+    for (exists, line) in [(true, TrustSamples.statusCaExists), (false, TrustSamples.statusCaMissing)] {
+        if case .status(let s) = TrustClient.outcome(OneShotResult(status: 0, stdout: Data(line.utf8), stderr: "")) {
+            check("trust real: caExists \(exists)", s.caExists == exists)
+        } else {
+            check("trust real: caExists \(exists) decodes", false)
         }
     }
     check("trust real: 2 statuses and 7 reports", statuses.count == 2 && reports.count == 7)

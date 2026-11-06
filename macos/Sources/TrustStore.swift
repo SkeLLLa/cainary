@@ -23,7 +23,11 @@ final class TrustStore: ObservableObject {
     var codexCommand: String? {
         status?.codex?.state == "ready" ? status?.codex?.command : nil
     }
-    var noWriteCommand: String? { status?.caPath.map(nodeExtraCACommand(caPath:)) }
+    /// The certificate is made when the takeover first starts.
+    var caMissing: Bool { status?.caExists == false }
+    var noWriteCommand: String? {
+        caMissing ? nil : status?.caPath.map(nodeExtraCACommand(caPath:))
+    }
 
     /// One line for the Claude Code state.
     var claudeCodeLine: String? {

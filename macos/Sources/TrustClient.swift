@@ -36,6 +36,8 @@ struct TrustStatus: Codable, Equatable, Sendable {
     var claudeCode: ClaudeCode?
     var codex: Codex?
     var caPath: String?
+    /// Whether the CA file exists yet. Absent (an older helper) counts as existing.
+    var caExists: Bool?
 }
 
 enum TrustOutcome: Equatable, Sendable {

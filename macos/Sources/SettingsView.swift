@@ -396,6 +396,11 @@ private struct TakeoverSettingsSection: View {
             if let command = trust.codexCommand {
                 CopyBlock(text: command)
             }
+            if trust.caMissing {
+                Text("Start the HTTPS takeover once to create the certificate.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if let command = trust.noWriteCommand {
                 Text("Without changing any file, start Claude Code like this:").font(.caption)
                 CopyBlock(text: command)

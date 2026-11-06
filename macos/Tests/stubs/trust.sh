@@ -33,7 +33,9 @@ case "$*" in
 "--trust-status --json")
   claude=$(cat "$dir/claude" 2>/dev/null || echo absent)
   codex=$(cat "$dir/codex" 2>/dev/null || echo absent)
-  printf '{"v":1,"type":"trust-status","ts":"%s","claudeCode":{"state":"%s","settingsPath":"%s","value":null},"codex":{"state":"%s","bundlePath":null,"command":"env CODEX_CA_CERTIFICATE=/home/u/bundle.pem codex"},"caPath":"/home/u/Library/Application Support/cainary/otel-debug-ca.pem"}\n' "$ts" "$claude" "$settings" "$codex"
+  caexists=true
+  [ -f "$dir/noca" ] && caexists=false
+  printf '{"v":1,"type":"trust-status","ts":"%s","claudeCode":{"state":"%s","settingsPath":"%s","value":null},"codex":{"state":"%s","bundlePath":null,"command":"env CODEX_CA_CERTIFICATE=/home/u/bundle.pem codex"},"caPath":"/home/u/Library/Application Support/cainary/otel-debug-ca.pem","caExists":%s}\n' "$ts" "$claude" "$settings" "$codex" "$caexists"
   ;;
 *)
   echo "cainary-otel-debug: unexpected arguments: $*" >&2
