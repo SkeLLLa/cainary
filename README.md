@@ -350,10 +350,22 @@ codex -c 'otel.exporter={otlp-http={endpoint="http://127.0.0.1:4318/v1/logs",pro
 ```
 
 `cainary-otel-debug --help` prints these lines with the port it will use. Useful options:
-`--port <n>` (default 4318), `--json` (one JSON object per line, for scripts and the apps),
+`--port <n>` (default 4318; ports under 1024 need a privilege on Linux, see below), `--json` (one JSON object per line, for scripts and the apps),
 `--once` (exit after the first batch), `--log-file <path>` (a `0600` file, rotated), and
 `--show-values` (print values unmasked; use with care, they can hold secrets). It reads OTLP/JSON
 only: set `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`.
+
+**Listening on a privileged port.** `--port <n>` picks the port in every mode (`--tls` defaults to
+8443). If the bind is refused for lack of privilege, the program exits 1 with a short error line
+(`{"type":"error","source":"listen",…}` under `--json`) and prints, on stderr, three ways to get the
+port, concrete for that run and never run for you: (1) a `cap_net_bind_service` capability on a
+root-owned copy of the program (it shows the `sudo install` and `sudo setcap` lines, or just the
+`setcap` when the running file is already root-owned; the program drops the capability right
+after binding, a rebuild or copy loses it, and it must never run as root); (2) an unprivileged port
+plus a loopback-only `nft` redirect for both address families, with the removal command; (3) the
+system-wide `net.ipv4.ip_unprivileged_port_start` sysctl, the least recommended because every local
+program can then bind those ports, with the command that reverts it. The commands work in fish and
+bash.
 
 **Managed settings can win.** If your organization manages Claude Code's OpenTelemetry settings,
 a managed `OTEL_EXPORTER_OTLP_ENDPOINT`, `_PROTOCOL` or `_HEADERS` also removes your local

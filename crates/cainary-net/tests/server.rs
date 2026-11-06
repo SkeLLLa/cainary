@@ -1096,3 +1096,67 @@ fn fixtures_classify_against_their_catalogs_and_stream_masked() {
     assert!(out.lines().iter().all(|l| l["type"] != "alert"));
     srv.shutdown();
 }
+
+/// Port 1 is privileged for anyone but root; skip where it isn't (root, or a lowered sysctl).
+fn port_one_is_privileged() -> bool {
+    let start: u32 = std::fs::read_to_string("/proc/sys/net/ipv4/ip_unprivileged_port_start")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(1024);
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    let root = unsafe { libc::geteuid() } == 0;
+    cfg!(target_os = "linux") && !root && start > 1
+}
+
+#[test]
+fn a_refused_privileged_port_is_a_short_error_and_a_note_on_stderr() {
+    if !port_one_is_privileged() {
+        return;
+    }
+    let out = bin()
+        .args(["--port", "1", "--listen", "127.0.0.1", "--json"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    // --json: the error is a line on stdout, with the contract's envelope.
+    let line = String::from_utf8_lossy(&out.stdout);
+    let v: Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(
+        (v["v"].clone(), v["type"].clone(), v["source"].clone()),
+        (json!(1), json!("error"), json!("listen"))
+    );
+    assert_eq!(
+        v["message"],
+        "can't listen on 127.0.0.1:1: permission denied"
+    );
+    assert_eq!(line.lines().count(), 1);
+    // The note is on stderr and offers the three ways, concrete for this run.
+    let err = String::from_utf8_lossy(&out.stderr);
+    for needle in [
+        "Port 1 is privileged on Linux",
+        "1. A capability on a root-owned copy",
+        "sudo install -D -m 755 -o root -g root",
+        "sudo setcap cap_net_bind_service=+ep /usr/local/libexec/cainary/cainary-otel-debug",
+        "2. Listen on an unprivileged port and redirect 1",
+        "sudo nft delete table inet cainary_port_redirect",
+        "--port 8001",
+        "3. System-wide",
+        "sudo sysctl net.ipv4.ip_unprivileged_port_start=1024",
+    ] {
+        assert!(err.contains(needle), "{needle}\n{err}");
+    }
+    assert!(!err.contains("$("));
+    // Without --json the error is text on stderr and nothing is on stdout.
+    let out = bin()
+        .args(["--port", "1", "--listen", "127.0.0.1"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains("cainary-otel-debug: can't listen on 127.0.0.1:1: permission denied")
+    );
+}

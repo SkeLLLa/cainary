@@ -117,12 +117,15 @@ impl Config {
 pub struct SetupError {
     pub code: u8,
     pub message: String,
+    /// Set when `bind` was refused for lack of privilege: the port, so the caller can explain.
+    pub denied_port: Option<u16>,
 }
 
 fn setup_err(code: u8, message: impl Into<String>) -> SetupError {
     SetupError {
         code,
         message: message.into(),
+        denied_port: None,
     }
 }
 
@@ -293,12 +296,10 @@ fn bind_all(cfg: &Config) -> Result<(Vec<TcpListener>, Vec<String>), SetupError>
                 ));
             }
             Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
-                return Err(setup_err(
-                    1,
-                    format!(
-                        "can't listen on {addr}: permission denied (ports under 1024 need a privilege). Use the default --port 8443 with the 443 redirect that --tls prints, or install the binary in a root-owned directory and run: sudo setcap cap_net_bind_service=+ep /usr/bin/cainary-otel-debug (it drops the capability right after binding; never run it as root)"
-                    ),
-                ));
+                return Err(SetupError {
+                    denied_port: Some(port),
+                    ..setup_err(1, format!("can't listen on {addr}: permission denied"))
+                });
             }
             Err(e) => return Err(setup_err(1, format!("can't listen on {addr}: {e}"))),
         }

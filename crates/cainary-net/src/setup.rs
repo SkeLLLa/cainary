@@ -144,6 +144,118 @@ pub fn takeover(t: &Takeover<'_>) -> Vec<String> {
     l
 }
 
+/// What the "can't bind a privileged port" note is about.
+pub struct PortNote<'a> {
+    pub port: u16,
+    /// The running executable, when it could be found.
+    pub exe: Option<&'a str>,
+    /// Whether that file and its directory are root-owned and not writable by anyone else, so a
+    /// capability on it can't be exploited by swapping the file.
+    pub exe_root_owned: bool,
+    /// The command-line arguments of this run, to show the run command with the same flags.
+    pub args: &'a [String],
+    pub linux: bool,
+}
+
+/// Where option 1 puts a root-owned copy.
+pub const COPY_PATH: &str = "/usr/local/libexec/cainary/cainary-otel-debug";
+
+/// An argument as both fish and bash read it: bare when plain, else in single quotes. An
+/// argument with a quote or a control character can't be single-quoted for both shells, so it
+/// is shown as a placeholder to edit.
+fn quote(a: &str) -> String {
+    let plain = !a.is_empty()
+        && a.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_@%+=:,./-".contains(&b));
+    if plain {
+        return a.to_string();
+    }
+    if a.chars().any(|c| c == '\'' || c.is_control()) {
+        return "'<edit: this argument needs shell quoting>'".to_string();
+    }
+    format!("'{a}'")
+}
+
+fn command(exe: &str, args: &[String]) -> String {
+    std::iter::once(quote(exe))
+        .chain(args.iter().map(|a| quote(a)))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// `args` with the port set to `port` (replacing `--port <n>` / `--port=<n>`, adding it if absent).
+fn with_port(args: &[String], port: u16) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--port" {
+            it.next();
+        } else if a.starts_with("--port=") {
+        } else {
+            out.push(a.clone());
+        }
+    }
+    out.push("--port".into());
+    out.push(port.to_string());
+    out
+}
+
+/// The unprivileged port to suggest for `n`: `n + 8000` (443 gives 8443), or 8443 when that
+/// doesn't fit.
+pub fn alternative_port(n: u16) -> u16 {
+    n.checked_add(8000).filter(|p| *p >= 1024).unwrap_or(8443)
+}
+
+/// The note printed (on stderr) after a refused bind to a privileged port: three ways to listen
+/// on it, concrete for this run, in commands that work in fish and in bash. Printed, never run.
+pub fn privileged_port_note(n: &PortNote<'_>) -> Vec<String> {
+    let port = n.port;
+    let mut l = vec![format!(
+        "Port {port} is privileged{}. Three ways to listen on it, most to least recommended:",
+        if n.linux { " on Linux" } else { "" }
+    )];
+    if !n.linux {
+        l.clear();
+        l.push(format!(
+            "Port {port} needs a privilege on this system. Listen on a port from 1024 up (for example --port {}) and point the client there.",
+            alternative_port(port)
+        ));
+        return l;
+    }
+    let exe = crate::output::escape(n.exe.unwrap_or("cainary-otel-debug"));
+    l.push("1. A capability on a root-owned copy (the quick way to try it). Only CAP_NET_BIND_SERVICE is granted, and this program drops it right after binding. A rebuild or a copy of the file loses it. Never run this as root.".into());
+    if n.exe_root_owned && n.exe.is_some() {
+        l.push(format!("   sudo setcap cap_net_bind_service=+ep {exe}"));
+        l.push(format!("   {}", command(&exe, n.args)));
+        l.push(format!("   To undo: sudo setcap -r {exe}"));
+    } else {
+        l.push(format!(
+            "   sudo install -D -m 755 -o root -g root {exe} {COPY_PATH}"
+        ));
+        l.push(format!(
+            "   sudo setcap cap_net_bind_service=+ep {COPY_PATH}"
+        ));
+        l.push(format!("   {}", command(COPY_PATH, n.args)));
+        l.push(format!("   To undo: sudo rm {COPY_PATH}"));
+    }
+    let alt = alternative_port(port);
+    l.push(format!(
+        "2. Listen on an unprivileged port and redirect {port} to it, for connections this machine makes to loopback, both address families (run these yourself; they are not run for you):"
+    ));
+    l.push(format!("   {}", command(&exe, &with_port(n.args, alt))));
+    l.push("   sudo nft add table inet cainary_port_redirect".into());
+    l.push("   sudo nft 'add chain inet cainary_port_redirect out { type nat hook output priority -100 ; }'".into());
+    l.push(format!("   sudo nft add rule inet cainary_port_redirect out oifname lo ip daddr 127.0.0.1 tcp dport {port} redirect to :{alt}"));
+    l.push(format!("   sudo nft add rule inet cainary_port_redirect out oifname lo ip6 daddr ::1 tcp dport {port} redirect to :{alt}"));
+    l.push("   To undo: sudo nft delete table inet cainary_port_redirect".into());
+    l.push(format!("3. System-wide, the least recommended: every program on this machine can then listen on ports {port} and up."));
+    l.push(format!(
+        "   sudo sysctl net.ipv4.ip_unprivileged_port_start={port}"
+    ));
+    l.push("   To undo: sudo sysctl net.ipv4.ip_unprivileged_port_start=1024".into());
+    l
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,5 +390,134 @@ mod takeover_tests {
         // The old over-promise is gone: the restriction is the program's, the constraints advisory.
         assert!(!s.contains("only trusted for the names above"));
         assert!(s.contains("depend on the client enforcing them"));
+    }
+}
+
+#[cfg(test)]
+mod port_note_tests {
+    use super::*;
+
+    fn args(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn note(port: u16, exe: Option<&str>, root: bool, a: &[&str]) -> String {
+        privileged_port_note(&PortNote {
+            port,
+            exe,
+            exe_root_owned: root,
+            args: &args(a),
+            linux: true,
+        })
+        .join("\n")
+    }
+
+    #[test]
+    fn a_root_owned_exe_gets_setcap_on_that_path() {
+        let n = note(
+            443,
+            Some("/usr/bin/cainary-otel-debug"),
+            true,
+            &["--tls", "--tls-host", "a.example.test", "--port", "443"],
+        );
+        assert!(n.contains("sudo setcap cap_net_bind_service=+ep /usr/bin/cainary-otel-debug"));
+        assert!(
+            n.contains("/usr/bin/cainary-otel-debug --tls --tls-host a.example.test --port 443")
+        );
+        assert!(!n.contains("sudo install"), "{n}");
+        assert!(n.contains("sudo setcap -r /usr/bin/cainary-otel-debug"));
+    }
+
+    #[test]
+    fn a_user_owned_exe_is_installed_into_a_root_owned_place_first() {
+        let n = note(
+            443,
+            Some("/home/u/src/target/release/cainary-otel-debug"),
+            false,
+            &["--port", "443", "--json"],
+        );
+        let install = n.find("sudo install -D -m 755 -o root -g root /home/u/src/target/release/cainary-otel-debug /usr/local/libexec/cainary/cainary-otel-debug").expect("install line");
+        let setcap = n.find("sudo setcap cap_net_bind_service=+ep /usr/local/libexec/cainary/cainary-otel-debug").expect("setcap line");
+        assert!(install < setcap, "install comes first");
+        assert!(!n.contains("setcap cap_net_bind_service=+ep /home/"));
+        assert!(n.contains("/usr/local/libexec/cainary/cainary-otel-debug --port 443 --json"));
+        assert!(n.contains("To undo: sudo rm /usr/local/libexec/cainary/cainary-otel-debug"));
+        // An unknown exe path is never trusted either.
+        let unknown = note(443, None, true, &[]);
+        assert!(unknown.contains("sudo install -D"));
+    }
+
+    #[test]
+    fn explains_the_capability() {
+        let n = note(80, Some("/usr/bin/x"), true, &[]);
+        for needle in [
+            "Only CAP_NET_BIND_SERVICE",
+            "drops it right after binding",
+            "loses it",
+            "Never run this as root",
+        ] {
+            assert!(n.contains(needle), "{needle}");
+        }
+    }
+
+    #[test]
+    fn the_redirect_option_uses_the_alternative_port_and_both_families() {
+        let n = note(443, Some("/usr/bin/x"), true, &["--port", "443", "--json"]);
+        assert!(n.contains("/usr/bin/x --json --port 8443"), "{n}");
+        assert!(n.contains("ip daddr 127.0.0.1 tcp dport 443 redirect to :8443"));
+        assert!(n.contains("ip6 daddr ::1 tcp dport 443 redirect to :8443"));
+        assert!(n.contains("oifname lo"));
+        assert!(n.contains("sudo nft delete table inet cainary_port_redirect"));
+        let n = note(80, Some("/usr/bin/x"), true, &["--port=80"]);
+        assert!(n.contains("/usr/bin/x --port 8080"), "{n}");
+        assert!(n.contains("tcp dport 80 redirect to :8080"));
+        assert_eq!(alternative_port(443), 8443);
+        assert_eq!(alternative_port(80), 8080);
+        assert_eq!(alternative_port(1), 8001);
+        assert_eq!(alternative_port(60000), 8443, "past 65535 falls back");
+        assert_eq!(alternative_port(1000), 9000);
+    }
+
+    #[test]
+    fn the_sysctl_option_names_the_risk_and_the_revert() {
+        let n = note(443, Some("/usr/bin/x"), true, &[]);
+        assert!(n.contains("sudo sysctl net.ipv4.ip_unprivileged_port_start=443"));
+        assert!(n.contains("every program on this machine"));
+        assert!(n.contains("sudo sysctl net.ipv4.ip_unprivileged_port_start=1024"));
+    }
+
+    #[test]
+    fn commands_work_in_fish_and_bash() {
+        let n = note(
+            443,
+            Some("/usr/bin/x"),
+            true,
+            &["--red-flag", "customer=acme corp", "--listen", "127.0.0.1"],
+        );
+        for bad in ["$(", "export ", "`", "<(", "[[", "; then", "&&"] {
+            assert!(!n.contains(bad), "{bad:?} in {n}");
+        }
+        assert!(n.contains("'customer=acme corp'"));
+        // A quote can't be written for both shells: a placeholder, never a broken command.
+        let q = note(443, Some("/usr/bin/x"), true, &["--red-flag", "a=it's"]);
+        assert!(q.contains("<edit: this argument needs shell quoting>"));
+        assert!(!q.contains("it's"));
+        // The path is escaped like any printed path.
+        let e = note(443, Some("/tmp/evil\u{1b}]52;c;AAAA\u{7}/x"), true, &[]);
+        assert!(!e.contains('\u{1b}') && !e.contains('\u{7}'));
+    }
+
+    #[test]
+    fn other_systems_get_one_plain_line() {
+        let n = privileged_port_note(&PortNote {
+            port: 443,
+            exe: None,
+            exe_root_owned: false,
+            args: &[],
+            linux: false,
+        });
+        assert_eq!(n.len(), 1);
+        assert!(!n[0].contains("setcap") && !n[0].contains("nft"));
+        assert!(n[0].contains("--port 8443"));
     }
 }

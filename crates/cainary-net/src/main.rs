@@ -78,7 +78,7 @@ fn run(args: &[String]) -> u8 {
             }
             0
         }
-        Ok(Action::Run(o)) => serve(*o),
+        Ok(Action::Run(o)) => serve(*o, args),
     }
 }
 
@@ -148,6 +148,40 @@ fn stdin_thread(
     (rx, go_tx, ack_rx)
 }
 
+/// A refused bind to a privileged port: the error as a line (JSON on stdout under `--json`, text
+/// on stderr otherwise), then the note on stderr with the ways to get the port (design: the
+/// program prints these commands and never runs them).
+fn refused_port(message: &str, port: u16, json: bool, args: &[String]) -> u8 {
+    use std::os::unix::fs::MetadataExt;
+    if json {
+        print!("{}", output::error_line("listen", message));
+    } else {
+        eprintln!("cainary-otel-debug: {message}");
+    }
+    let exe = std::env::current_exe().ok();
+    // Root-owned file in a root-owned directory, writable by nobody else: a capability on it
+    // can't be exploited by swapping the file or the directory entry.
+    let safe = |p: &std::path::Path| {
+        p.metadata()
+            .is_ok_and(|m| m.uid() == 0 && m.mode() & 0o022 == 0)
+    };
+    let root_owned = exe
+        .as_deref()
+        .is_some_and(|e| safe(e) && e.parent().is_some_and(safe));
+    let shown = exe.as_ref().map(|e| e.display().to_string());
+    let note = setup::privileged_port_note(&setup::PortNote {
+        port,
+        exe: shown.as_deref(),
+        exe_root_owned: root_owned,
+        args,
+        linux: cfg!(target_os = "linux"),
+    });
+    for line in note {
+        eprintln!("{line}");
+    }
+    1
+}
+
 fn fail(msg: impl std::fmt::Display, code: u8) -> u8 {
     eprintln!("cainary-otel-debug: {msg}");
     code
@@ -209,7 +243,7 @@ fn delete_ca() -> u8 {
     fail(NO_TLS, 2)
 }
 
-fn serve(o: Options) -> u8 {
+fn serve(o: Options, args: &[String]) -> u8 {
     #[cfg(not(feature = "tls"))]
     if o.tls {
         return fail(NO_TLS, 2);
@@ -309,7 +343,12 @@ fn serve(o: Options) -> u8 {
     cfg.status = Box::new(io::stderr());
     let server = match server::run(cfg) {
         Ok(s) => s,
-        Err(e) => return fail(e.message, e.code),
+        Err(e) => {
+            if let Some(port) = e.denied_port {
+                return refused_port(&e.message, port, o.json, args);
+            }
+            return fail(e.message, e.code);
+        }
     };
     match server.wait() {
         output::End::Once | output::End::Closed => 0,

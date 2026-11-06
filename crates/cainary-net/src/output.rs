@@ -244,6 +244,13 @@ impl Hello {
     }
 }
 
+/// A standalone `error` line (`source`, `message`) with the contract's envelope, for failures
+/// before the output thread exists (a refused listen).
+pub fn error_line(source: &str, message: &str) -> String {
+    let m = ErrorEvent::other(source, message);
+    line("error", &now(), None, &m.tail)
+}
+
 pub struct Config {
     pub json: bool,
     pub once: bool,
@@ -415,6 +422,21 @@ mod tests {
             "\\u{200e}\\u{200f}\\u{61c}"
         );
         assert_eq!(escape("plain ünïcode ✓"), "plain ünïcode ✓");
+    }
+
+    #[test]
+    fn a_standalone_error_line_has_the_contract_shape() {
+        let l = error_line("listen", "can't listen on 127.0.0.1:443: permission denied");
+        assert!(l.ends_with('\n') && l.matches('\n').count() == 1);
+        let v: Value = serde_json::from_str(&l).unwrap();
+        let keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(keys, ["v", "type", "ts", "source", "message"]);
+        assert_eq!(
+            (v["v"].clone(), v["type"].clone()),
+            (json!(1), json!("error"))
+        );
+        assert_eq!(v["source"], "listen");
+        assert!(v["ts"].as_str().unwrap().ends_with('Z'));
     }
 
     #[test]

@@ -1105,6 +1105,9 @@ duplicate name, a name equal to a preset, or an unknown `--match-case` name is a
 pipe); `1` setup (port in use, log file or red-flags file unusable, a failed bind); `2` usage
 (including an invalid or oversized pattern, a non-loopback `--listen`, a bad `--tls-host` and `--tls` in a build without the feature); `3` a panic. A second `--tls` run for the same certificate directory, and `--delete-ca` while one runs, exit `1`.
 
+**A refused privileged port.** `--port <n>` chooses the port in every mode. When `bind` fails with
+`EACCES` the program exits `1` with a short fixed error (`{"v":1,"type":"error","source":"listen","message":"can't listen on <addr>: permission denied"}` on stdout under `--json`, text on stderr otherwise) and a note on stderr (`setup::privileged_port_note`; one plain line on other systems than Linux). The note gives three options, concrete for the run and printed, never run: a `cap_net_bind_service` capability on a root-owned copy (the running executable, read in `main.rs` only, counts as that when it and its directory are root-owned and writable by nobody else; otherwise `sudo install -D -m 755 -o root -g root <exe> /usr/local/libexec/cainary/cainary-otel-debug` comes first); an unprivileged port (`n + 8000`, or 8443) with a loopback-only, both-families `nft` redirect and its removal; and the `net.ipv4.ip_unprivileged_port_start` sysctl with its revert. Commands are written for both fish and bash.
+
 ### 12.2 Server
 
 - **Bind.** Default `127.0.0.1:<port>`, then `[::1]:<port>` on the same port (Node resolves
@@ -1379,11 +1382,15 @@ users who can't change how the agent is launched. It is built only with the `tls
 - **Server.** TLS 1.2 and 1.3 (rustls, ring), ALPN `http/1.1` only (a client offering only other
   protocols is refused; offering none is fine), no early data, bounded TLS buffers. The connection
   slot is taken before any TLS state; an over-limit connection is closed with no handshake and no
-  plaintext reply. An absolute 30 s deadline from accept covers the handshake and the first
+  plaintext reply. Every underlying socket read and write, including the several a TLS record can
+  take, is clipped to the absolute deadline in force (accept, idle, request, write or linger), so a
+  trickled record can't outlive it. An absolute 30 s deadline from accept covers the handshake and the first
   request, enforced on every TCP read and write by clipping the socket timeout (a trickled
   handshake or a stalled write can't outlive it); later requests keep the usual deadlines. A
   handshake is accepted only for a configured SNI (exact, case-insensitive); a refusal is an
-  `error` line (`source: "tls"`, a fixed message, no name) through the usual rate limit.
+  `error` line (`source: "tls"`) with a fixed message per category (no SNI, SNI not in `--tls-host`,
+  no common ALPN, the client rejected the certificate and doesn't trust the CA, not TLS, protocol
+  error, the client went away), at most one line per category per 10 s with a `count`.
 - **Requests.** `Host` must be exactly one header whose host equals the connection's SNI, with no
   port (443) or the bound port or the public port: malformed is 400, a mismatch 421; no loopback
   aliases. `Origin` and `Sec-Fetch-*` are 403 as before. Routing accepts POST to any path (any
