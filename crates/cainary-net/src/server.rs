@@ -4,7 +4,7 @@
 //! One acceptor per listener, at most 16 connection threads, at most 2 parse/match jobs at a
 //! time, and an output queue bounded by items and bytes.
 
-use crate::http::{self, Framing, HttpError, Limits, Response};
+use crate::http::{self, HttpError, Limits, Response};
 use crate::logfile::LogFile;
 use crate::otlp::{self, Ctx, Route};
 use crate::output::{self, ErrorEvent, Event, FlagInfo, Hello};
@@ -40,6 +40,8 @@ pub struct Tunables {
     pub queue_bytes: usize,
     pub wire_budget: usize,
     pub limits: Limits,
+    /// Window of the rejection-line rate limit (`ERRORS_PER_SECOND` per window).
+    pub error_window: Duration,
 }
 
 impl Default for Tunables {
@@ -55,6 +57,7 @@ impl Default for Tunables {
             queue_bytes: QUEUE_BYTES,
             wire_budget: WIRE_BUDGET,
             limits: Limits::default(),
+            error_window: Duration::from_secs(1),
         }
     }
 }
@@ -126,11 +129,17 @@ pub struct Server {
     pub port: u16,
     stop: Arc<AtomicBool>,
     queue: Arc<Queue>,
+    active: Arc<AtomicUsize>,
     output: Option<JoinHandle<output::End>>,
     acceptors: Vec<JoinHandle<()>>,
 }
 
 impl Server {
+    /// Connections currently being served.
+    pub fn connections(&self) -> usize {
+        self.active.load(Ordering::SeqCst)
+    }
+
     /// Blocks until the output thread ends: `--once` done, the queue closed, or the sink failed.
     pub fn wait(mut self) -> output::End {
         let h = self.output.take().expect("wait is called once");
@@ -157,6 +166,7 @@ impl Server {
 }
 
 struct ErrLimiter {
+    span: Duration,
     window: Instant,
     count: u32,
     dropped: u64,
@@ -166,11 +176,12 @@ impl ErrLimiter {
     /// Whether to emit this rejection, and how many earlier ones the previous second dropped.
     fn admit(&mut self, now: Instant) -> (bool, Option<u64>) {
         let mut summary = None;
-        if now.duration_since(self.window) >= Duration::from_secs(1) {
+        if now.duration_since(self.window) >= self.span {
             if self.dropped > 0 {
                 summary = Some(self.dropped);
             }
             *self = ErrLimiter {
+                span: self.span,
                 window: now,
                 count: 0,
                 dropped: 0,
@@ -290,7 +301,7 @@ pub fn run(cfg: Config) -> Result<Server, SetupError> {
     let hello = Hello {
         generator: cfg.generator.clone(),
         listen,
-        endpoint,
+        endpoint: endpoint.clone(),
         show_values: cfg.show_values,
         log_file: cfg.log.as_ref().map(|l| l.path().display().to_string()),
         red_flags: cfg
@@ -304,7 +315,7 @@ pub fn run(cfg: Config) -> Result<Server, SetupError> {
                 case_sensitive: p.case_sensitive,
             })
             .collect(),
-        setup: setup::setup(port),
+        setup: setup::setup(&endpoint),
     };
 
     let out_cfg = output::Config {
@@ -321,6 +332,7 @@ pub fn run(cfg: Config) -> Result<Server, SetupError> {
         .spawn(move || output::run(out_queue, out_cfg))
         .map_err(|e| setup_err(1, format!("can't start the output thread: {e}")))?;
 
+    let error_window = cfg.tunables.error_window;
     let shared = Arc::new(Shared {
         ctx: Ctx {
             matcher: cfg.matcher,
@@ -330,6 +342,7 @@ pub fn run(cfg: Config) -> Result<Server, SetupError> {
         t: cfg.tunables,
         queue: Arc::clone(&queue),
         limiter: Mutex::new(ErrLimiter {
+            span: error_window,
             window: Instant::now(),
             count: 0,
             dropped: 0,
@@ -353,6 +366,7 @@ pub fn run(cfg: Config) -> Result<Server, SetupError> {
         port,
         stop,
         queue,
+        active: Arc::clone(&shared.active),
         output: Some(output),
         acceptors,
     })
@@ -604,7 +618,6 @@ fn request(reader: &mut BufReader<Guarded>, w: &TcpStream, sh: &Shared) -> Next 
         Err(HttpError::Io(e)) => return io_close(sh, w, &e),
         Err(HttpError::Eof) => return Next::Close { linger: false },
     };
-    let _ = Framing::None;
     let doc = match otlp::parse(&body) {
         Ok(d) => d,
         Err(m) => return deny(400, &m),
@@ -682,6 +695,7 @@ mod tests {
     fn limiter_allows_ten_then_drops_and_summarises() {
         let t0 = Instant::now();
         let mut l = ErrLimiter {
+            span: Duration::from_secs(1),
             window: t0,
             count: 0,
             dropped: 0,

@@ -341,7 +341,6 @@ fn check_n3(srcs: &[Src]) -> Vec<String> {
 
 /// Dependencies the net crate may declare, in any dependency table.
 const NET_DEPS: &[&str] = &[
-    "aho-corasick",
     "cainary-core",
     "libc",
     "regex",
@@ -432,7 +431,7 @@ const CORE_ALLOWED: &[&str] = &[
     "zmij",
 ];
 
-/// Packages only `cainary-net` may use (`regex`, `aho-corasick`): in the lock, but never in the
+/// Packages only `cainary-net` may use (`regex` and its closure, which includes `aho-corasick`): in the lock, but never in the
 /// dependency closure of `cainary` or `cainary-core`. `memchr` is already in the core's closure
 /// through `serde_json`, so it isn't here.
 const NET_ONLY: &[&str] = &[

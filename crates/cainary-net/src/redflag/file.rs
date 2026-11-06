@@ -9,7 +9,7 @@ pub const MAX_FILE_BYTES: u64 = 1 << 20;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FileConfig {
-    /// `[presets]`: name → on/off, in file order.
+    /// `[presets]`: name → on/off, in name order (the TOML table is sorted).
     pub presets: Vec<(String, bool)>,
     pub patterns: Vec<Pattern>,
 }

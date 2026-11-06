@@ -160,7 +160,6 @@ struct Rec<'a> {
     name: &'a str,
     kind: &'static str,
     body: Option<&'a Value>,
-    event_name: Option<&'a str>,
     attrs: Vec<Attr<'a>>,
 }
 
@@ -298,7 +297,6 @@ impl Walker {
                 name: from_body.or(event_name).unwrap_or(""),
                 kind: "event",
                 body,
-                event_name,
                 attrs,
             });
         }
@@ -326,7 +324,6 @@ impl Walker {
                         name,
                         kind: "metric",
                         body: None,
-                        event_name: None,
                         attrs: self.attrs(p)?,
                     });
                 }
@@ -345,7 +342,6 @@ impl Walker {
                 name: s.get("name").and_then(Value::as_str).unwrap_or(""),
                 kind: "span",
                 body: None,
-                event_name: None,
                 attrs: self.attrs(s)?,
             });
             let events = self.arr(s, "events")?;
@@ -356,7 +352,6 @@ impl Walker {
                     name: e.get("name").and_then(Value::as_str).unwrap_or(""),
                     kind: "span-event",
                     body: None,
-                    event_name: None,
                     attrs: self.attrs(e)?,
                 });
             }
@@ -649,6 +644,9 @@ impl<'m> Proc<'m> {
         attribute: Option<&str>,
         event: Option<&str>,
     ) -> String {
+        if s.is_empty() {
+            return "<empty>".to_string();
+        }
         let mut hits = std::mem::take(&mut self.hits);
         hits.clear();
         let complete = self.scanner.scan(s, &mut hits);
@@ -826,7 +824,6 @@ pub fn process(signal: Signal, bytes: usize, doc: &Value, ctx: &Ctx) -> Result<P
                 if let Some(b) = r.body {
                     p.scan_value(b, "body", None, Some(&name));
                 }
-                let _ = r.event_name;
                 let mut fields = Vec::new();
                 let mut keys = Vec::new();
                 for a in &r.attrs {

@@ -40,7 +40,6 @@ dependencies = [
 name = "cainary-net"
 version = "0.5.2"
 dependencies = [
- "aho-corasick",
  "cainary-core",
  "libc",
  "regex",

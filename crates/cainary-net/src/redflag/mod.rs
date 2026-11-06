@@ -1,13 +1,13 @@
 //! Red-flag patterns: the model, compilation and matching. Reusable by goal 3 (design §8.5).
 //!
-//! Text patterns run through Aho-Corasick (ASCII case folding only: non-ASCII letters match
-//! exactly). Regex patterns run through `RegexSet`, then `Regex::find` for the span. Both are
+//! Text patterns are escaped into regexes with ASCII-only case folding (non-ASCII letters match
+//! exactly): the timing test (design §13) found Aho-Corasick no faster than a `RegexSet` here.
+//! Everything runs through one `RegexSet` per mode, then `Regex::find` for the span. Both are
 //! linear-time, so hostile input can't ReDoS, and compilation has hard size limits.
 
 pub mod file;
 pub mod presets;
 
-use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use regex::{Regex, RegexBuilder, RegexSet, RegexSetBuilder};
 use std::fmt;
 
@@ -18,9 +18,6 @@ pub const REGEX_BUDGET: usize = 16 << 20;
 /// Text matched per request, and per single value; past either the batch is `scanIncomplete`.
 pub const MAX_REQUEST_BYTES: usize = 4 << 20;
 pub const MAX_LEAF_BYTES: usize = 256 << 10;
-/// Aho-Corasick matches examined per request (a pattern set like `a`, `aa`, `aaa` on `aaaa…`
-/// yields quadratically many overlapping matches).
-pub const MAX_CANDIDATES: usize = 100_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -104,24 +101,38 @@ pub fn valid_name(name: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'_' || *c == b'-')
 }
 
-/// One automaton plus the pattern index each of its literals stands for.
-struct Literals {
-    ac: AhoCorasick,
-    ids: Vec<usize>,
+/// Patterns that share a mode (text or regex, case-sensitive or not), so one `RegexSet` with
+/// the right flags covers them and no pattern is rewritten (wrapping would break `(?x)`).
+#[derive(Default)]
+struct Class {
+    set: Option<RegexSet>,
+    /// Pattern index of each member, and its individually compiled form (for the span).
+    members: Vec<(usize, Regex)>,
 }
 
 pub struct Matcher {
     patterns: Vec<Pattern>,
-    /// Case-insensitive and case-sensitive text automata.
-    text: [Option<Literals>; 2],
-    set: RegexSet,
-    /// Pattern index of each regex in `set`, and its individually compiled form.
-    regexes: Vec<(usize, Regex)>,
+    /// Indexed `text * 2 + case_sensitive`.
+    classes: [Class; 4],
 }
 
-fn builder(p: &str, case_insensitive: bool) -> RegexBuilder {
+fn class_of(p: &Pattern) -> usize {
+    usize::from(p.kind == Kind::Text) * 2 + usize::from(p.case_sensitive)
+}
+
+/// What a pattern compiles from: text is escaped, regexes are verbatim.
+fn source(p: &Pattern) -> std::borrow::Cow<'_, str> {
+    match p.kind {
+        Kind::Text => regex::escape(&p.pattern).into(),
+        Kind::Regex => (&p.pattern).into(),
+    }
+}
+
+/// `ascii`: text patterns fold case for ASCII only.
+fn builder(p: &str, case_insensitive: bool, ascii: bool) -> RegexBuilder {
     let mut b = RegexBuilder::new(p);
     b.case_insensitive(case_insensitive)
+        .unicode(!ascii)
         .size_limit(1 << 20)
         .dfa_size_limit(1 << 20)
         .nest_limit(64);
@@ -139,13 +150,18 @@ fn compile_error(name: &str, e: regex::Error) -> PatternError {
 
 /// Compiles with the 1 MiB per-regex limit and estimates its size: the smallest of 16 KiB,
 /// 64 KiB, 256 KiB and 1 MiB that it fits in, which is what it is charged against the budget.
-fn compile_costed(name: &str, p: &str, ci: bool) -> Result<(Regex, usize), PatternError> {
+fn compile_costed(
+    name: &str,
+    p: &str,
+    ci: bool,
+    ascii: bool,
+) -> Result<(Regex, usize), PatternError> {
     for limit in [16 << 10, 64 << 10, 256 << 10] {
-        if let Ok(re) = builder(p, ci).size_limit(limit).build() {
+        if let Ok(re) = builder(p, ci, ascii).size_limit(limit).build() {
             return Ok((re, limit));
         }
     }
-    builder(p, ci)
+    builder(p, ci, ascii)
         .build()
         .map(|re| (re, 1 << 20))
         .map_err(|e| compile_error(name, e))
@@ -172,71 +188,41 @@ impl Matcher {
             }
         }
 
-        let mut lits: [(Vec<&str>, Vec<usize>); 2] = Default::default();
-        let mut regexes = Vec::new();
-        let mut set_src = Vec::new();
+        let mut members: [Vec<(usize, Regex)>; 4] = Default::default();
+        let mut srcs: [Vec<String>; 4] = Default::default();
         let mut spent = 0usize;
         for (i, p) in patterns.iter().enumerate() {
-            match p.kind {
-                Kind::Text => {
-                    let slot = usize::from(p.case_sensitive);
-                    lits[slot].0.push(&p.pattern);
-                    lits[slot].1.push(i);
-                }
-                Kind::Regex => {
-                    let (re, cost) = compile_costed(&p.name, &p.pattern, !p.case_sensitive)?;
-                    spent += cost;
-                    if spent > REGEX_BUDGET {
-                        return Err(PatternError::TooBig("(all regexes together)".into()));
-                    }
-                    // The set takes one flag for all patterns, so fold per pattern in-line.
-                    // The pattern compiled alone above, so the group stays well-formed.
-                    set_src.push(if p.case_sensitive {
-                        format!("(?:{})", p.pattern)
-                    } else {
-                        format!("(?i:{})", p.pattern)
-                    });
-                    regexes.push((i, re));
-                }
+            let ascii = p.kind == Kind::Text;
+            let src = source(p).into_owned();
+            let (re, cost) = compile_costed(&p.name, &src, !p.case_sensitive, ascii)?;
+            spent += cost;
+            if spent > REGEX_BUDGET {
+                return Err(PatternError::TooBig("(all regexes together)".into()));
             }
+            members[class_of(p)].push((i, re));
+            srcs[class_of(p)].push(src);
         }
-
-        let [(ci_lits, ci_ids), (cs_lits, cs_ids)] = lits;
-        let mk = |lits: Vec<&str>,
-                  ids: Vec<usize>,
-                  ci: bool|
-         -> Result<Option<Literals>, PatternError> {
-            if lits.is_empty() {
-                return Ok(None);
+        // Each pattern compiled alone above, so a failure here is only the shared size.
+        let limit = ((REGEX_BUDGET - spent) / 4).max(256 << 10);
+        let mut classes: [Class; 4] = Default::default();
+        for (k, (m, src)) in members.into_iter().zip(srcs).enumerate() {
+            if src.is_empty() {
+                continue;
             }
-            let ac = AhoCorasickBuilder::new()
-                .ascii_case_insensitive(ci)
-                .match_kind(MatchKind::Standard)
-                .build(lits)
-                .map_err(|_| PatternError::TooBig("(text patterns)".into()))?;
-            Ok(Some(Literals { ac, ids }))
-        };
-        let text = [mk(ci_lits, ci_ids, true)?, mk(cs_lits, cs_ids, false)?];
-
-        let mut sb = RegexSetBuilder::new(&set_src);
-        sb.size_limit(REGEX_BUDGET - spent.min(REGEX_BUDGET - (1 << 20)))
-            .dfa_size_limit(8 << 20)
-            .nest_limit(64);
-        let set = sb.build().map_err(|e| match e {
-            regex::Error::CompiledTooBig(_) => {
-                PatternError::TooBig("(all regexes together)".into())
-            }
-            _ => PatternError::Invalid(
-                "(all regexes together)".into(),
-                "unsupported expression".into(),
-            ),
-        })?;
-        Ok(Matcher {
-            patterns,
-            text,
-            set,
-            regexes,
-        })
+            let set = RegexSetBuilder::new(&src)
+                .case_insensitive(k % 2 == 0)
+                .unicode(k < 2)
+                .size_limit(limit)
+                .dfa_size_limit(8 << 20)
+                .nest_limit(64)
+                .build()
+                .map_err(|_| PatternError::TooBig("(all regexes together)".into()))?;
+            classes[k] = Class {
+                set: Some(set),
+                members: m,
+            };
+        }
+        Ok(Matcher { patterns, classes })
     }
 
     pub fn patterns(&self) -> &[Pattern] {
@@ -246,59 +232,25 @@ impl Matcher {
     /// Appends the first hit of each pattern found in `hay`. Unbudgeted: for tests and callers
     /// that bound `hay` themselves.
     pub fn scan(&self, hay: &str, out: &mut Vec<Hit>) {
-        let mut unlimited = usize::MAX;
-        self.scan_with(hay, out, &mut unlimited);
-    }
-
-    /// Like `scan`, spending from `candidates`. Returns false when that ran out (some patterns
-    /// may have been missed). The automaton stops as soon as every literal has hit.
-    pub fn scan_with(&self, hay: &str, out: &mut Vec<Hit>, candidates: &mut usize) -> bool {
-        let mut complete = true;
-        for lits in self.text.iter().flatten() {
-            let mut seen = vec![false; lits.ids.len()];
-            let mut left = lits.ids.len();
-            for m in lits.ac.find_overlapping_iter(hay) {
-                if *candidates == 0 {
-                    complete = false;
-                    break;
-                }
-                *candidates -= 1;
-                let k = m.pattern().as_usize();
-                if !seen[k] {
-                    seen[k] = true;
-                    left -= 1;
+        for c in &self.classes {
+            let Some(set) = &c.set else { continue };
+            for k in set.matches(hay).iter() {
+                let (pattern, re) = &c.members[k];
+                if let Some(m) = re.find(hay) {
                     out.push(Hit {
-                        pattern: lits.ids[k],
+                        pattern: *pattern,
                         start: m.start(),
                         end: m.end(),
                     });
-                    if left == 0 {
-                        break;
-                    }
                 }
             }
         }
-        if self.regexes.is_empty() {
-            return complete;
-        }
-        for k in self.set.matches(hay).iter() {
-            let (pattern, re) = &self.regexes[k];
-            if let Some(m) = re.find(hay) {
-                out.push(Hit {
-                    pattern: *pattern,
-                    start: m.start(),
-                    end: m.end(),
-                });
-            }
-        }
-        complete
     }
 
     pub fn scanner(&self) -> Scanner<'_> {
         Scanner {
             matcher: self,
             bytes_left: MAX_REQUEST_BYTES,
-            candidates_left: MAX_CANDIDATES,
             incomplete: false,
         }
     }
@@ -381,7 +333,6 @@ pub fn resolve(sel: &Selection, configs: &[file::FileConfig]) -> Result<Matcher,
 pub struct Scanner<'m> {
     matcher: &'m Matcher,
     bytes_left: usize,
-    candidates_left: usize,
     pub incomplete: bool,
 }
 
@@ -402,7 +353,7 @@ impl Scanner<'_> {
         }
         let cap = MAX_LEAF_BYTES.min(self.bytes_left);
         let mut end = hay.len().min(cap);
-        let mut complete = end == hay.len();
+        let complete = end == hay.len();
         if end < hay.len() {
             self.incomplete = true;
             while !hay.is_char_boundary(end) {
@@ -413,13 +364,7 @@ impl Scanner<'_> {
             return false;
         }
         self.bytes_left -= end;
-        if !self
-            .matcher
-            .scan_with(&hay[..end], out, &mut self.candidates_left)
-        {
-            self.incomplete = true;
-            complete = false;
-        }
+        self.matcher.scan(&hay[..end], out);
         complete
     }
 }
@@ -558,6 +503,17 @@ mod tests {
     }
 
     #[test]
+    fn inline_flags_like_x_work() {
+        let m = Matcher::new(vec![
+            p("ext", Kind::Regex, "(?x) a b  c", true),
+            p("ci", Kind::Regex, "(?x) a b  c", false),
+        ])
+        .unwrap();
+        assert_eq!(hits(&m, "xabcx").len(), 2);
+        assert_eq!(hits(&m, "XABCX").len(), 1);
+    }
+
+    #[test]
     fn compile_errors_never_quote_the_pattern() {
         for pat in ["SECRET-TOKEN(", "SECRET-TOKEN[", "(?<SECRET-TOKEN"] {
             let e = Matcher::new(vec![p("a", Kind::Regex, pat, false)])
@@ -688,20 +644,16 @@ mod tests {
     }
 
     #[test]
-    fn candidate_budget_stops_overlap_explosions() {
+    fn overlapping_literals_on_repeated_text_stay_fast() {
         let lits: Vec<Pattern> = (1..=30)
             .map(|n| p(&format!("a{n}"), Kind::Text, &"a".repeat(n), false))
-            .chain([p("never", Kind::Text, "zzz", false)])
             .collect();
         let m = Matcher::new(lits).unwrap();
         let mut s = m.scanner();
-        let hay = "a".repeat(MAX_LEAF_BYTES);
         let mut out = Vec::new();
-        s.scan(&hay, &mut out);
-        assert!(
-            s.incomplete,
-            "100k candidates are far fewer than the overlaps"
-        );
+        let t = std::time::Instant::now();
+        assert!(s.scan(&"a".repeat(MAX_LEAF_BYTES), &mut out));
+        assert!(t.elapsed() < std::time::Duration::from_secs(5));
         assert_eq!(out.len(), 30);
     }
 

@@ -50,7 +50,13 @@ fn run(args: &[String]) -> u8 {
             0
         }
         Ok(Action::Help) => {
-            print!("{USAGE}{}", setup::text(&setup::setup(args::DEFAULT_PORT)));
+            print!(
+                "{USAGE}{}",
+                setup::text(&setup::setup(&format!(
+                    "http://127.0.0.1:{}",
+                    args::DEFAULT_PORT
+                )))
+            );
             0
         }
         Ok(Action::ListPresets) => {

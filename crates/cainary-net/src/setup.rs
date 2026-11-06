@@ -8,8 +8,10 @@ pub struct Setup {
     pub notes: Vec<String>,
 }
 
-pub fn setup(port: u16) -> Setup {
-    let e = format!("http://127.0.0.1:{port}");
+/// `endpoint` is the base URL of the first bound address (`http://[::1]:4318` under
+/// `--listen ::1`), the same string as `hello.endpoint`.
+pub fn setup(endpoint: &str) -> Setup {
+    let e = endpoint;
     Setup {
         claude_code: [
             "CLAUDE_CODE_ENABLE_TELEMETRY=1".to_string(),
@@ -57,8 +59,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn carries_the_real_port() {
-        let s = setup(4999);
+    fn carries_the_real_endpoint() {
+        let s = setup("http://127.0.0.1:4999");
         assert!(
             s.claude_code
                 .contains(&"OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4999".to_string())
@@ -66,11 +68,18 @@ mod tests {
         assert!(s.codex[0].contains("http://127.0.0.1:4999/v1/logs"));
         assert!(text(&s).contains("4999"));
         assert!(!text(&s).contains("<port>"));
+        let v6 = setup("http://[::1]:4999");
+        assert!(v6.codex[0].contains("http://[::1]:4999/v1/logs"));
+        assert!(
+            v6.claude_code
+                .iter()
+                .any(|l| l == "OTEL_EXPORTER_OTLP_ENDPOINT=http://[::1]:4999")
+        );
     }
 
     #[test]
     fn text_has_the_documented_sections() {
-        let t = text(&setup(4318));
+        let t = text(&setup("http://127.0.0.1:4318"));
         for needle in [
             "Point an agent at it.",
             "Claude Code (start",

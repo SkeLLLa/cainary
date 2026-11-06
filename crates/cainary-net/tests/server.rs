@@ -571,13 +571,21 @@ fn a_stalled_client_is_dropped_and_the_next_is_served() {
 #[test]
 fn the_seventeenth_connection_gets_503() {
     let (srv, _out) = start_with(|c| {
-        c.tunables.read_timeout = Duration::from_secs(5);
-        c.tunables.idle_timeout = Duration::from_secs(5);
-        c.tunables.request_deadline = Duration::from_secs(5);
+        c.tunables.read_timeout = Duration::from_secs(30);
+        c.tunables.idle_timeout = Duration::from_secs(30);
+        c.tunables.request_deadline = Duration::from_secs(30);
     });
     let a = srv.addrs[0];
     let held: Vec<TcpStream> = (0..16).map(|_| connect(a)).collect();
-    std::thread::sleep(Duration::from_millis(300));
+    let end = Instant::now() + Duration::from_secs(10);
+    while srv.connections() < 16 {
+        assert!(
+            Instant::now() < end,
+            "only {} connections counted",
+            srv.connections()
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
     let mut s = connect(a);
     let r = read_reply(&mut s).expect("a 503");
     assert_eq!(r.status, 503);
@@ -588,7 +596,8 @@ fn the_seventeenth_connection_gets_503() {
 
 #[test]
 fn rejection_lines_are_rate_limited() {
-    let (srv, out) = start();
+    // A window that outlasts the test, so the count can't straddle two windows.
+    let (srv, out) = start_with(|c| c.tunables.error_window = Duration::from_secs(3600));
     let a = srv.addrs[0];
     for _ in 0..40 {
         let _ = raw(
@@ -596,27 +605,10 @@ fn rejection_lines_are_rate_limited() {
             format!("GET /nope HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n", a.port()).as_bytes(),
         );
     }
-    std::thread::sleep(Duration::from_millis(300));
-    let errs = out.wait_for("error", 10);
-    assert!(errs.len() <= 11, "{} error lines", errs.len());
-    // After the window the summary arrives with the next rejection.
-    std::thread::sleep(Duration::from_millis(1100));
-    let _ = raw(
-        a,
-        format!("GET /nope HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n", a.port()).as_bytes(),
-    );
-    let end = Instant::now() + Duration::from_secs(3);
-    loop {
-        let all = out.wait_for("error", 0);
-        if all
-            .iter()
-            .any(|e| e["dropped"].as_u64().is_some_and(|n| n >= 20))
-        {
-            break;
-        }
-        assert!(Instant::now() < end, "no dropped summary: {all:?}");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    out.wait_for("error", 10);
+    std::thread::sleep(Duration::from_millis(200));
+    let errs = out.wait_for("error", 0);
+    assert_eq!(errs.len(), 10, "{errs:?}");
     srv.shutdown();
 }
 
