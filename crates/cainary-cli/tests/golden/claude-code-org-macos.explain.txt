@@ -18,22 +18,24 @@ Flags
   Your managed settings (redacted) and their SHA-256: not sent, because OTEL_LOG_MANAGED_SETTINGS is unset
 
 Identity (on every record)
-  user.email               your account email (when signed in with a Claude account)
-  user.account_uuid        your account UUID
-  user.account_id          your tagged account ID
-  organization.id          your organization's UUID
-  user.id                  a random ID for this installation
-  session.id               this session's ID
-  ccr.session.id           the cloud session's ID
-  terminal.type            your terminal, such as iTerm.app, VS Code or tmux
+  user.email         your account email (when signed in with a Claude account)
+  user.account_uuid  your account UUID
+  user.account_id    your tagged account ID
+  organization.id    your organization's UUID
+  user.id            a random ID for this installation
+  session.id         this session's ID
+  terminal.type      your terminal, such as iTerm.app, VS Code or tmux
+
+Identity (only in some cases)
+  ccr.session.id           the cloud session's ID (when: cloud sessions)
   app.version              the Claude Code version (may)
   app.entrypoint           how Claude Code was started (may)
-  vcs.repository.url.full  the repository's URL
-  vcs.owner.name           the repository owner
-  vcs.repository.name      the repository name
-  vcs.provider.name        the repository's host
-  user.groups              your identity provider's groups (may)
-  identity.source          your identity provider, such as gateway-oidc (may)
+  vcs.repository.url.full  the repository's URL (when: inside a git repository)
+  vcs.owner.name           the repository owner (when: inside a git repository)
+  vcs.repository.name      the repository name (when: inside a git repository)
+  vcs.provider.name        the repository's host (when: inside a git repository)
+  user.groups              your identity provider's groups (when: Claude apps gateway sessions) (may)
+  identity.source          your identity provider, such as gateway-oidc (when: Claude apps gateway sessions) (may)
 
 Resource
   service.name     "claude-code"

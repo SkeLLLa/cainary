@@ -1,8 +1,8 @@
 //! Text report renderer (architecture.md §8.1): the `scan` text layout and the `sources` TSV.
 
 use cainary_core::model::{
-    ChangeKind, ChangeScope, Entry, Finding, Level, Origin, Payload, Report, ScannedSource, Sent,
-    SourceState,
+    AttrOut, ChangeKind, ChangeScope, Entry, Finding, Level, Origin, Payload, Report,
+    ScannedSource, Sent, SourceState,
 };
 use cainary_core::rules::otel_catalog::Export;
 
@@ -316,6 +316,16 @@ pub(crate) fn finding_block(
     }
 }
 
+/// Identity sent on every record: no condition, documented, and not switched off.
+pub(crate) fn is_always(a: &AttrOut) -> bool {
+    a.when.is_none() && !a.maybe && a.sent.is_none_or(|s| s != Sent::No)
+}
+
+/// Identity sent only in some situations, or not documented by the vendor.
+pub(crate) fn is_sometimes(a: &AttrOut) -> bool {
+    (a.when.is_some() || a.maybe) && a.sent != Some(Sent::No)
+}
+
 /// `events`, `metrics` or `spans`: what an export's records are called.
 pub(crate) fn noun(e: Export) -> &'static str {
     match e {
@@ -333,16 +343,22 @@ fn payload_lines(out: &mut String, f: &Finding, pl: &Payload, pad: &str, p: &Pai
         pl.catalog,
         f.id
     ));
-    let sent: Vec<&str> = pl
+    let always: Vec<&str> = pl
         .identity
         .iter()
-        .filter(|a| a.sent != Some(Sent::No))
+        .filter(|a| is_always(a))
         .map(|a| a.key.as_str())
         .collect();
+    let sometimes = pl.identity.iter().filter(|a| is_sometimes(a)).count();
     let one = n.trim_end_matches('s');
+    let more = if sometimes > 0 {
+        format!(" (+{sometimes} conditional; see explain)")
+    } else {
+        String::new()
+    };
     out.push_str(&format!(
-        "{pad}  identity on every {one}: {}\n",
-        sent.join(", ")
+        "{pad}  identity on every {one}: {}{more}\n",
+        always.join(", ")
     ));
     for g in &pl.gates {
         out.push_str(&format!("{pad}  {}\n", p.dim(&g.text)));

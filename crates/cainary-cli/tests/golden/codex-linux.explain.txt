@@ -8,7 +8,7 @@
 What the trace export carries (catalog codex 0.166.0; https://learn.chatgpt.com/docs/config-file/config-advanced#observability-and-telemetry)
   Not fully documented by the vendor: this may differ from what is sent.
 
-Identity (on every record)
+Identity (only in some cases)
   conversation.id  the conversation ID (may)
   auth_mode        your authentication mode (may)
   terminal.type    your terminal type (may)

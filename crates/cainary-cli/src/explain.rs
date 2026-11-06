@@ -1,7 +1,7 @@
 //! `cainary explain <id|key>`: the finding block plus everything its payload preview holds.
 //! Pure rendering: the report comes in, text goes out.
 
-use crate::text::{Paint, finding_block, noun};
+use crate::text::{Paint, finding_block, is_always, noun};
 use cainary_core::model::{AttrOut, Finding, Payload, RecordOut, Report, Sent};
 use cainary_core::rules::otel_catalog::Export;
 use cainary_core::rules::otel_catalog::Group;
@@ -66,7 +66,20 @@ fn payload(out: &mut String, pl: &Payload, p: &Paint, width: usize) {
             out.push_str(&format!("  {}\n", g.text));
         }
     }
-    attrs(out, "Identity (on every record)", &pl.identity, p);
+    let always: Vec<AttrOut> = pl
+        .identity
+        .iter()
+        .filter(|a| is_always(a))
+        .cloned()
+        .collect();
+    let other: Vec<AttrOut> = pl
+        .identity
+        .iter()
+        .filter(|a| !is_always(a))
+        .cloned()
+        .collect();
+    attrs(out, "Identity (on every record)", &always, p);
+    attrs(out, "Identity (only in some cases)", &other, p);
     attrs(out, "Resource", &pl.resource, p);
 
     let n = noun(pl.export);
@@ -107,6 +120,9 @@ fn attrs(out: &mut String, title: &str, list: &[AttrOut], p: &Paint) {
         let mut line = format!("  {:w$}  {}", a.key, a.what);
         if let (Some(flag), Some(sent)) = (&a.flag, a.sent) {
             line.push_str(&format!(" ({}: {})", flag, sent_word(sent)));
+        }
+        if let Some(w) = &a.when {
+            line.push_str(&format!(" (when: {w})"));
         }
         if a.maybe {
             line.push_str(" (may)");

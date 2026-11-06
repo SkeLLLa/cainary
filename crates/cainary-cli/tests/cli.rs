@@ -167,6 +167,27 @@ fn otel_debug_prints_the_hint_and_exits_0() {
 }
 
 #[test]
+fn identity_line_lists_only_unconditional_keys() {
+    let fx = fixture("claude-code-org-macos");
+    let out = run(&["scan", "--fixture", &fx, "--no-color"]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    let line = text
+        .lines()
+        .find(|l| l.contains("identity on every event:"))
+        .expect("a logs payload");
+    assert!(line.contains(
+        "identity on every event: user.email, user.account_uuid, user.account_id, organization.id, user.id, session.id, terminal.type (+"
+    ));
+    for k in ["ccr.session.id", "user.groups", "vcs.", "app.version"] {
+        assert!(!line.contains(k), "{k}");
+    }
+    assert!(line.contains("conditional; see explain)"));
+    // metrics: no command-level label, and no attributes gate without OTEL_RESOURCE_ATTRIBUTES
+    assert!(!text.contains("Your custom attributes on metrics"));
+    assert!(text.contains("Agent, MCP, skill and plugin names on metrics (no commands)"));
+}
+
+#[test]
 fn summary_prints_no_payload_lines() {
     let fx = fixture("claude-code-org-macos");
     let out = run(&["scan", "--summary", "--fixture", &fx]);
