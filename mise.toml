@@ -35,7 +35,8 @@ run = "make release"
 
 [tasks."otel-debug"]
 description = "Run the release cainary-otel-debug; flags after --, e.g. mise run otel-debug -- --json"
-run = 'make otel-debug OTEL_DEBUG_ARGS="{{arg(name="args", var=true, default="")}}"'
+# mise appends the arguments after `--` to the last command.
+run = "make -s release >&2 && target/release/cainary-otel-debug"
 
 [tasks.test]
 description = "cargo test"
