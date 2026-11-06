@@ -1,0 +1,786 @@
+//! The endpoint takeover end to end (design §16.6, §16.7): a rustls client that trusts only the
+//! certificate file the collector wrote. Everything uses `--port 0`-style ephemeral ports; 443 is
+//! never bound.
+#![cfg(feature = "tls")]
+
+use cainary_net::redflag::{Matcher, presets};
+use cainary_net::server::{self, Config, Server, TlsRun};
+use cainary_net::tls::Tls;
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, ServerName};
+use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
+use serde_json::{Value, json};
+use std::io::{BufRead, Read, Write};
+use std::net::{SocketAddr, TcpStream};
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+const HOST: &str = "otel.example-corp.test";
+const OTHER: &str = "logs.example-corp.test";
+
+#[derive(Clone, Default)]
+struct Buf(Arc<Mutex<Vec<u8>>>);
+
+impl Write for Buf {
+    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(b);
+        Ok(b.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Buf {
+    fn lines(&self) -> Vec<Value> {
+        String::from_utf8_lossy(&self.0.lock().unwrap())
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect()
+    }
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+    }
+    fn wait_for(&self, ty: &str, n: usize) -> Vec<Value> {
+        let end = Instant::now() + Duration::from_secs(5);
+        loop {
+            let l: Vec<Value> = self
+                .lines()
+                .into_iter()
+                .filter(|v| v["type"] == ty)
+                .collect();
+            if l.len() >= n || Instant::now() > end {
+                return l;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+fn tmp(tag: &str) -> PathBuf {
+    let d = std::env::temp_dir().join(format!("cainary-tls-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    d
+}
+
+struct Run {
+    srv: Server,
+    out: Buf,
+    ca_pem: String,
+    dir: PathBuf,
+}
+
+fn start_with(tag: &str, f: impl FnOnce(&mut Config)) -> Run {
+    let dir = tmp(tag);
+    let hosts = vec![HOST.to_string(), OTHER.to_string()];
+    let tls = Tls::start(&hosts, &dir).expect("the CA publishes");
+    let out = Buf::default();
+    let mut cfg = Config::new(Box::new(out.clone()));
+    cfg.listen = vec!["127.0.0.1".into()];
+    cfg.matcher = Arc::new(
+        Matcher::new(
+            presets::PRESETS
+                .iter()
+                .filter(|p| p.default_on)
+                .map(presets::Preset::pattern)
+                .collect(),
+        )
+        .unwrap(),
+    );
+    cfg.tunables.read_timeout = Duration::from_millis(300);
+    cfg.tunables.first_request_deadline = Duration::from_secs(2);
+    cfg.tunables.idle_timeout = Duration::from_secs(3);
+    cfg.tls = Some(TlsRun {
+        tls,
+        public_port: 443,
+    });
+    f(&mut cfg);
+    let ca_pem = std::fs::read_to_string(dir.join("otel-debug-ca.pem")).unwrap();
+    let srv = server::run(cfg).expect("server starts");
+    Run {
+        srv,
+        out,
+        ca_pem,
+        dir,
+    }
+}
+
+fn start(tag: &str) -> Run {
+    start_with(tag, |_| {})
+}
+
+fn provider() -> Arc<rustls::crypto::CryptoProvider> {
+    Arc::new(rustls::crypto::ring::default_provider())
+}
+
+fn client_config(ca_pem: &str, alpn: &[&[u8]]) -> Arc<ClientConfig> {
+    let mut roots = RootCertStore::empty();
+    for c in CertificateDer::pem_slice_iter(ca_pem.as_bytes()) {
+        roots.add(c.unwrap()).unwrap();
+    }
+    let mut cfg = ClientConfig::builder_with_provider(provider())
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    cfg.alpn_protocols = alpn.iter().map(|a| a.to_vec()).collect();
+    Arc::new(cfg)
+}
+
+type Tls_ = StreamOwned<ClientConnection, TcpStream>;
+
+fn connect(addr: SocketAddr, cfg: &Arc<ClientConfig>, sni: &str) -> Result<Tls_, String> {
+    let tcp = TcpStream::connect(addr).map_err(|e| e.to_string())?;
+    tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    tcp.set_write_timeout(Some(Duration::from_secs(5))).unwrap();
+    let name = ServerName::try_from(sni.to_string()).map_err(|e| e.to_string())?;
+    let conn = ClientConnection::new(Arc::clone(cfg), name).map_err(|e| e.to_string())?;
+    let mut s = StreamOwned::new(conn, tcp);
+    while s.conn.is_handshaking() {
+        s.conn.complete_io(&mut s.sock).map_err(|e| e.to_string())?;
+    }
+    Ok(s)
+}
+
+struct Reply {
+    status: u16,
+    body: String,
+}
+
+fn read_reply(s: &mut Tls_) -> Option<Reply> {
+    let mut data = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        if let Some(i) = data.windows(4).position(|w| w == b"\r\n\r\n") {
+            let head = String::from_utf8_lossy(&data[..i]).into_owned();
+            let len: usize = head
+                .lines()
+                .find_map(|l| l.strip_prefix("Content-Length: "))
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            if data.len() >= i + 4 + len {
+                let status = head.split(' ').nth(1)?.parse().ok()?;
+                let body = String::from_utf8_lossy(&data[i + 4..i + 4 + len]).into_owned();
+                return Some(Reply { status, body });
+            }
+        }
+        match s.read(&mut chunk) {
+            Ok(0) | Err(_) => return None,
+            Ok(n) => data.extend_from_slice(&chunk[..n]),
+        }
+    }
+}
+
+fn request(path: &str, host_header: Option<&str>, extra: &str, body: &[u8]) -> Vec<u8> {
+    let mut r = format!("POST {path} HTTP/1.1\r\n");
+    if let Some(h) = host_header {
+        r.push_str(&format!("Host: {h}\r\n"));
+    }
+    r.push_str(&format!(
+        "Content-Type: application/json\r\n{extra}Content-Length: {}\r\n\r\n",
+        body.len()
+    ));
+    let mut v = r.into_bytes();
+    v.extend_from_slice(body);
+    v
+}
+
+fn post(run: &Run, sni: &str, host: Option<&str>, path: &str, body: &[u8]) -> Option<Reply> {
+    let cfg = client_config(&run.ca_pem, &[b"http/1.1"]);
+    let mut s = connect(run.srv.addrs[0], &cfg, sni).ok()?;
+    s.write_all(&request(path, host, "", body)).ok()?;
+    read_reply(&mut s)
+}
+
+fn fixture(rel: &str) -> Vec<u8> {
+    std::fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../cainary-core/tests/otel-payloads")
+            .join(rel),
+    )
+    .unwrap()
+}
+
+fn host_port(run: &Run, host: &str) -> String {
+    format!("{host}:{}", run.srv.port)
+}
+
+#[test]
+fn fixtures_over_tls_to_organization_style_paths() {
+    let run = start("e2e");
+    let cases = [
+        (
+            "claude-code-2.1.316/logs.json",
+            "/_x/claude_code/logs",
+            "claude-code 2.1.316",
+            "logs",
+        ),
+        (
+            "claude-code-2.1.316/metrics.json",
+            "/_x/claude_code/v1/metrics",
+            "claude-code 2.1.316",
+            "metrics",
+        ),
+        // No signal in the path: the JSON root key decides.
+        (
+            "codex-0.166.0/logs.json",
+            "/anything/else?x=1",
+            "codex 0.166.0",
+            "logs",
+        ),
+    ];
+    for (rel, path, _, _) in cases {
+        let r = post(
+            &run,
+            HOST,
+            Some(&host_port(&run, HOST)),
+            path,
+            &fixture(rel),
+        )
+        .expect("a reply");
+        assert_eq!((r.status, r.body.as_str()), (200, "{}"), "{path}");
+    }
+    let batches = run.out.wait_for("batch", 3);
+    assert_eq!(batches.len(), 3);
+    for (i, (_, path, catalog, signal)) in cases.iter().enumerate() {
+        let b = &batches[i];
+        assert_eq!(b["catalog"], *catalog);
+        assert_eq!(b["signal"], *signal);
+        assert_eq!(b["host"], HOST);
+        // Paths are never printed: the canonical one or a marker.
+        assert_eq!(b["path"], "<custom path>", "{path}");
+        assert_eq!(b["notInCatalog"], 0);
+    }
+    let text = run.out.text();
+    for secret in ["_x/claude_code", "anything/else", "x=1"] {
+        assert!(!text.contains(secret), "{secret} leaked");
+    }
+    // A canonical path keeps its name.
+    let r = post(
+        &run,
+        HOST,
+        Some(&host_port(&run, HOST)),
+        "/v1/logs",
+        &fixture("codex-0.166.0/logs.json"),
+    )
+    .unwrap();
+    assert_eq!(r.status, 200);
+    let b = run.out.wait_for("batch", 4);
+    assert_eq!(b[3]["path"], "/v1/logs");
+    run.srv.shutdown();
+    let _ = std::fs::remove_dir_all(&run.dir);
+}
+
+#[test]
+fn the_hello_describes_the_takeover() {
+    let run = start("hello");
+    let h = &run.out.wait_for("hello", 1)[0];
+    assert_eq!(h["mode"], "tls-receiver");
+    assert_eq!(h["tls"]["hosts"], json!([HOST, OTHER]));
+    let path = h["tls"]["ca"]["path"].as_str().unwrap();
+    assert!(path.ends_with("otel-debug-ca.pem"));
+    assert_eq!(h["tls"]["ca"]["sha256"].as_str().unwrap().len(), 64);
+    let takeover = h["setup"]["takeover"].as_array().unwrap();
+    let all: Vec<&str> = takeover.iter().map(|l| l.as_str().unwrap()).collect();
+    let all = all.join("\n");
+    assert!(all.contains(&format!("127.0.0.1 {HOST}")));
+    assert!(all.contains("NODE_EXTRA_CA_CERTS="));
+    assert!(all.contains("Nothing is forwarded"));
+    run.srv.shutdown();
+    let _ = std::fs::remove_dir_all(&run.dir);
+}
+
+#[test]
+fn only_configured_names_complete_a_handshake() {
+    let run = start("sni");
+    let cfg = client_config(&run.ca_pem, &[b"http/1.1"]);
+    let a = run.srv.addrs[0];
+    // Unlisted name: refused (the client sees a failed handshake).
+    assert!(connect(a, &cfg, "evil.example.test").is_err());
+    // No SNI at all (an IP address as the server name sends none).
+    assert!(connect(a, &cfg, "127.0.0.1").is_err());
+    // A configured name works, in any case.
+    assert!(connect(a, &cfg, "OTEL.example-corp.test").is_ok());
+    let errs = run.out.wait_for("error", 2);
+    assert!(errs.len() >= 2);
+    for e in &errs {
+        assert_eq!(e["source"], "tls");
+        let m = e["message"].as_str().unwrap();
+        assert!(m.starts_with("tls handshake refused"), "{m}");
+        assert!(!m.contains("evil") && !run.out.text().contains("evil.example.test"));
+    }
+    run.srv.shutdown();
+    let _ = std::fs::remove_dir_all(&run.dir);
+}
+
+#[test]
+fn alpn_is_http11_only() {
+    let run = start("alpn");
+    let a = run.srv.addrs[0];
+    assert!(connect(a, &client_config(&run.ca_pem, &[b"h2"]), HOST).is_err());
+    assert!(connect(a, &client_config(&run.ca_pem, &[b"h2", b"http/1.1"]), HOST).is_ok());
+    let s = connect(a, &client_config(&run.ca_pem, &[]), HOST).expect("no ALPN is allowed");
+    drop(s);
+    let mut ok = connect(a, &client_config(&run.ca_pem, &[b"h2", b"http/1.1"]), HOST).unwrap();
+    assert_eq!(ok.conn.alpn_protocol(), Some(&b"http/1.1"[..]));
+    drop(ok.flush());
+    run.srv.shutdown();
+    let _ = std::fs::remove_dir_all(&run.dir);
+}
+
+#[test]
+fn plain_http_to_the_tls_port_fails_cleanly() {
+    let run = start("plain");
+    let mut s = TcpStream::connect(run.srv.addrs[0]).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    s.write_all(b"GET / HTTP/1.1\r\nHost: otel.example-corp.test\r\n\r\n")
+        .unwrap();
+    let mut got = Vec::new();
+    let _ = s.read_to_end(&mut got);
+    // Closed (possibly after a TLS alert); never an HTTP answer.
+    assert!(!String::from_utf8_lossy(&got).contains("HTTP/1.1"));
+    let errs = run.out.wait_for("error", 1);
+    assert_eq!(errs[0]["source"], "tls");
+    assert_eq!(errs[0]["message"], "tls handshake failed");
+    // The server still serves.
+    assert_eq!(
+        post(
+            &run,
+            HOST,
+            Some(&host_port(&run, HOST)),
+            "/v1/logs",
+            &fixture("codex-0.166.0/logs.json")
+        )
+        .unwrap()
+        .status,
+        200
+    );
+    run.srv.shutdown();
+    let _ = std::fs::remove_dir_all(&run.dir);
+}
+
+#[test]
+fn host_must_equal_the_sni_and_a_reachable_port() {
+    let run = start("host");
+    let body = fixture("codex-0.166.0/logs.json");
+    let st =
+        |sni: &str, host: Option<&str>| post(&run, sni, host, "/v1/logs", &body).map(|r| r.status);
+    let p = run.srv.port;
+    assert_eq!(st(HOST, Some(&format!("{HOST}:{p}"))), Some(200));
+    assert_eq!(
+        st(HOST, Some(HOST)),
+        Some(200),
+        "no port means 443, which the redirect serves"
+    );
+    assert_eq!(st(HOST, Some(&format!("{HOST}:443"))), Some(200));
+    assert_eq!(
+        st(HOST, Some(&format!("{}:{p}", HOST.to_uppercase()))),
+        Some(200)
+    );
+    // Another configured host, a loopback alias, another port, junk.
+    assert_eq!(st(HOST, Some(&format!("{OTHER}:{p}"))), Some(421));
+    assert_eq!(
+        st(HOST, Some(&format!("127.0.0.1:{p}"))),
+        Some(400),
+        "an IP isn't a DNS name here"
+    );
+    assert_eq!(st(HOST, Some(&format!("localhost:{p}"))), Some(400));
+    assert_eq!(st(HOST, Some(&format!("{HOST}:1234"))), Some(421));
+    assert_eq!(st(HOST, Some(&format!("{HOST}:0443"))), Some(400));
+    assert_eq!(st(HOST, Some(&format!("{HOST}:x"))), Some(400));
+    assert_eq!(st(HOST, Some("[::1]:1")), Some(400));
+    assert_eq!(st(HOST, None), Some(400));
+    // Two Host headers.
+    let cfg = client_config(&run.ca_pem, &[b"http/1.1"]);
+    let mut s = connect(run.srv.addrs[0], &cfg, HOST).unwrap();
+    s.write_all(&request(
+        "/v1/logs",
+        Some(HOST),
+        &format!("Host: {HOST}\r\n"),
+        &body,
+    ))
+    .unwrap();
+    assert_eq!(read_reply(&mut s).unwrap().status, 400);
+    // Browsers are refused here too.
+    let mut s = connect(run.srv.addrs[0], &cfg, HOST).unwrap();
+    s.write_all(&request(
+        "/v1/logs",
+        Some(&host_port(&run, HOST)),
+        "Origin: https://evil.example.test\r\n",
+        &body,
+    ))
+    .unwrap();
+    assert_eq!(read_reply(&mut s).unwrap().status, 403);
+    run.srv.shutdown();
+    let _ = std::fs::remove_dir_all(&run.dir);
+}
+
+#[test]
+fn takeover_routing_is_post_only_and_needs_one_signal() {
+    let run = start("route");
+    let a = run.srv.addrs[0];
+    let h = host_port(&run, HOST);
+    let cfg = client_config(&run.ca_pem, &[b"http/1.1"]);
+    let logs = fixture("codex-0.166.0/logs.json");
+    let send = |raw: Vec<u8>| {
+        let mut s = connect(a, &cfg, HOST).unwrap();
+        s.write_all(&raw).unwrap();
+        read_reply(&mut s).map(|r| (r.status, r.body))
+    };
+    let get = format!("GET /v1/logs HTTP/1.1\r\nHost: {h}\r\n\r\n");
+    assert_eq!(send(get.into_bytes()).unwrap().0, 405);
+    let opt = format!("OPTIONS /x HTTP/1.1\r\nHost: {h}\r\n\r\n");
+    assert_eq!(send(opt.into_bytes()).unwrap().0, 405);
+    // A path that says metrics over a logs body, and a body with no signal in a neutral path.
+    assert_eq!(
+        send(request("/x/metrics", Some(&h), "", &logs)).unwrap().0,
+        400
+    );
+    assert_eq!(
+        send(request("/x/y", Some(&h), "", b"{\"a\":1}")).unwrap().0,
+        400
+    );
+    let both = br#"{"resourceLogs":[],"resourceSpans":[]}"#;
+    assert_eq!(send(request("/x/y", Some(&h), "", both)).unwrap().0, 400);
+    // CONNECT and absolute-form targets are never honoured.
+    let connect_req = format!("CONNECT {HOST}:443 HTTP/1.1\r\nHost: {h}\r\n\r\n");
+    assert_ne!(send(connect_req.into_bytes()).map(|r| r.0), Some(200));
+    let abs = format!(
+        "POST https://{HOST}/v1/logs HTTP/1.1\r\nHost: {h}\r\nContent-Length: 2\r\n\r\n{{}}"
+    );
+    assert_eq!(send(abs.into_bytes()).unwrap().0, 400);
+    // The query is ignored; the strict §14 limits still apply (gzip is refused).
+    assert_eq!(
+        send(request("/v1/logs?token=abc", Some(&h), "", &logs))
+            .unwrap()
+            .0,
+        200
+    );
+    assert_eq!(
+        send(request(
+            "/v1/logs",
+            Some(&h),
+            "Content-Encoding: gzip\r\n",
+            &logs
+        ))
+        .unwrap()
+        .0,
+        415
+    );
+    assert!(!run.out.text().contains("token=abc"));
+    run.srv.shutdown();
+    let _ = std::fs::remove_dir_all(&run.dir);
+}
+
+#[test]
+fn the_certificate_file_is_public_and_the_key_is_nowhere_on_disk() {
+    let run = start("files");
+    let ca = run.dir.join("otel-debug-ca.pem");
+    let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(&ca), 0o644);
+    assert_eq!(mode(&run.dir), 0o700);
+    assert!(run.ca_pem.starts_with("-----BEGIN CERTIFICATE-----"));
+    for e in std::fs::read_dir(&run.dir).unwrap() {
+        let p = e.unwrap().path();
+        let text = String::from_utf8_lossy(&std::fs::read(&p).unwrap()).into_owned();
+        assert!(!text.contains("PRIVATE KEY"), "{}", p.display());
+    }
+    // Nor in any output.
+    assert!(!run.out.text().contains("PRIVATE"));
+    // Name constraints are in the file (OID 2.5.29.30, critical) and name exactly the hosts.
+    let der: Vec<u8> = CertificateDer::pem_slice_iter(run.ca_pem.as_bytes())
+        .next()
+        .unwrap()
+        .unwrap()
+        .to_vec();
+    let nc = [0x06, 0x03, 0x55, 0x1d, 0x1e, 0x01, 0x01, 0xff];
+    assert!(der.windows(nc.len()).any(|w| w == nc));
+    for h in [HOST, OTHER] {
+        assert!(der.windows(h.len()).any(|w| w == h.as_bytes()));
+    }
+    run.srv.shutdown();
+    let _ = std::fs::remove_dir_all(&run.dir);
+}
+
+// ── transport limits ───────────────────────────────────────────────────────────────────────
+
+#[test]
+fn a_trickled_handshake_is_cut_off_at_the_absolute_deadline() {
+    let run = start_with("trickle", |c| {
+        c.tunables.first_request_deadline = Duration::from_millis(700);
+        c.tunables.read_timeout = Duration::from_millis(300);
+    });
+    let a = run.srv.addrs[0];
+    let mut s = TcpStream::connect(a).unwrap();
+    s.set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    let t0 = Instant::now();
+    // A TLS record header, then one byte at a time: each read succeeds, only the absolute
+    // deadline from accept can end this.
+    let mut closed = false;
+    s.write_all(&[0x16, 0x03, 0x01, 0x00, 0xff]).unwrap();
+    while t0.elapsed() < Duration::from_secs(5) {
+        if s.write_all(&[0x01]).is_err() {
+            closed = true;
+            break;
+        }
+        let mut b = [0u8; 16];
+        if matches!(s.read(&mut b), Ok(0)) {
+            closed = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(60));
+    }
+    assert!(closed, "the connection should be closed");
+    assert!(t0.elapsed() < Duration::from_secs(3), "{:?}", t0.elapsed());
+    // The next client is served.
+    assert_eq!(
+        post(
+            &run,
+            HOST,
+            Some(&host_port(&run, HOST)),
+            "/v1/logs",
+            &fixture("codex-0.166.0/logs.json")
+        )
+        .unwrap()
+        .status,
+        200
+    );
+    run.srv.shutdown();
+    let _ = std::fs::remove_dir_all(&run.dir);
+}
+
+#[test]
+fn a_silent_client_after_the_handshake_is_cut_off_at_the_first_request_deadline() {
+    let run = start_with("silent", |c| {
+        c.tunables.first_request_deadline = Duration::from_millis(800);
+        c.tunables.idle_timeout = Duration::from_secs(30);
+        c.tunables.request_deadline = Duration::from_secs(30);
+        c.tunables.read_timeout = Duration::from_secs(30);
+    });
+    let cfg = client_config(&run.ca_pem, &[b"http/1.1"]);
+    let mut s = connect(run.srv.addrs[0], &cfg, HOST).unwrap();
+    let t0 = Instant::now();
+    s.sock
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut b = [0u8; 8];
+    // Nothing is sent. The server's 30 s idle timeout would be far later than the 0.8 s the
+    // absolute deadline allows for handshake plus first request.
+    let r = s.read(&mut b);
+    assert!(matches!(r, Ok(0) | Err(_)));
+    assert!(t0.elapsed() < Duration::from_secs(3), "{:?}", t0.elapsed());
+    run.srv.shutdown();
+    let _ = std::fs::remove_dir_all(&run.dir);
+}
+
+#[test]
+fn over_the_limit_connections_close_without_a_handshake_or_a_plaintext_reply() {
+    let run = start_with("full", |c| {
+        c.tunables.max_connections = 2;
+        c.tunables.first_request_deadline = Duration::from_secs(20);
+        c.tunables.read_timeout = Duration::from_secs(20);
+        c.tunables.idle_timeout = Duration::from_secs(20);
+    });
+    let a = run.srv.addrs[0];
+    let held: Vec<TcpStream> = (0..2).map(|_| TcpStream::connect(a).unwrap()).collect();
+    let end = Instant::now() + Duration::from_secs(5);
+    while run.srv.connections() < 2 {
+        assert!(Instant::now() < end);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let mut third = TcpStream::connect(a).unwrap();
+    third
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let mut got = Vec::new();
+    let _ = third.read_to_end(&mut got);
+    assert!(got.is_empty(), "no bytes, plaintext or TLS: {got:?}");
+    drop(held);
+    run.srv.shutdown();
+    let _ = std::fs::remove_dir_all(&run.dir);
+}
+
+// ── the binary ─────────────────────────────────────────────────────────────────────────────
+
+fn bin(state: &Path) -> Command {
+    let mut c = Command::new(env!("CARGO_BIN_EXE_cainary-otel-debug"));
+    c.env("XDG_STATE_HOME", state).env("HOME", state);
+    c
+}
+
+#[test]
+fn the_binary_prints_the_takeover_and_a_second_run_is_refused() {
+    let state = tmp("bin");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut first = bin(&state)
+        .args([
+            "--tls",
+            "--tls-host",
+            HOST,
+            "--port",
+            "0",
+            "--listen",
+            "127.0.0.1",
+            "--json",
+            "--exit-on-stdin-eof",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut out = std::io::BufReader::new(first.stdout.take().unwrap());
+    let mut line = String::new();
+    out.read_line(&mut line).unwrap();
+    let hello: Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(hello["mode"], "tls-receiver");
+    let port: u16 = hello["listen"][0]
+        .as_str()
+        .unwrap()
+        .rsplit(':')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_ne!(port, 443);
+    let ca = PathBuf::from(hello["tls"]["ca"]["path"].as_str().unwrap());
+    assert_eq!(ca, state.join("cainary/otel-debug-ca.pem"));
+
+    // A real client against the real process, trusting only the file.
+    let pem = std::fs::read_to_string(&ca).unwrap();
+    let cfg = client_config(&pem, &[b"http/1.1"]);
+    let a: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+    let mut s = connect(a, &cfg, HOST).unwrap();
+    s.write_all(&request(
+        "/_x/logs",
+        Some(&format!("{HOST}:{port}")),
+        "",
+        &fixture("codex-0.166.0/logs.json"),
+    ))
+    .unwrap();
+    assert_eq!(read_reply(&mut s).unwrap().status, 200);
+
+    // A second --tls run for the same state directory exits 1.
+    let second = bin(&state)
+        .args([
+            "--tls",
+            "--tls-host",
+            HOST,
+            "--port",
+            "0",
+            "--listen",
+            "127.0.0.1",
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(second.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&second.stderr);
+    assert!(
+        err.contains("another cainary-otel-debug --tls run owns"),
+        "{err}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&ca).unwrap(),
+        pem,
+        "the first run's file is untouched"
+    );
+
+    // --delete-ca refuses while it runs, then works.
+    let del = bin(&state).arg("--delete-ca").output().unwrap();
+    assert_eq!(del.status.code(), Some(1));
+    drop(first.stdin.take());
+    assert_eq!(first.wait().unwrap().code(), Some(0));
+    let del = bin(&state).arg("--delete-ca").output().unwrap();
+    assert_eq!(del.status.code(), Some(0));
+    assert!(!ca.exists());
+    let again = bin(&state).arg("--delete-ca").output().unwrap();
+    assert_eq!(again.status.code(), Some(0));
+    let _ = std::fs::remove_dir_all(&state);
+}
+
+#[test]
+fn tls_flags_are_validated_before_anything_is_bound() {
+    let state = tmp("flags");
+    for args in [
+        vec!["--tls"],
+        vec!["--tls", "--tls-host", "localhost"],
+        vec!["--tls", "--tls-host", "*.example.com"],
+        vec!["--tls", "--tls-host", "1.2.3.4"],
+        vec!["--tls-host", "a.example.test"],
+    ] {
+        let out = bin(&state)
+            .args(&args)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+    }
+    assert!(!state.exists(), "nothing was created");
+}
+
+#[test]
+fn the_hello_line_golden() {
+    let state = tmp("golden");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut child = bin(&state)
+        .args([
+            "--tls",
+            "--tls-host",
+            HOST,
+            "--tls-host",
+            OTHER,
+            "--port",
+            "0",
+            "--listen",
+            "127.0.0.1",
+            "--json",
+            "--exit-on-stdin-eof",
+            "--no-default-red-flags",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut out = std::io::BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    out.read_line(&mut line).unwrap();
+    drop(child.stdin.take());
+    let _ = child.wait();
+    let mut v: Value = serde_json::from_str(&line).unwrap();
+    let port = v["listen"][0]
+        .as_str()
+        .unwrap()
+        .rsplit(':')
+        .next()
+        .unwrap()
+        .to_string();
+    v["ts"] = json!("<ts>");
+    v["generator"] = json!("<generator>");
+    let sha = v["tls"]["ca"]["sha256"].as_str().unwrap().to_string();
+    let masked = v
+        .to_string()
+        .replace(&sha, "<sha256>")
+        .replace(&state.display().to_string(), "<state>")
+        .replace(&port, "<port>");
+    let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/tls-hello.jsonl");
+    let got = format!("{masked}\n");
+    if std::env::var_os("CAINARY_BLESS").is_some() {
+        std::fs::write(&file, &got).unwrap();
+    } else {
+        let want =
+            std::fs::read_to_string(&file).unwrap_or_else(|e| panic!("{e} (CAINARY_BLESS=1)"));
+        assert!(
+            got == want,
+            "tls hello differs; re-bless with CAINARY_BLESS=1\n{got}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&state);
+}
