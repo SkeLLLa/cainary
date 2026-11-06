@@ -3,10 +3,11 @@
 # `make linux`, which builds both first.
 #
 # Usage:
-#   packaging/linux.sh --version V --arch x86_64|aarch64 --cli PATH --tray PATH \
+#   packaging/linux.sh --version V --arch x86_64|aarch64 --cli PATH --otel-debug PATH --tray PATH \
 #       [--formats tar,deb,rpm] [--out dist/]
 #
 #   --cli    the static musl `cainary` (target/<arch>-unknown-linux-musl/release/cainary)
+#   --otel-debug  the static musl `cainary-otel-debug` (same directory as the CLI)
 #   --tray   `cainary-tray` (linux/target/release/cainary-tray)
 #
 # Artifacts (docs/distribution.md):
@@ -27,13 +28,14 @@ set -eu
 cd "$(dirname "$0")/.."
 
 usage() {
-    echo "usage: $0 --version V --arch x86_64|aarch64 --cli PATH --tray PATH [--formats tar,deb,rpm] [--out DIR]" >&2
+    echo "usage: $0 --version V --arch x86_64|aarch64 --cli PATH --otel-debug PATH --tray PATH [--formats tar,deb,rpm] [--out DIR]" >&2
     exit 2
 }
 
 VERSION=""
 ARCH=""
 CLI=""
+OTEL_DEBUG=""
 TRAY=""
 FORMATS="tar,deb,rpm"
 OUT="dist"
@@ -43,6 +45,7 @@ while [ "$#" -gt 0 ]; do
         --version) VERSION="$2" ;;
         --arch) ARCH="$2" ;;
         --cli) CLI="$2" ;;
+        --otel-debug) OTEL_DEBUG="$2" ;;
         --tray) TRAY="$2" ;;
         --formats) FORMATS="$2" ;;
         --out) OUT="$2" ;;
@@ -60,7 +63,7 @@ case "$ARCH" in
     aarch64) DEB_ARCH=arm64 ;;
     *) echo "error: --arch must be x86_64 or aarch64, got '$ARCH'" >&2; usage ;;
 esac
-if [ -z "$CLI" ] || [ -z "$TRAY" ]; then usage; fi
+if [ -z "$CLI" ] || [ -z "$OTEL_DEBUG" ] || [ -z "$TRAY" ]; then usage; fi
 
 DO_TAR=0
 DO_DEB=0
@@ -78,8 +81,8 @@ done
 LINUX="$(cd "${CAINARY_LINUX:-linux}" && pwd)"
 DATA="$LINUX/data"
 
-# --- 1. Versions: both binaries must report V; a stale build must not slip through ----------
-for f in "$CLI" "$TRAY"; do
+# --- 1. Versions: all binaries must report V; a stale build must not slip through ----------
+for f in "$CLI" "$OTEL_DEBUG" "$TRAY"; do
     if [ ! -f "$f" ] || [ ! -x "$f" ]; then
         echo "error: $f is missing or not executable" >&2
         exit 1
@@ -93,6 +96,7 @@ check_version() {
     fi
 }
 check_version "$CLI" cainary
+check_version "$OTEL_DEBUG" cainary-otel-debug
 check_version "$TRAY" cainary-tray
 
 if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
@@ -128,6 +132,7 @@ while read -r mode path _dest; do
     case "$mode" in "" | "#"*) continue ;; esac
     case "$path" in
         bin/cainary) from="$CLI" ;;
+        bin/cainary-otel-debug) from="$OTEL_DEBUG" ;;
         bin/cainary-tray) from="$TRAY" ;;
         share/icons/*) from="$DATA/icons/${path#share/icons/}" ;;
         share/*/*) from="$DATA/${path##*/}" ;;

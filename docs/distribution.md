@@ -3,12 +3,15 @@
 cAInary ships for macOS and Linux.
 
 **macOS:** an app bundle, `cAInary.app`. The bundle holds the SwiftUI menu-bar app
-(`Contents/MacOS/cAInary`) and the Rust CLI (`Contents/Helpers/cainary`). It is an agent app
+(`Contents/MacOS/cAInary`) and the Rust CLI (`Contents/Helpers/cainary`). `Contents/Helpers/cainary-otel-debug` is the
+universal, separately signed debug collector (identifier `ua.SkeLLLa.cAInary.otel-debug`); it is inert
+until the user runs it, from a terminal or with the app's "OTel debug collector" toggle. It is an agent app
 (`LSUIElement`, no Dock icon) and requires macOS 14. For how the bundle is built, see
 [macos.md](macos.md) §4.
 
-**Linux:** a tarball, a .deb, an .rpm, APT and DNF repositories, and an AUR package. Each holds the static `cainary` CLI and
-the Qt 6 tray app `cainary-tray` (see [linux.md](linux.md)). The tray app needs the distro's
+**Linux:** a tarball, a .deb, an .rpm, APT and DNF repositories, and an AUR package. Each holds the static `cainary` CLI, the static
+`cainary-otel-debug` collector and the Qt 6 tray app `cainary-tray` (see [linux.md](linux.md)).
+`cainary-otel-debug` is inert: no service, no autostart, and nothing runs until the user starts it. The tray app needs the distro's
 Qt ≥ 6.5; the CLI runs anywhere.
 
 ## Install methods
@@ -71,8 +74,9 @@ hashes and attests all of them at once, so `SHA256SUMS` has one writer.
 
 The packslip manifest (`packaging/packslip.toml`) is signed keylessly through GitHub OIDC. It
 records the macOS tar.gz as os `darwin` with no architecture (universal), the command `cainary` as
-`cAInary.app/Contents/Helpers/cainary`, and a resource `app` as `cAInary.app`. The two Linux
-tarballs list the commands `cainary` and `cainary-tray` under `bin/` in their top-level directory.
+`cAInary.app/Contents/Helpers/cainary` and `cainary-otel-debug` (under the same directory), and a
+resource `app` as `cAInary.app`. The two Linux
+tarballs list the commands `cainary`, `cainary-otel-debug` and `cainary-tray` under `bin/` in their top-level directory.
 
 The `build` job signs with the pinned certificate (see [Signing](#signing)). Until the pin is
 committed it signs ad hoc, emits a CI warning and says so in the release notes; the notes always
@@ -89,6 +93,7 @@ looks for it:
 | Path (under `/usr` for packages, the archive's top-level directory for the tarball) | What |
 | --- | --- |
 | `bin/cainary` | the static musl CLI |
+| `bin/cainary-otel-debug` | the static musl debug collector (crate `cainary-net`); inert until run |
 | `bin/cainary-tray` | the Qt 6 tray app |
 | `share/applications/ua.SkeLLLa.cAInary.desktop` | desktop entry |
 | `share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml` | AppStream metadata |
@@ -100,11 +105,11 @@ The tarball adds `install-user.sh`, the asset list, `README.md` and `LICENSE` an
 `cainary-<version>-linux-<arch>/`. No package installs system-wide autostart; the tray writes a
 per-user entry only when the user turns on "Launch at login".
 
-**Build.** The CLI is built once per architecture as static musl from the root workspace
-(`make linux-cli`, `build-linux-cli`, on native x86_64 and aarch64 runners). The tray app links the
+**Build.** The CLI and the debug collector are built once per architecture as static musl from the root workspace
+(`make linux-cli`, `-p cainary -p cainary-net`, `build-linux-cli`, on native x86_64 and aarch64 runners). The tray app links the
 distro's Qt, so it is built inside the distro it ships for: the tarball and .deb on
 `debian:trixie`, the .rpm on `fedora:44`, for both architectures. `packaging/linux.sh` checks that
-both binaries report the release version, stages the tree, and builds the formats with `cargo-deb`
+all three binaries report the release version, stages the tree, and builds the formats with `cargo-deb`
 (`--no-build`, version exactly `<version>`) and `cargo-generate-rpm`. Their metadata is in
 `linux/crates/cainary-tray/Cargo.toml`. The tarball has a stable file order, owner and times
 (`SOURCE_DATE_EPOCH`, default the HEAD commit time). Locally, `make linux LINUX_FORMATS=tar,deb,rpm`
@@ -192,7 +197,8 @@ Two crates are published at the release version: `cainary-core` (the library) an
 out `tests/`, because the tests read fixtures across both crates. `make publish-check` (also run
 in CI on Linux) runs `cargo publish --workspace --dry-run`. The release profile in the root
 `Cargo.toml` (size-tuned, LTO) applies to the release archives only; `cargo install` uses
-cargo's defaults.
+cargo's defaults. `cainary-net` (binary `cainary-otel-debug`) is `publish = false` for now: it ships
+only in the artifacts above, and `cargo publish --workspace` skips it.
 
 The `crates` job in `release.yml` publishes them with crates.io Trusted Publishing: the job runs
 in the `crates-io` environment, `rust-lang/crates-io-auth-action` exchanges the GitHub OIDC

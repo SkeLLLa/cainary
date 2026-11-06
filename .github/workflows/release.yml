@@ -360,6 +360,7 @@ jobs:
       - name: Bundle and sign the app
         env:
           CORE: target/universal/cainary
+          OTEL_DEBUG: target/universal/cainary-otel-debug
         run: packaging/bundle.sh
 
       - name: Remove signing keychain and certificate
@@ -426,7 +427,8 @@ jobs:
           security delete-keychain "${RUNNER_TEMP}/build.keychain-db" || true
 
   # --- Linux ---------------------------------------------------------------------------------
-  # The static musl CLI, once per architecture on a native runner; every Linux artifact ships it.
+  # The static musl CLI and debug collector, once per architecture on a native runner; every Linux
+  # artifact ships both.
   build-linux-cli:
     name: Build Linux CLI (${{ matrix.arch }})
     needs: prepare
@@ -475,18 +477,22 @@ jobs:
         run: |
           set -eu
           make linux-cli LINUX_ARCH=${{ matrix.arch }}
-          BIN="target/${{ matrix.arch }}-unknown-linux-musl/release/cainary"
-          file "${BIN}"
-          file "${BIN}" | grep -q static
-          test "$("${BIN}" --version)" = "cainary ${VERSION}"
+          for NAME in cainary cainary-otel-debug; do
+            BIN="target/${{ matrix.arch }}-unknown-linux-musl/release/${NAME}"
+            file "${BIN}"
+            file "${BIN}" | grep -q static
+            test "$("${BIN}" --version)" = "${NAME} ${VERSION}"
+          done
 
-      - name: Keep the CLI
+      - name: Keep the CLI and the debug collector
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-cli-${{ matrix.arch }}
           retention-days: 1
           if-no-files-found: error
-          path: target/${{ matrix.arch }}-unknown-linux-musl/release/cainary
+          path: |
+            target/${{ matrix.arch }}-unknown-linux-musl/release/cainary
+            target/${{ matrix.arch }}-unknown-linux-musl/release/cainary-otel-debug
 
   # The tray app links the distro's Qt, so each format is built in its distro: the tarball and
   # .deb on Debian trixie, the .rpm on the oldest supported Fedora.
@@ -563,8 +569,9 @@ jobs:
         run: |
           set -eu
           # Artifacts drop the executable bit.
-          chmod 755 cli/cainary
+          chmod 755 cli/cainary cli/cainary-otel-debug
           packaging/linux.sh --version "${VERSION}" --arch "${ARCH}" --cli cli/cainary \
+            --otel-debug cli/cainary-otel-debug \
             --tray linux/target/release/cainary-tray --formats "${FORMATS}" --out dist
 
       - name: Inspect the artifacts
@@ -1256,7 +1263,8 @@ jobs:
           echo "commit=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG_NAME}" --jq .sha)" >> "${GITHUB_OUTPUT}"
 
       # The manifest (packaging/packslip.toml) names the executables in each archive: the
-      # macOS bundle's helper, and bin/cainary and bin/cainary-tray in the Linux tarballs. Its
+      # macOS bundle's helpers, and bin/cainary, bin/cainary-otel-debug and bin/cainary-tray in the
+      # Linux tarballs. Its
       # paths are release-assets/<asset>, so the published assets are fetched there.
       - name: Fetch release tarballs and render the manifest
         env:

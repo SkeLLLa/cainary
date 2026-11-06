@@ -51,11 +51,11 @@ help:
 	@echo "  lint-actions    jactionlint on workflows and dependabot.yml (version in mise.toml)"
 	@echo "  check-rust      fmt --check, clippy -D warnings, cargo test"
 	@echo "  check           lint + test + ui-test (CI)"
-	@echo "  core-universal  release cainary for both Apple targets, lipo -> target/universal/cainary"
+	@echo "  core-universal  release cainary and cainary-otel-debug for both Apple targets, lipo -> target/universal/"
 	@echo "  app             build the SwiftUI app (macos/Sources)"
 	@echo "  bundle          assemble dist/cAInary.app and zip it"
 	@echo "  linux           Linux release artifacts in dist/ (LINUX_FORMATS=tar,deb,rpm; default tar)"
-	@echo "  linux-cli       static musl cainary for LINUX_ARCH (default: this machine)"
+	@echo "  linux-cli       static musl cainary and cainary-otel-debug for LINUX_ARCH (default: this machine)"
 	@echo "  linux-build     debug build of the Qt tray app (linux/)"
 	@echo "  linux-test      tray tests under dbus-run-session, QT_QPA_PLATFORM=offscreen"
 	@echo "  linux-fmt       cargo fmt for linux/ (in place)"
@@ -65,7 +65,7 @@ help:
 	@echo "  linux-run       run the tray app against the debug cainary (--dev)"
 	@echo "  ui-test         decode the Rust goldens through the Swift model"
 	@echo "  scan            scan this machine (smoke test, not golden-checked)"
-	@echo "  publish-check   cargo publish --dry-run for both crates (needs crates.io)"
+	@echo "  publish-check   cargo publish --dry-run for the published crates (needs crates.io)"
 	@echo "  clean           remove target, linux/target and dist"
 	@echo "cargo uses CARGO_HOME=$(or $(CARGO_HOME),~/.cargo)"
 
@@ -97,10 +97,12 @@ lint-actions:
 	jactionlint
 
 core-universal:
-	@for t in $(APPLE_TARGETS); do $(CARGO_CMD) build $(MANIFEST) --release --target $$t -p cainary || exit 1; done
+	@for t in $(APPLE_TARGETS); do $(CARGO_CMD) build $(MANIFEST) --release --target $$t -p cainary -p cainary-net || exit 1; done
 	mkdir -p target/universal
-	lipo -create -output target/universal/cainary \
-		$(foreach t,$(APPLE_TARGETS),target/$(t)/release/cainary)
+	@for b in cainary cainary-otel-debug; do \
+		lipo -create -output target/universal/$$b \
+			$(foreach t,$(APPLE_TARGETS),target/$(t)/release/$$b) || exit 1; \
+	done
 
 # Targets backed by scripts that later tasks add; they fail clearly until then.
 # The SwiftUI app: swiftc only (no SwiftPM, no Xcode). Host arch, -Onone and DEBUG by default;
@@ -133,23 +135,25 @@ app: $(SWIFT_SOURCES)
 
 
 # Assembles dist/cAInary.app. Debug helper by default; RELEASE=1 bundles the universal one.
-# CORE=... changes only the helper path that is bundled.
+# CORE=... and OTEL_DEBUG=... change only the helper paths that are bundled.
 ifdef RELEASE
 CORE ?= target/universal/cainary
+OTEL_DEBUG ?= target/universal/cainary-otel-debug
 BUNDLE_DEPS := app core-universal
 else
 CORE ?= target/debug/cainary
+OTEL_DEBUG ?= target/debug/cainary-otel-debug
 BUNDLE_DEPS := app build
 endif
 
 bundle: $(BUNDLE_DEPS)
-	CORE="$(CORE)" packaging/bundle.sh
+	CORE="$(CORE)" OTEL_DEBUG="$(OTEL_DEBUG)" packaging/bundle.sh
 
 # --- Linux -----------------------------------------------------------------------------------
-# The CLI is static musl from the root workspace; it runs on any distro. The tray app links the
+# The CLI and the debug collector are static musl from the root workspace; it runs on any distro. The tray app links the
 # distro's Qt 6, so it is built on (or in a container of) the distro it ships for.
 linux-cli:
-	$(CARGO_CMD) build $(MANIFEST) --release --locked --target $(LINUX_CLI_TARGET) -p cainary
+	$(CARGO_CMD) build $(MANIFEST) --release --locked --target $(LINUX_CLI_TARGET) -p cainary -p cainary-net
 
 linux-build:
 	$(CARGO_CMD) build $(LINUX_MANIFEST) --workspace
@@ -195,6 +199,7 @@ linux: linux-cli
 	$(CARGO_CMD) build $(LINUX_MANIFEST) --release --locked -p cainary-tray
 	packaging/linux.sh --version "$(CAINARY_VERSION)" --arch $(LINUX_ARCH) \
 		--cli target/$(LINUX_CLI_TARGET)/release/cainary \
+		--otel-debug target/$(LINUX_CLI_TARGET)/release/cainary-otel-debug \
 		--tray linux/target/release/cainary-tray \
 		--formats $(LINUX_FORMATS) --out dist
 

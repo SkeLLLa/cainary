@@ -5,6 +5,7 @@
 # Environment:
 #   APP_BIN  SwiftUI app binary (default: target/macos/cAInary)
 #   CORE     cainary helper binary (default: target/debug/cainary)
+#   OTEL_DEBUG  cainary-otel-debug helper binary (default: target/debug/cainary-otel-debug)
 #   OUT      output directory (default: dist)
 #   CODESIGN_IDENTITY  SHA-1 of a self-signed code-signing certificate in the keychain search
 #                      list (default: empty, ad-hoc signature). See docs/distribution.md#signing.
@@ -14,6 +15,7 @@ cd "$(dirname "$0")/.."
 
 APP_BIN="${APP_BIN:-target/macos/cAInary}"
 CORE="${CORE:-target/debug/cainary}"
+OTEL_DEBUG="${OTEL_DEBUG:-target/debug/cainary-otel-debug}"
 OUT="${OUT:-dist}"
 
 # --- 1. Version: Cargo.toml is the single source; a stale helper must not slip through ----
@@ -21,12 +23,17 @@ OUT="${OUT:-dist}"
 . packaging/ci/deps-lib.sh
 VERSION="$(toml_get Cargo.toml workspace package version)" || VERSION=""
 [ -n "$VERSION" ] || { echo "error: no [workspace.package] version in Cargo.toml" >&2; exit 1; }
-for f in "$APP_BIN" "$CORE"; do
+for f in "$APP_BIN" "$CORE" "$OTEL_DEBUG"; do
     [ -x "$f" ] || { echo "error: $f is missing or not executable" >&2; exit 1; }
 done
 CORE_VERSION="$("$CORE" --version)"
 if [ "$CORE_VERSION" != "cainary $VERSION" ]; then
     echo "error: $CORE reports '$CORE_VERSION', expected 'cainary $VERSION' (stale helper?)" >&2
+    exit 1
+fi
+OTEL_VERSION="$("$OTEL_DEBUG" --version)"
+if [ "$OTEL_VERSION" != "cainary-otel-debug $VERSION" ]; then
+    echo "error: $OTEL_DEBUG reports '$OTEL_VERSION', expected 'cainary-otel-debug $VERSION' (stale helper?)" >&2
     exit 1
 fi
 
@@ -38,6 +45,7 @@ rm -f "$ZIP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Resources"
 cp "$APP_BIN" "$APP/Contents/MacOS/cAInary"
 cp "$CORE" "$APP/Contents/Helpers/cainary"
+cp "$OTEL_DEBUG" "$APP/Contents/Helpers/cainary-otel-debug"
 # GPL text ships with the app; the About panel points at it.
 cp COPYING "$APP/Contents/Resources/COPYING"
 
@@ -67,6 +75,7 @@ plutil -lint "$APP/Contents/Info.plist"
 # An ad-hoc one pins the cdhash and changes with every build.
 BUNDLE_ID="ua.SkeLLLa.cAInary"
 HELPER_ID="$BUNDLE_ID.helper"
+OTEL_DEBUG_ID="$BUNDLE_ID.otel-debug"
 SIGN_ID="${CODESIGN_IDENTITY:-}"
 if [ -n "$SIGN_ID" ]; then
     case "$SIGN_ID" in
@@ -90,6 +99,7 @@ sign() { # <identifier> <path>
     fi
 }
 sign "$HELPER_ID" "$APP/Contents/Helpers/cainary"
+sign "$OTEL_DEBUG_ID" "$APP/Contents/Helpers/cainary-otel-debug"
 sign "$BUNDLE_ID" "$APP"
 codesign --verify --strict "$APP"
 # Fail unless both the signature and the designated requirement pin this identifier and leaf
@@ -104,6 +114,7 @@ check_pinned() { # <identifier> <path>
 if [ "$SIGN_ID" != "-" ]; then
     check_pinned "$BUNDLE_ID" "$APP"
     check_pinned "$HELPER_ID" "$APP/Contents/Helpers/cainary"
+    check_pinned "$OTEL_DEBUG_ID" "$APP/Contents/Helpers/cainary-otel-debug"
 fi
 
 # --- 5. Zip (--norsrc/--noextattr keep AppleDouble ._ files out) -------------

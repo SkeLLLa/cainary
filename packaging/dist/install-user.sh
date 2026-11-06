@@ -95,6 +95,6 @@ refresh_caches
 cat <<EOF
 Installed cAInary under $HOME_DIR/.local.
 
-Add $BIN_DIR to PATH to use cainary and cainary-tray from a terminal.
+Add $BIN_DIR to PATH to use cainary, cainary-otel-debug and cainary-tray from a terminal.
 The tray app can be configured to start at login from its Settings page.
 EOF

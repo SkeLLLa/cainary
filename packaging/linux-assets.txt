@@ -11,6 +11,7 @@
 # manifest, so linux/crates/cainary-tray/Cargo.toml repeats it by hand; tests/packaging.rs fails
 # when the tables and this file differ.
 755 bin/cainary usr/bin/cainary
+755 bin/cainary-otel-debug usr/bin/cainary-otel-debug
 755 bin/cainary-tray usr/bin/cainary-tray
 644 share/applications/ua.SkeLLLa.cAInary.desktop usr/share/applications/ua.SkeLLLa.cAInary.desktop
 644 share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml usr/share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml

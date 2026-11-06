@@ -14,7 +14,7 @@
 #   packaging/ci/linux-ci.sh inspect DIR VERSION ARCH
 #       check what packaging/linux.sh wrote to DIR: file lists, versions, dependencies
 #   packaging/ci/linux-ci.sh smoke deb|rpm|tar DIR
-#       install the artifact from DIR as a user would, then run both binaries
+#       install the artifact from DIR as a user would, then run its binaries
 #
 # Environment: CARGO_HOME and RUSTUP_HOME (the workflows set /usr/local/{cargo,rustup}); VERSION,
 # the version smoke expects (default: Cargo.toml's).
@@ -123,6 +123,7 @@ deps_package() {
 # --- inspect --------------------------------------------------------------------------------
 # Paths every format must ship, relative to the install prefix (/usr, or the tarball root).
 SHIPPED="bin/cainary
+bin/cainary-otel-debug
 bin/cainary-tray
 share/applications/ua.SkeLLLa.cAInary.desktop
 share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml
@@ -171,6 +172,9 @@ inspect() {
         tar -xzf "$tgz" -C "$x"
         [ "$("$x/$top/bin/cainary" --version)" = "cainary $version" ] || die "tarball cainary version"
         file "$x/$top/bin/cainary" | grep -q 'static' || die "tarball cainary is not static"
+        [ "$("$x/$top/bin/cainary-otel-debug" --version)" = "cainary-otel-debug $version" ] ||
+            die "tarball cainary-otel-debug version"
+        file "$x/$top/bin/cainary-otel-debug" | grep -q 'static' || die "tarball cainary-otel-debug is not static"
         rm -rf "$x"
     fi
 
@@ -255,6 +259,8 @@ smoke() {
     set -x
     [ "$(cainary --version)" = "cainary $version" ]
     cainary scan --json --env-kind launchd | jq -e .schema
+    [ "$(cainary-otel-debug --version)" = "cainary-otel-debug $version" ]
+    cainary-otel-debug --list-presets
     [ "$(cainary-tray --version)" = "cainary-tray $version" ]
     CAINARY_UI_SNAPSHOTS="$(mktemp -d)" QT_QPA_PLATFORM=offscreen cainary-tray --self-test
     set +x

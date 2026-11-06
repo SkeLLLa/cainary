@@ -1,6 +1,6 @@
 # Maintainer: SkeLLLa <https://github.com/SkeLLLa>
 #
-# cainary-bin: the prebuilt release tarball (static musl `cainary` CLI + Qt 6 `cainary-tray`).
+# cainary-bin: the prebuilt release tarball (static musl `cainary` CLI and `cainary-otel-debug` + Qt 6 `cainary-tray`).
 # The release workflow's `aur` job renders pkgver and the sha256sums from the release's
 # SHA256SUMS, runs `makepkg --printsrcinfo` and pushes to aur.archlinux.org. The values committed
 # here are placeholders for the next release; `updpkgsums` works too.
