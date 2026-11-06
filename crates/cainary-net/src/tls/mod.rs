@@ -20,23 +20,45 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// Why a handshake was refused: fixed categories only, never the name or a TLS error text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Why a handshake didn't complete: fixed categories only, never a name, a TLS error text or
+/// anything else the peer controls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Refusal {
-    /// No SNI, or one that isn't a configured host.
+    /// The client sent no SNI.
+    NoSni,
+    /// An SNI that isn't a configured host (the name is not kept).
     ServerName,
     /// The client offered ALPN protocols and `http/1.1` isn't among them.
     Alpn,
-    /// Anything else that went wrong before the first request: not TLS, a bad hello, a reset.
-    Handshake,
+    /// The client sent an alert saying it doesn't trust the certificate (unknown_ca,
+    /// bad_certificate, certificate_unknown, decrypt_error, ...).
+    ClientRejectedCertificate,
+    /// The first bytes weren't a TLS record: typically plain HTTP to the TLS port.
+    NotTls,
+    /// A TLS record, but malformed or out of order.
+    Protocol,
+    /// The client went away, or stalled past the deadline, before the handshake finished.
+    Closed,
 }
 
 impl Refusal {
-    pub fn message(self) -> &'static str {
+    /// The one-line explanation. `ca_path` is this run's own certificate path.
+    pub fn message(self, ca_path: &str) -> String {
         match self {
-            Refusal::ServerName => "tls handshake refused: server name missing or not configured",
-            Refusal::Alpn => "tls handshake refused: the client offers no http/1.1",
-            Refusal::Handshake => "tls handshake failed",
+            Refusal::NoSni => "tls handshake refused: no SNI (no server name sent)".into(),
+            Refusal::ServerName => "tls handshake refused: SNI not in --tls-host".into(),
+            Refusal::Alpn => {
+                "tls handshake refused: no common ALPN (this serves http/1.1 only)".into()
+            }
+            Refusal::ClientRejectedCertificate => format!(
+                "tls handshake failed: the client rejected the certificate (it doesn't trust the CA: start it with NODE_EXTRA_CA_CERTS={})",
+                crate::output::escape(ca_path)
+            ),
+            Refusal::NotTls => "tls handshake failed: not TLS (plain HTTP to the TLS port?)".into(),
+            Refusal::Protocol => "tls handshake failed: protocol error".into(),
+            Refusal::Closed => {
+                "tls handshake failed: the client closed the connection or stalled".into()
+            }
         }
     }
 }
@@ -112,10 +134,21 @@ impl Tls {
     /// Runs the handshake on `sock` (already deadline-clipped). On success the stream carries the
     /// accepted SNI, which is the only host the requests on it may name.
     pub(crate) fn accept(&self, mut sock: Clipped) -> Result<TlsStream, Refusal> {
+        // What a failed acceptor means depends on whether the first byte was a TLS record.
+        let bad_start = |sock: &Clipped| match sock.first_byte() {
+            Some(0x16) => Refusal::Protocol,
+            Some(_) => Refusal::NotTls,
+            None => Refusal::Closed,
+        };
+        // A read that ends or fails: the client left, unless what it sent wasn't TLS at all.
+        let cut_short = |sock: &Clipped| match sock.first_byte() {
+            Some(b) if b != 0x16 => Refusal::NotTls,
+            _ => Refusal::Closed,
+        };
         let mut acceptor = Acceptor::default();
         let accepted = loop {
             match acceptor.read_tls(&mut sock) {
-                Ok(0) | Err(_) => return Err(Refusal::Handshake),
+                Ok(0) | Err(_) => return Err(cut_short(&sock)),
                 Ok(_) => {}
             }
             match acceptor.accept() {
@@ -123,7 +156,7 @@ impl Tls {
                 Ok(None) => {}
                 Err((_, mut alert)) => {
                     let _ = alert.write(&mut sock);
-                    return Err(Refusal::Handshake);
+                    return Err(bad_start(&sock));
                 }
             }
         };
@@ -133,9 +166,12 @@ impl Tls {
             None => true,
             Some(mut it) => it.any(|p| p == b"http/1.1"),
         };
-        let Some(sni) = sni.filter(|n| self.ca.hosts().iter().any(|h| h == n)) else {
-            return Err(Refusal::ServerName);
+        let Some(sni) = sni else {
+            return Err(Refusal::NoSni);
         };
+        if !self.ca.hosts().iter().any(|h| *h == sni) {
+            return Err(Refusal::ServerName);
+        }
         if !alpn_ok {
             return Err(Refusal::Alpn);
         }
@@ -143,7 +179,7 @@ impl Tls {
             Ok(c) => c,
             Err((_, mut alert)) => {
                 let _ = alert.write(&mut sock);
-                return Err(Refusal::Handshake);
+                return Err(Refusal::Protocol);
             }
         };
         // Bounded buffers: rustls queues at most this much unsent or unread data.
@@ -151,11 +187,38 @@ impl Tls {
         let mut stream = StreamOwned::new(conn, sock);
         // Finish the handshake here, so a failure is a refusal and not a mysterious read error.
         while stream.conn.is_handshaking() {
-            if stream.conn.complete_io(&mut stream.sock).is_err() {
-                return Err(Refusal::Handshake);
+            if let Err(e) = stream.conn.complete_io(&mut stream.sock) {
+                return Err(classify_io(&e));
             }
         }
         Ok(TlsStream { inner: stream, sni })
+    }
+}
+
+/// A handshake I/O error as a category: an alert from the client about the certificate, a
+/// protocol violation, or the client simply going away.
+fn classify_io(e: &io::Error) -> Refusal {
+    use rustls::AlertDescription as A;
+    match e
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<rustls::Error>())
+    {
+        Some(rustls::Error::AlertReceived(a)) => match a {
+            A::UnknownCA
+            | A::BadCertificate
+            | A::UnsupportedCertificate
+            | A::CertificateRevoked
+            | A::CertificateExpired
+            | A::CertificateUnknown
+            | A::DecryptError
+            | A::AccessDenied
+            | A::BadCertificateStatusResponse
+            | A::BadCertificateHashValue => Refusal::ClientRejectedCertificate,
+            A::CloseNotify | A::UserCanceled => Refusal::Closed,
+            _ => Refusal::Protocol,
+        },
+        Some(_) => Refusal::Protocol,
+        None => Refusal::Closed,
     }
 }
 

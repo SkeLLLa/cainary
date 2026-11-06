@@ -127,6 +127,24 @@ impl ErrorEvent {
         }
     }
 
+    /// A TLS handshake category, with how many there were since the last line for it.
+    pub fn tls(message: &str, count: u64) -> ErrorEvent {
+        let mut m = Map::new();
+        m.insert("source".into(), json!("tls"));
+        m.insert("message".into(), json!(message));
+        if count > 1 {
+            m.insert("count".into(), json!(count));
+        }
+        ErrorEvent {
+            tail: tail(m),
+            text: if count > 1 {
+                format!("error tls: {message} (×{count})")
+            } else {
+                format!("error tls: {message}")
+            },
+        }
+    }
+
     pub fn other(source: &str, message: &str) -> ErrorEvent {
         let mut m = Map::new();
         m.insert("source".into(), json!(source));
@@ -346,7 +364,17 @@ pub fn run(queue: Arc<Queue>, cfg: Config) -> End {
         } else {
             out.log_line(&line("hello", &ts, None, &hello.tail()), &ts)?;
             // Text mode keeps stdout for the stream; the setup lines go to stderr.
-            writeln!(status, "listening on {}", hello.endpoint)?;
+            let scheme = hello.endpoint.split("://").next().unwrap_or("http");
+            let bound: Vec<String> = hello
+                .listen
+                .iter()
+                .filter(|l| !l.contains(" ("))
+                .map(|l| format!("{scheme}://{l}"))
+                .collect();
+            writeln!(status, "listening on {}", bound.join(" and "))?;
+            for note in hello.listen.iter().filter(|l| l.contains(" (")) {
+                writeln!(status, "not listening on {note}")?;
+            }
             write!(status, "{}", crate::setup::text(&hello.setup))?;
             status.flush()
         }

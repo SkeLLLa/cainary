@@ -377,8 +377,9 @@ machine, in a build with the `tls` cargo feature (release builds have it).
 cainary-otel-debug --tls --tls-host otel.example-corp.test --json
 ```
 
-It listens on loopback port 8443, makes a throwaway certificate authority that can only vouch for
-the names you gave (its key stays in memory), and prints what to do next, as commands for you to
+It listens on loopback port 8443, makes a throwaway certificate authority (its key stays in memory,
+and it only issues certificates for the names you gave; the certificate's own name constraints cover
+subdomains and depend on the client enforcing them), and prints what to do next, as commands for you to
 run: the `/etc/hosts` lines for that name, a loopback-only `nft` redirect from 443 to 8443 with its
 removal, and how to trust the certificate for the one process that exports telemetry:
 

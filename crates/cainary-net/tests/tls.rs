@@ -312,6 +312,15 @@ fn only_configured_names_complete_a_handshake() {
         assert!(m.starts_with("tls handshake refused"), "{m}");
         assert!(!m.contains("evil") && !run.out.text().contains("evil.example.test"));
     }
+    let msgs: Vec<&str> = errs
+        .iter()
+        .map(|e| e["message"].as_str().unwrap())
+        .collect();
+    assert!(
+        msgs.iter().any(|m| m.contains("SNI not in --tls-host")),
+        "{msgs:?}"
+    );
+    assert!(msgs.iter().any(|m| m.contains("no SNI")), "{msgs:?}");
     run.srv.shutdown();
     let _ = std::fs::remove_dir_all(&run.dir);
 }
@@ -344,7 +353,12 @@ fn plain_http_to_the_tls_port_fails_cleanly() {
     assert!(!String::from_utf8_lossy(&got).contains("HTTP/1.1"));
     let errs = run.out.wait_for("error", 1);
     assert_eq!(errs[0]["source"], "tls");
-    assert_eq!(errs[0]["message"], "tls handshake failed");
+    assert!(
+        errs[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("not TLS (plain HTTP to the TLS port?)")
+    );
     // The server still serves.
     assert_eq!(
         post(
@@ -894,6 +908,163 @@ fn capabilities_are_dropped_after_bind_in_plain_mode_too() {
     plain.shutdown();
     let run = start("caps");
     assert!(run.srv.caps_dropped);
+    run.srv.shutdown();
+    let _ = std::fs::remove_dir_all(&run.dir);
+}
+
+// ── handshake error categories (design §16.7, fixed messages, aggregated) ───────────────────
+
+fn tls_messages(run: &Run, n: usize) -> Vec<String> {
+    run.out
+        .wait_for("error", n)
+        .into_iter()
+        .filter(|e| e["source"] == "tls")
+        .map(|e| e["message"].as_str().unwrap().to_string())
+        .collect()
+}
+
+fn wait_tls(run: &Run, needle: &str) -> String {
+    let end = Instant::now() + Duration::from_secs(5);
+    loop {
+        let all: Vec<String> = run
+            .out
+            .lines()
+            .into_iter()
+            .filter(|e| e["type"] == "error" && e["source"] == "tls")
+            .map(|e| e["message"].as_str().unwrap().to_string())
+            .collect();
+        if let Some(m) = all.iter().find(|m| m.contains(needle)) {
+            return m.clone();
+        }
+        assert!(
+            Instant::now() < end,
+            "no tls error containing {needle:?}: {all:?}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn a_client_that_does_not_trust_the_ca_gets_a_message_that_says_how_to_fix_it() {
+    let run = start("unknown-ca");
+    // A client with some other root store: it sends an unknown_ca / bad_certificate alert.
+    let other = Tls::start(&["x.example.test".to_string()], &tmp("unknown-ca-other")).unwrap();
+    let other_pem = std::fs::read_to_string(&other.ca_path).unwrap();
+    let cfg = client_config(&other_pem, &[b"http/1.1"]);
+    assert!(connect(run.srv.addrs[0], &cfg, HOST).is_err());
+    let m = wait_tls(&run, "rejected the certificate");
+    assert!(m.contains("doesn't trust the CA"), "{m}");
+    assert!(
+        m.contains(&format!(
+            "NODE_EXTRA_CA_CERTS={}",
+            run.dir.join("otel-debug-ca.pem").display()
+        )),
+        "{m}"
+    );
+    run.srv.shutdown();
+    let _ = std::fs::remove_dir_all(&run.dir);
+    let _ = std::fs::remove_dir_all(tmp("unknown-ca-other"));
+}
+
+#[test]
+fn every_handshake_failure_category_has_its_own_fixed_message() {
+    let run = start("categories");
+    let a = run.srv.addrs[0];
+    let ok_cfg = client_config(&run.ca_pem, &[b"http/1.1"]);
+    // SNI not configured (the name is omitted), and no SNI.
+    assert!(connect(a, &ok_cfg, "evil.example.test").is_err());
+    assert!(connect(a, &ok_cfg, "127.0.0.1").is_err());
+    // No common ALPN.
+    assert!(connect(a, &client_config(&run.ca_pem, &[b"h2"]), HOST).is_err());
+    // Plain HTTP to the TLS port.
+    let mut s = TcpStream::connect(a).unwrap();
+    s.write_all(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+    let mut sink = Vec::new();
+    let _ = s.read_to_end(&mut sink);
+    // A TLS record header followed by nonsense: a protocol error, not "not TLS".
+    let mut s = TcpStream::connect(a).unwrap();
+    s.write_all(&[
+        0x16, 0x03, 0x03, 0x00, 0x08, 0x01, 0x00, 0x00, 0x04, 0xff, 0xff, 0xff, 0xff,
+    ])
+    .unwrap();
+    let mut sink = Vec::new();
+    let _ = s.read_to_end(&mut sink);
+    // A client that connects and leaves.
+    drop(TcpStream::connect(a).unwrap());
+    let sni = wait_tls(&run, "SNI not in --tls-host");
+    let no_sni = wait_tls(&run, "no SNI");
+    let alpn = wait_tls(&run, "no common ALPN");
+    let not_tls = wait_tls(&run, "not TLS (plain HTTP to the TLS port?)");
+    let proto = wait_tls(&run, "protocol error");
+    let closed = wait_tls(&run, "closed the connection or stalled");
+    for m in [&sni, &no_sni, &alpn, &not_tls, &proto, &closed] {
+        assert!(m.starts_with("tls handshake "), "{m}");
+        assert!(!m.contains("evil") && !m.contains("127.0.0.1"), "{m}");
+    }
+    let all = run.out.text();
+    assert!(!all.contains("evil.example.test"));
+    run.srv.shutdown();
+    let _ = std::fs::remove_dir_all(&run.dir);
+}
+
+#[test]
+fn a_retry_storm_is_one_line_per_category_with_a_count() {
+    let run = start_with("storm", |c| {
+        c.tunables.tls_error_window = Duration::from_millis(700)
+    });
+    let a = run.srv.addrs[0];
+    let cfg = client_config(&run.ca_pem, &[b"http/1.1"]);
+    for _ in 0..30 {
+        let _ = connect(a, &cfg, "evil.example.test");
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    let lines: Vec<Value> = run
+        .out
+        .lines()
+        .into_iter()
+        .filter(|e| e["type"] == "error" && e["source"] == "tls")
+        .collect();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    // After the window the next one reports how many were skipped.
+    std::thread::sleep(Duration::from_millis(800));
+    let _ = connect(a, &cfg, "evil.example.test");
+    let end = Instant::now() + Duration::from_secs(5);
+    loop {
+        let lines: Vec<Value> = run
+            .out
+            .lines()
+            .into_iter()
+            .filter(|e| e["type"] == "error" && e["source"] == "tls")
+            .collect();
+        if lines.len() == 2 {
+            assert_eq!(lines[1]["count"], 30, "29 skipped plus this one: {lines:?}");
+            break;
+        }
+        assert!(Instant::now() < end, "{lines:?}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    run.srv.shutdown();
+    let _ = std::fs::remove_dir_all(&run.dir);
+}
+
+#[test]
+fn the_endpoint_says_https_and_both_families_are_listed_by_default() {
+    let run = start_with("scheme", |c| c.listen.clear());
+    let h = &run.out.wait_for("hello", 1)[0];
+    assert!(
+        h["endpoint"]
+            .as_str()
+            .unwrap()
+            .starts_with("https://127.0.0.1:"),
+        "{h}"
+    );
+    let listen = h["listen"].as_array().unwrap();
+    assert!(listen.len() >= 2, "{listen:?}");
+    if run.srv.addrs.len() == 2 {
+        assert!(listen[1].as_str().unwrap().starts_with("[::1]:"));
+    } else {
+        assert!(listen[1].as_str().unwrap().contains("not available"));
+    }
     run.srv.shutdown();
     let _ = std::fs::remove_dir_all(&run.dir);
 }

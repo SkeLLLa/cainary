@@ -82,14 +82,24 @@ pub struct Takeover<'a> {
 pub fn takeover(t: &Takeover<'_>) -> Vec<String> {
     let mut l: Vec<String> = Vec::new();
     let p = t.port;
+    let redirect = p != t.public_port;
+    let mut step = 0;
+    let mut next = || {
+        step += 1;
+        step
+    };
     l.push("TLS takeover: read this first.".into());
     l.push("Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.".into());
+    l.push("Other programs that talk to these host names will fail their TLS handshake here; that is expected.".into());
     l.push(
         "The host names below are what you configured here, not an authenticated sender identity."
             .into(),
     );
     l.push(String::new());
-    l.push("1. Point the host names at loopback (add these lines to /etc/hosts as root):".into());
+    l.push(format!(
+        "{}. Point the host names at loopback (add these lines to /etc/hosts as root):",
+        next()
+    ));
     for h in t.hosts {
         if t.v4 {
             l.push(format!("  127.0.0.1 {h}"));
@@ -98,9 +108,10 @@ pub fn takeover(t: &Takeover<'_>) -> Vec<String> {
             l.push(format!("  ::1 {h}"));
         }
     }
-    if p != t.public_port {
+    if redirect {
         l.push(format!(
-            "2. Redirect port {} to {p}, for connections this machine makes to loopback (run these yourself; they are not run for you):",
+            "{}. Redirect port {} to {p}, for connections this machine makes to loopback (run these yourself; they are not run for you):",
+            next(),
             t.public_port
         ));
         l.push("  sudo nft add table inet cainary_otel_debug".into());
@@ -113,19 +124,23 @@ pub fn takeover(t: &Takeover<'_>) -> Vec<String> {
         }
         l.push(format!("   Or listen on {} directly: install this binary in a root-owned directory such as /usr/bin and run `sudo setcap cap_net_bind_service=+ep /usr/bin/cainary-otel-debug`. A rebuilt or copied file loses the capability, and the program drops it right after binding. Never run it as root.", t.public_port));
     }
-    l.push("3. Trust the certificate, for the exporting process only (never disable certificate verification):".into());
+    l.push(format!("{}. Trust the certificate, for the exporting process only (never disable certificate verification):", next()));
     l.push(format!(
         "  Claude Code: env NODE_EXTRA_CA_CERTS={} claude",
         t.ca_path
     ));
     l.push(format!("  Codex: set SSL_CERT_FILE={} or CODEX_CA_CERTIFICATE={} for the codex process (see its documentation for which it honors)", t.ca_path, t.ca_path));
     l.push(format!("  Certificate SHA-256: {}", t.fingerprint));
-    l.push("4. Start the exporting process after this certificate is published, and restart it after every run of this program: each run creates a new CA. Deleting the file does not revoke trust a process already loaded; `cainary-otel-debug --delete-ca` removes the file.".into());
-    l.push("Undo: remove the /etc/hosts lines, stop this program, and remove the redirect:".into());
-    if p != t.public_port {
+    l.push(format!("{}. Start the exporting process after this certificate is published, and restart it after every run of this program: each run creates a new CA. Deleting the file does not revoke trust a process already loaded; `cainary-otel-debug --delete-ca` removes the file.", next()));
+    if redirect {
+        l.push(
+            "Undo: remove the /etc/hosts lines, stop this program, and remove the redirect:".into(),
+        );
         l.push("  sudo nft delete table inet cainary_otel_debug".into());
+    } else {
+        l.push("Undo: remove the /etc/hosts lines and stop this program.".into());
     }
-    l.push("The certificate is only trusted for the names above, its key exists only in this process's memory, and it is never installed in a system trust store.".into());
+    l.push("The restriction to these names is enforced by this program: it issues certificates only for them and completes a handshake only for them. The certificate also carries name constraints, but those cover subdomains and depend on the client enforcing them. Its key exists only in this process's memory, and it is never installed in a system trust store.".into());
     l
 }
 
@@ -206,6 +221,41 @@ mod takeover_tests {
         assert!(!direct.contains("nft"));
     }
 
+    fn numbered(lines: &[String]) -> Vec<String> {
+        lines
+            .iter()
+            .filter_map(|l| l.split_once(". ").map(|(n, _)| n.to_string()))
+            .filter(|n| n.len() == 1 && n.chars().all(|c| c.is_ascii_digit()))
+            .collect()
+    }
+
+    #[test]
+    fn steps_are_numbered_without_gaps_and_undo_matches_the_redirect() {
+        let hosts = vec!["a.example.test".to_string()];
+        let with = takeover(&t(&hosts, 8443, true));
+        assert_eq!(numbered(&with), ["1", "2", "3", "4"]);
+        let u = with.iter().position(|l| l.starts_with("Undo:")).unwrap();
+        assert!(with[u].ends_with("remove the redirect:"));
+        assert_eq!(
+            with[u + 1],
+            "  sudo nft delete table inet cainary_otel_debug"
+        );
+        // Listening on the public port directly: no redirect step, no redirect in the undo.
+        let direct = takeover(&t(&hosts, 443, true));
+        assert_eq!(numbered(&direct), ["1", "2", "3"]);
+        let u = direct.iter().position(|l| l.starts_with("Undo:")).unwrap();
+        assert_eq!(
+            direct[u],
+            "Undo: remove the /etc/hosts lines and stop this program."
+        );
+        assert!(
+            !direct[u..]
+                .iter()
+                .any(|l| l.contains("redirect") && !l.contains("name constraints"))
+        );
+        assert!(!direct.iter().any(|l| l.contains("nft")));
+    }
+
     #[test]
     fn carries_the_warning_the_trust_lines_and_the_lifecycle() {
         let hosts = vec!["a.example.test".to_string()];
@@ -224,5 +274,9 @@ mod takeover_tests {
             assert!(s.contains(needle), "{needle}");
         }
         assert!(!s.to_lowercase().contains("private key:"));
+        assert!(s.contains("Other programs that talk to these host names will fail their TLS handshake here; that is expected."));
+        // The old over-promise is gone: the restriction is the program's, the constraints advisory.
+        assert!(!s.contains("only trusted for the names above"));
+        assert!(s.contains("depend on the client enforcing them"));
     }
 }

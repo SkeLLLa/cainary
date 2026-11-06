@@ -44,6 +44,8 @@ pub struct Tunables {
     pub error_window: Duration,
     /// Takeover mode: absolute time from accept for the handshake and the first request.
     pub first_request_deadline: Duration,
+    /// Takeover mode: at most one `error` line per handshake category in this window, with a count.
+    pub tls_error_window: Duration,
 }
 
 impl Default for Tunables {
@@ -61,6 +63,7 @@ impl Default for Tunables {
             limits: Limits::default(),
             error_window: Duration::from_secs(1),
             first_request_deadline: Duration::from_secs(30),
+            tls_error_window: Duration::from_secs(10),
         }
     }
 }
@@ -226,6 +229,8 @@ struct Shared {
     host_ports: Vec<u16>,
     #[cfg(feature = "tls")]
     tls: Option<crate::tls::Tls>,
+    #[cfg(feature = "tls")]
+    tls_seen: Mutex<std::collections::HashMap<crate::tls::Refusal, (Option<Instant>, u64)>>,
     active: Arc<AtomicUsize>,
     stop: Arc<AtomicBool>,
 }
@@ -333,9 +338,13 @@ pub fn run(cfg: Config) -> Result<Server, SetupError> {
     let queue = Queue::new(cfg.tunables.queue_items, cfg.tunables.queue_bytes);
     let stop = Arc::new(AtomicBool::new(false));
     let first = addrs[0];
+    #[cfg(feature = "tls")]
+    let scheme = if cfg.tls.is_some() { "https" } else { "http" };
+    #[cfg(not(feature = "tls"))]
+    let scheme = "http";
     let endpoint = match first.ip() {
-        IpAddr::V4(ip) => format!("http://{ip}:{port}"),
-        IpAddr::V6(ip) => format!("http://[{ip}]:{port}"),
+        IpAddr::V4(ip) => format!("{scheme}://{ip}:{port}"),
+        IpAddr::V6(ip) => format!("{scheme}://[{ip}]:{port}"),
     };
     let mut listen: Vec<String> = addrs.iter().map(SocketAddr::to_string).collect();
     listen.extend(notes);
@@ -437,6 +446,8 @@ pub fn run(cfg: Config) -> Result<Server, SetupError> {
         host_ports,
         #[cfg(feature = "tls")]
         tls: cfg.tls.map(|r| r.tls),
+        #[cfg(feature = "tls")]
+        tls_seen: Mutex::new(std::collections::HashMap::new()),
         active: Arc::new(AtomicUsize::new(0)),
         stop: Arc::clone(&stop),
     });
@@ -552,6 +563,8 @@ pub(crate) struct Clipped {
     until: Cell<Option<Instant>>,
     /// The current idle, request, write or linger deadline, set by the layer above.
     cap: Cell<Option<Instant>>,
+    /// The first byte the peer ever sent, to tell a TLS record from plain HTTP.
+    first: Cell<Option<u8>>,
 }
 
 #[cfg_attr(not(feature = "tls"), allow(dead_code))]
@@ -561,7 +574,12 @@ impl Clipped {
             tcp,
             until: Cell::new(Some(until)),
             cap: Cell::new(None),
+            first: Cell::new(None),
         }
+    }
+
+    pub(crate) fn first_byte(&self) -> Option<u8> {
+        self.first.get()
     }
 
     pub(crate) fn release_deadline(&self) {
@@ -599,7 +617,11 @@ impl Read for Clipped {
             let cur = self.tcp.read_timeout()?;
             self.tcp.set_read_timeout(clip(cur, Some(left)))?;
         }
-        (&self.tcp).read(buf)
+        let n = (&self.tcp).read(buf)?;
+        if n > 0 && self.first.get().is_none() {
+            self.first.set(Some(buf[0]));
+        }
+        Ok(n)
     }
 }
 
@@ -646,7 +668,7 @@ fn connection(stream: TcpStream, accepted_at: Instant, sh: &Shared) {
         let clipped = Clipped::new(stream, accepted_at + sh.t.first_request_deadline);
         match tls.accept(clipped) {
             Ok(s) => serve(s, sh),
-            Err(refusal) => sh.emit_error(ErrorEvent::other("tls", refusal.message())),
+            Err(refusal) => sh.emit_tls(refusal, &tls.ca_path.display().to_string()),
         }
         return;
     }
@@ -739,6 +761,30 @@ fn serve<S: Wire>(stream: S, sh: &Shared) {
 }
 
 impl Shared {
+    /// A handshake failure: one line per category per window, then a count of the ones skipped,
+    /// so a browser's retry storm can't flood the output.
+    #[cfg(feature = "tls")]
+    fn emit_tls(&self, r: crate::tls::Refusal, ca_path: &str) {
+        let now = Instant::now();
+        let n = {
+            let mut seen = self.tls_seen.lock().unwrap_or_else(|p| p.into_inner());
+            let e = seen.entry(r).or_insert((None, 0));
+            let due =
+                e.0.is_none_or(|t| now.duration_since(t) >= self.t.tls_error_window);
+            if due {
+                let n = e.1 + 1;
+                *e = (Some(now), 0);
+                Some(n)
+            } else {
+                e.1 += 1;
+                None
+            }
+        };
+        if let Some(n) = n {
+            self.emit_error(ErrorEvent::tls(&r.message(ca_path), n));
+        }
+    }
+
     /// A rejection's `error` line: best effort, rate-limited, never blocks for long.
     fn emit_error(&self, ev: ErrorEvent) {
         let (emit, summary) = {
