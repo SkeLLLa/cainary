@@ -16,3 +16,5 @@ pub mod server;
 pub mod setup;
 #[cfg(feature = "tls")]
 pub mod tls;
+#[cfg(feature = "tls")]
+pub mod trust;

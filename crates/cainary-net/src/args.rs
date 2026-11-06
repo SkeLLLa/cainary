@@ -14,6 +14,17 @@ pub enum Action {
     ListPresets,
     /// `--delete-ca`: remove the takeover CA's certificate file and exit.
     DeleteCa,
+    /// `--trust <target> [--dry-run] [--undo]` (design §17).
+    Trust {
+        target: TrustTarget,
+        dry_run: bool,
+        undo: bool,
+        json: bool,
+    },
+    /// `--trust-status`.
+    TrustStatus {
+        json: bool,
+    },
     Version,
     Help,
 }
@@ -72,6 +83,12 @@ impl Default for Options {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrustTarget {
+    ClaudeCode,
+    Codex,
+}
+
 /// A parse failure; `code` is the process exit code (2 for usage errors).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArgError {
@@ -120,6 +137,10 @@ pub fn parse(args: &[String]) -> Result<Action, ArgError> {
     let mut match_case: Vec<String> = Vec::new();
     let mut port_set = false;
     let mut delete_ca = false;
+    let mut trust: Option<TrustTarget> = None;
+    let mut dry_run = false;
+    let mut undo = false;
+    let mut trust_status = false;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         let (flag, inline) = match arg.split_once('=') {
@@ -152,6 +173,17 @@ pub fn parse(args: &[String]) -> Result<Action, ArgError> {
             }
             "--tls" if bare => o.tls = true,
             "--delete-ca" if bare => delete_ca = true,
+            "--trust" => {
+                let v = value()?;
+                trust = Some(match v.as_str() {
+                    "claude-code" => TrustTarget::ClaudeCode,
+                    "codex" => TrustTarget::Codex,
+                    _ => return Err(usage("--trust takes claude-code or codex")),
+                });
+            }
+            "--dry-run" if bare => dry_run = true,
+            "--undo" if bare => undo = true,
+            "--trust-status" if bare => trust_status = true,
             "--tls-host" => {
                 let h = value()?.to_ascii_lowercase();
                 if !crate::host::valid_host(&h) {
@@ -209,6 +241,28 @@ pub fn parse(args: &[String]) -> Result<Action, ArgError> {
 
     if delete_ca {
         return Ok(Action::DeleteCa);
+    }
+    if trust_status {
+        if trust.is_some() || dry_run || undo {
+            return Err(usage("--trust-status stands alone (with --json)"));
+        }
+        return Ok(Action::TrustStatus { json: o.json });
+    }
+    if let Some(target) = trust {
+        if dry_run && target == TrustTarget::Codex {
+            return Err(usage("--dry-run applies to --trust claude-code only"));
+        }
+        return Ok(Action::Trust {
+            target,
+            dry_run,
+            undo,
+            json: o.json,
+        });
+    }
+    if dry_run || undo {
+        return Err(usage(
+            "--dry-run and --undo go with --trust <claude-code|codex>",
+        ));
     }
     if o.tls && o.tls_hosts.is_empty() {
         return Err(usage("--tls needs at least one --tls-host <name>"));
@@ -462,5 +516,52 @@ mod tests {
             parse(&["--delete-ca".to_string()]).unwrap(),
             Action::DeleteCa
         );
+    }
+
+    #[test]
+    fn trust_flags() {
+        let p = |a: &[&str]| parse(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(
+            p(&["--trust", "claude-code"]).unwrap(),
+            Action::Trust {
+                target: TrustTarget::ClaudeCode,
+                dry_run: false,
+                undo: false,
+                json: false
+            }
+        );
+        assert_eq!(
+            p(&["--trust=claude-code", "--dry-run", "--undo", "--json"]).unwrap(),
+            Action::Trust {
+                target: TrustTarget::ClaudeCode,
+                dry_run: true,
+                undo: true,
+                json: true
+            }
+        );
+        assert_eq!(
+            p(&["--trust", "codex", "--undo"]).unwrap(),
+            Action::Trust {
+                target: TrustTarget::Codex,
+                dry_run: false,
+                undo: true,
+                json: false
+            }
+        );
+        assert_eq!(
+            p(&["--trust-status", "--json"]).unwrap(),
+            Action::TrustStatus { json: true }
+        );
+        for bad in [
+            vec!["--trust", "nope"],
+            vec!["--trust"],
+            vec!["--trust", "codex", "--dry-run"],
+            vec!["--dry-run"],
+            vec!["--undo"],
+            vec!["--trust-status", "--trust", "codex"],
+            vec!["--trust-status", "--undo"],
+        ] {
+            assert_eq!(p(&bad).unwrap_err().code, 2, "{bad:?}");
+        }
     }
 }

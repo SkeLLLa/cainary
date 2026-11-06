@@ -1098,3 +1098,223 @@ fn a_state_path_with_dotdot_or_a_relative_one_is_refused_with_exit_1() {
     );
     let _ = std::fs::remove_dir_all(&base);
 }
+
+// ── --trust ────────────────────────────────────────────────────────────────────────────────
+
+fn trust_bin(home: &Path) -> Command {
+    let mut c = Command::new(env!("CARGO_BIN_EXE_cainary-otel-debug"));
+    c.env("HOME", home)
+        .env("XDG_STATE_HOME", home.join("state"))
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .env_remove("NODE_EXTRA_CA_CERTS");
+    c
+}
+
+fn json_line(out: &std::process::Output) -> Value {
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(text.lines().count(), 1, "{text}");
+    serde_json::from_str(text.trim()).unwrap()
+}
+
+#[test]
+fn trust_through_the_binary_applies_reports_and_undoes() {
+    let home = tmp("trust-bin");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let settings = home.join(".claude/settings.json");
+    let ca = home.join("state/cainary/otel-debug-ca.pem");
+
+    let st = json_line(
+        &trust_bin(&home)
+            .args(["--trust-status", "--json"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(st["type"], "trust-status");
+    assert_eq!(st["claudeCode"]["state"], "absent");
+    assert_eq!(st["codex"]["state"], "absent");
+    assert_eq!(st["caPath"], ca.display().to_string());
+
+    // Preview: exit 0, nothing written.
+    let out = trust_bin(&home)
+        .args(["--trust", "claude-code", "--dry-run", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let v = json_line(&out);
+    assert_eq!(
+        (v["type"].clone(), v["target"].clone(), v["action"].clone()),
+        (json!("trust"), json!("claude-code"), json!("preview"))
+    );
+    assert_eq!(v["key"], "NODE_EXTRA_CA_CERTS");
+    assert_eq!(v["to"], ca.display().to_string());
+    assert!(!settings.exists());
+
+    // Apply, then again (already), then the status, then undo.
+    let out = trust_bin(&home)
+        .args(["--trust", "claude-code", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(json_line(&out)["action"], "applied");
+    let written: Value =
+        serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+    assert_eq!(
+        written["env"]["NODE_EXTRA_CA_CERTS"],
+        ca.display().to_string()
+    );
+    assert_eq!(
+        json_line(
+            &trust_bin(&home)
+                .args(["--trust", "claude-code", "--json"])
+                .output()
+                .unwrap()
+        )["action"],
+        "already"
+    );
+    assert_eq!(
+        json_line(
+            &trust_bin(&home)
+                .args(["--trust-status", "--json"])
+                .output()
+                .unwrap()
+        )["claudeCode"]["state"],
+        "applied"
+    );
+    let out = trust_bin(&home)
+        .args(["--trust", "claude-code", "--undo", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(json_line(&out)["action"], "undone");
+    assert!(!settings.exists(), "the file cAInary created is removed");
+    assert_eq!(
+        json_line(
+            &trust_bin(&home)
+                .args(["--trust", "claude-code", "--undo", "--json"])
+                .output()
+                .unwrap()
+        )["action"],
+        "nothing-to-undo"
+    );
+
+    // A refusal exits 1 and still prints one line.
+    std::fs::create_dir_all(home.join(".claude")).unwrap();
+    std::fs::write(&settings, "{ not json").unwrap();
+    let out = trust_bin(&home)
+        .args(["--trust", "claude-code", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(json_line(&out)["action"], "refused");
+
+    // Without --json it is text, and a bad target is a usage error.
+    let out = trust_bin(&home)
+        .args(["--trust", "claude-code", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("refused:"));
+    assert_eq!(
+        trust_bin(&home)
+            .args(["--trust", "vim"])
+            .output()
+            .unwrap()
+            .status
+            .code(),
+        Some(2)
+    );
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn each_tls_start_regenerates_the_combined_bundle_at_the_same_path() {
+    let home = tmp("trust-refresh");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let cert = |pem: &str| -> Vec<Vec<u8>> {
+        CertificateDer::pem_slice_iter(pem.as_bytes())
+            .map(|c| c.unwrap().to_vec())
+            .collect()
+    };
+    let start = |home: &Path| {
+        let mut child = trust_bin(home)
+            .args([
+                "--tls",
+                "--tls-host",
+                HOST,
+                "--port",
+                "0",
+                "--listen",
+                "127.0.0.1",
+                "--json",
+                "--exit-on-stdin-eof",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut out = std::io::BufReader::new(child.stdout.take().unwrap());
+        let mut l = String::new();
+        out.read_line(&mut l).unwrap();
+        drop(child.stdin.take());
+        child.wait().unwrap();
+    };
+    // The user's own bundle: another path already in the settings.
+    let mine = home.join("corp.pem");
+    let corp = rcgen_cert("corp root");
+    std::fs::write(&mine, &corp).unwrap();
+    std::fs::create_dir_all(home.join(".claude")).unwrap();
+    std::fs::write(
+        home.join(".claude/settings.json"),
+        format!(
+            "{{\"env\":{{\"NODE_EXTRA_CA_CERTS\":\"{}\"}}}}\n",
+            mine.display()
+        ),
+    )
+    .unwrap();
+    start(&home); // publishes the first CA
+    let out = trust_bin(&home)
+        .args(["--trust", "claude-code", "--json"])
+        .output()
+        .unwrap();
+    let v = json_line(&out);
+    assert_eq!(v["action"], "applied", "{v}");
+    let bundle = PathBuf::from(v["bundlePath"].as_str().unwrap());
+    let ca_file = home.join("state/cainary/otel-debug-ca.pem");
+    let first_ca = cert(&std::fs::read_to_string(&ca_file).unwrap());
+    let b1 = cert(&std::fs::read_to_string(&bundle).unwrap());
+    assert_eq!(b1.len(), 2);
+    assert_eq!(
+        b1[1], first_ca[0],
+        "the collector certificate is last, and once"
+    );
+    // A second run makes a new CA; the bundle at the same path now has the new one.
+    start(&home);
+    let second_ca = cert(&std::fs::read_to_string(&ca_file).unwrap());
+    assert_ne!(first_ca, second_ca);
+    let b2 = cert(&std::fs::read_to_string(&bundle).unwrap());
+    assert_eq!(b2.len(), 2);
+    assert_eq!(b2[1], second_ca[0]);
+    assert_eq!(b2[0], b1[0], "the user's certificate is kept");
+    let settings: Value =
+        serde_json::from_str(&std::fs::read_to_string(home.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        settings["env"]["NODE_EXTRA_CA_CERTS"],
+        bundle.display().to_string()
+    );
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+/// A throwaway certificate in PEM, for a user's pre-existing bundle.
+fn rcgen_cert(name: &str) -> String {
+    let t = Tls::start(
+        &[format!("{}.example.test", name.replace(' ', "-"))],
+        &tmp("rcgen-cert"),
+    )
+    .unwrap();
+    let pem = std::fs::read_to_string(&t.ca_path).unwrap();
+    drop(t);
+    let _ = std::fs::remove_dir_all(tmp("rcgen-cert"));
+    pem
+}

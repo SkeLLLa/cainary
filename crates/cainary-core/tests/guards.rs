@@ -173,13 +173,14 @@ const NET_REDFLAG_FILE: &str = "cainary-net/src/redflag/file.rs";
 const NET_TLS: &str = "cainary-net/src/tls/";
 const NET_CA_FILE: &str = "cainary-net/src/tls/ca_file.rs";
 const NET_TLS_MOD: &str = "cainary-net/src/tls/mod.rs";
+const NET_TRUST: &str = "cainary-net/src/trust.rs";
 const NET_PRIVDROP: &str = "cainary-net/src/tls/privdrop.rs";
 const NET_MAIN: &str = "cainary-net/src/main.rs";
 
 /// Files in the net crate that may call `libc`: the log file (open flags, uid), the CA file
 /// (same) and the capability drop.
 fn net_libc_ok(rel: &str) -> bool {
-    rel == NET_LOGFILE || rel == NET_CA_FILE || rel == NET_PRIVDROP
+    rel == NET_LOGFILE || rel == NET_CA_FILE || rel == NET_PRIVDROP || rel == NET_TRUST
 }
 
 fn in_net(rel: &str) -> bool {
@@ -381,7 +382,12 @@ fn check_n2(srcs: &[Src]) -> Vec<String> {
     for s in srcs.iter().filter(|s| in_net(&s.rel)) {
         for hit in banned_std_modules(&s.code) {
             let allowed = match hit.trim_start_matches("std::").trim_matches(['{', '}']) {
-                "fs" => s.rel == NET_LOGFILE || s.rel == NET_REDFLAG_FILE || s.rel == NET_CA_FILE,
+                "fs" => {
+                    s.rel == NET_LOGFILE
+                        || s.rel == NET_REDFLAG_FILE
+                        || s.rel == NET_CA_FILE
+                        || s.rel == NET_TRUST
+                }
                 "env" | "process" => s.rel == NET_MAIN,
                 _ => true, // `net` is N1's
             };
@@ -389,7 +395,7 @@ fn check_n2(srcs: &[Src]) -> Vec<String> {
                 bad.push(format!("{}: {hit} outside its allowed file", s.rel));
             }
         }
-        if s.rel != NET_LOGFILE && s.rel != NET_CA_FILE {
+        if s.rel != NET_LOGFILE && s.rel != NET_CA_FILE && s.rel != NET_TRUST {
             let code = squash(&s.code);
             if s.code.contains("OpenOptions") {
                 bad.push(format!("{}: OpenOptions outside logfile.rs", s.rel));
@@ -411,7 +417,8 @@ fn check_n2(srcs: &[Src]) -> Vec<String> {
 }
 
 /// N3: no `Command` and no `libc::` in the net crate, except `libc::` in `logfile.rs` and
-/// `tls/ca_file.rs` (open flags, uid, flock) and `tls/privdrop.rs` (capabilities). Guard 3's "exactly once" also counts `Command::new`.
+/// `tls/ca_file.rs` (open flags, uid, flock), `trust.rs` (the same, for the Claude Code settings edit) and
+/// `tls/privdrop.rs` (capabilities). Guard 3's "exactly once" also counts `Command::new`.
 fn check_n3(srcs: &[Src]) -> Vec<String> {
     let mut bad = Vec::new();
     for s in srcs.iter().filter(|s| in_net(&s.rel)) {
@@ -1299,5 +1306,34 @@ mod fires {
         let hidden = "#[cfg(test)]\nmod tests {\n}\npub fn sneaky() { std::fs::write(a, b); }\n";
         assert!(!production_code(hidden).contains("sneaky"));
         assert!(!check_tests_last(&one(hidden)).is_empty());
+    }
+
+    #[test]
+    fn trust_rs_is_the_one_extra_writer() {
+        let code = "use std::fs::File;\nlet f = OpenOptions::new(); std::fs::write(p, b); libc::openat(1, p, 2);";
+        assert!(check_n2(&net("trust.rs", code)).is_empty());
+        assert!(check_n3(&net("trust.rs", "libc::renameat(1, a, 1, b);")).is_empty());
+        let mut s = net("trust.rs", "libc::unlinkat(1, a, 0);");
+        s.extend(src(PLATFORM_RS, "Command::new(\"/usr/sbin/scutil\");"));
+        assert!(check_guard3(&s).is_empty());
+        // Nobody else gets the same powers, and trust.rs gets no network or process access.
+        for rel in ["setup.rs", "output.rs", "args.rs", "otlp.rs", "tls/leaf.rs"] {
+            assert!(
+                !check_n2(&net(rel, "use std::fs::File;")).is_empty(),
+                "{rel}"
+            );
+            assert!(
+                !check_n2(&net(rel, "let f = OpenOptions::new();")).is_empty(),
+                "{rel}"
+            );
+            assert!(
+                !check_n3(&net(rel, "libc::unlinkat(1, a, 0);")).is_empty(),
+                "{rel}"
+            );
+        }
+        assert!(!check_n2(&net("trust.rs", "use std::process::exit;")).is_empty());
+        assert!(!check_n2(&net("trust.rs", "let a = std::env::args();")).is_empty());
+        assert!(!check_n1(&net("trust.rs", "use std::net::TcpStream;")).is_empty());
+        assert!(!check_n3(&net("trust.rs", "let c = Command::new(\"ls\");")).is_empty());
     }
 }

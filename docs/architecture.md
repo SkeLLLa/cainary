@@ -29,8 +29,12 @@ Design rules, in priority order:
    One opt-in mode of that program, `--tls` (the endpoint takeover, §12.10), also accepts TLS
    connections on loopback, still inbound-only, and writes the *public* certificate of a
    throwaway CA to the user's state directory (the private key never leaves memory). It forwards
-   nothing and never connects out. Guards (§10) keep network code out of `cainary-core` and
-   `cainary-cli`.
+   nothing and never connects out. On an explicit user action only (the `--trust claude-code`
+   command or the GUI's confirm button), `cainary-otel-debug` sets one key,
+   `env.NODE_EXTRA_CA_CERTS`, in the user's `~/.claude/settings.json`, after a backup, and can
+   undo it. It never edits Codex configuration, shell profiles or any system trust store.
+   `cainary` itself still writes nothing outside its prefs. Guards (§10) keep network code out of
+   `cainary-core` and `cainary-cli`.
 2. **Truthful.** Every rule cites an official vendor doc. A rule that isn't confirmed by one is
    marked best effort (`maybe`) and worded "may". A source that could not be read, was refused,
    or was cut off by a cap makes the scan *incomplete*, never *clear*. A wrong result is the
@@ -1076,6 +1080,9 @@ cainary-otel-debug [--port <n>] [--listen <ip>]... [--json] [--show-values] [--o
                    [--red-flags <file>] [--preset <name>]... [--no-default-red-flags] [--list-presets]
                    [--exit-on-stdin-eof] [--config-stdin]
                    [--tls --tls-host <name>... [--tls-public-port <n>]]
+cainary-otel-debug --trust claude-code [--dry-run] [--undo] [--json]
+cainary-otel-debug --trust codex [--undo] [--json]
+cainary-otel-debug --trust-status [--json]
 cainary-otel-debug --delete-ca
 cainary-otel-debug --version | --help
 ```
@@ -1094,6 +1101,7 @@ cainary-otel-debug --version | --help
 | `--preset`, `--no-default-red-flags`, `--list-presets` | enable a preset (also a default-off one), start from none, list the built-ins |
 | `--exit-on-stdin-eof` | a thread reads stdin and exits 0 at EOF or a read error (§12.7) |
 | `--config-stdin` | the first stdin line is a JSON config (§12.7); implies `--exit-on-stdin-eof` |
+| `--trust <claude-code\|codex>`, `--dry-run`, `--undo`, `--trust-status` | let a client trust the takeover CA (§12.11); `--dry-run` is for `claude-code` only; all need the `tls` feature |
 | `--tls`, `--tls-host`, `--tls-public-port`, `--delete-ca` | the endpoint takeover (§12.10); needs a build with the `tls` cargo feature, else exit 2 "this build has no TLS support (cargo feature `tls`)". `--tls` defaults `--port` to 8443 |
 
 `--flag=value` works as in `cainary`. A pattern name matches `^[a-z0-9][a-z0-9_-]{0,63}$`. A
@@ -1266,6 +1274,8 @@ true` is set, and the `summary` always stays.
 | `hello` (first line) | `generator` (`cainary-otel-debug <version>`), `mode` (`receiver`, or `tls-receiver` for the takeover), `listen` (bound addresses, plus a note for any that couldn't bind), `endpoint` (`http://127.0.0.1:4318`), `showValues`, `logFile` (path or `null`), `redFlags` (`[{name, kind, preset, caseSensitive}]`), `tls` (takeover only: `{hosts, ca: {path, sha256}}`, host names as the user configured them, not a sender identity), `setup` (`{claudeCode: [...], codex: [...], notes: [...], takeover?: [...]}`, the §12.8 lines with the real endpoint; in takeover mode `claudeCode` and `codex` hold the certificate-trust variables and `takeover` the instructions of §12.10) |
 | `batch` | `seq`, `signal` (`logs`, `metrics`, `traces`), `path` (`/v1/<signal>`, or the fixed marker `<custom path>` in takeover mode: request paths are never printed), `host` (takeover only: the validated host name), `bytes`, `vendor` (`claude-code`, `codex` or `null`), `service` (`{name, version}` or `null`), `catalog` (the catalog label or `null`), `records`, `notInCatalog`, `summary`, `resources` or `resourcesOmitted`, and `scanIncomplete` when set |
 | `alert` | `seq`, `pattern`, `preset`, `signal`, `event` (record name or `null`), `events` (up to 8 names), `attribute` (key label or `null`), `where` (`key`, `value`, `body`, `resource`, `scope` or `name`), `count`, `match` |
+| `trust` | one per `--trust` call: `target` (`claude-code`, `codex`), `action` (`preview`, `applied`, `already`, `undone`, `nothing-to-undo`, `refused`), `message` (fixed text), `settingsPath`, `backupPath`, `key` (`NODE_EXTRA_CA_CERTS` or `null`), `from`, `to`, `bundlePath`, `command` (`null` where not applicable) |
+| `trust-status` | `claudeCode` (`{state: applied\|absent\|other-value\|managed, settingsPath, value}`), `codex` (`{state: ready\|absent, bundlePath, command}`), `caPath` |
 | `error` | `source`, then either `status`, `method`, `path`, `message` (for `http`) or `dropped`, `message`, or `message` alone |
 
 - `summary` is `{identity: [keys], resource: [keys], records: [{name, kind, count, known, what?,
@@ -1403,3 +1413,49 @@ users who can't change how the agent is launched. It is built only with the `tls
   Codex variables, the certificate's SHA-256, and the lifecycle (start the exporter after the
   certificate is published and restart it after every run, since each run makes a new CA;
   deleting the file doesn't revoke trust a process already loaded).
+
+### 12.11 Trusting the takeover CA (`--trust`, `src/trust.rs`)
+
+The exporting process has to trust the takeover's CA, and the CA changes at every start. `--trust`
+makes that a one-time step. It is the only code that edits another program's file, on an explicit
+action only, and it needs the `tls` feature.
+
+- **Claude Code** (`--trust claude-code [--dry-run] [--undo]`). Sets `env.NODE_EXTRA_CA_CERTS` in
+  the user's `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR`) to the collector CA path, and
+  nothing else. If the key already holds another path, it is never overwritten with ours alone: a
+  combined bundle (that file's certificates plus the collector's, last and exactly once) is written
+  as `otel-debug-claude-bundle.pem` next to the CA, and the key points there. If your shell sets
+  `NODE_EXTRA_CA_CERTS` the message says so (the shell value wins). If managed settings set the
+  key (resolved with the core's Claude Code configuration resolution, in-process and read-only),
+  it refuses: they override this.
+- **File safety.** The directory is opened through a descriptor and validated (the same
+  root-down walk as the CA directory; a group-writable settings directory is accepted, one others
+  can write is not); the file is refused if it is a symlink, not yours, not a regular one-link file,
+  over 1 MiB, or not a valid JSON object. Key order is kept (`preserve_order`), with 2-space
+  indentation and a trailing newline. The original is first copied to
+  `settings.json.cainary-<UTC yyyymmddThhmmssZ>.bak` (0600, same directory, never overwriting one),
+  the new file is written to a `create_new | O_NOFOLLOW` temporary in that directory and renamed
+  over. A missing file is created with only `{"env": {…}}` (no backup then). If the state file can't
+  be written the settings are put back.
+- **State and undo.** `otel-debug-trust.json` (0600) next to the CA records the settings path, the
+  original value, what was written, and whether the file and the `env` object were created. `--undo`
+  acts only when the current value is the one it wrote: it restores the original or removes the
+  key, drops an `env` it created if empty, deletes a file it created if now `{}` (a backup of the
+  state before the change is made first), and removes its bundle. Otherwise it answers
+  `nothing-to-undo` (no record) or `refused` (the value changed since).
+- **Codex** (`--trust codex [--undo]`). Writes `otel-debug-codex-bundle.pem` (0644): the system
+  roots (first existing of `/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem`,
+  `/etc/ssl/certs/ca-certificates.crt`, `/etc/ssl/cert.pem`) plus the collector CA, and returns
+  `env CODEX_CA_CERTIFICATE=<quoted path> codex`. Codex replaces the system roots with that one
+  bundle, hence the combined file. No Codex configuration or shell file is touched; `--undo`
+  deletes the bundle.
+- **Each `--tls` start** regenerates the recorded bundles from their originals plus the new CA,
+  so the paths never change; the client still has to be restarted. Nothing is refreshed, and a
+  warning is printed, if a source file has gone.
+- **Reading other bundles.** The harness refuses `*.pem` by design, so a bundle the user already
+  points at, and the system roots, are read by `read_certs`: a regular file of at most 2 MiB that
+  others can't write, symlinks followed, certificate blocks only, and a file that contains a
+  private key is refused outright.
+- **Output.** One `trust` line per call (§12.6), exit 0 for everything but `refused` (1);
+  `--trust-status` prints one `trust-status` line. Without `--json` both print text. `--dry-run`
+  prints exactly what would change; the apps show that text in their confirmation dialog.

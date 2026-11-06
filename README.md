@@ -399,7 +399,29 @@ removal, and how to trust the certificate for the one process that exports telem
 env NODE_EXTRA_CA_CERTS=$HOME/.local/state/cainary/otel-debug-ca.pem claude -p hi
 ```
 
-Start the exporting process after the program prints its certificate path, and restart it after
+To let Claude Code trust the certificate without exporting a variable each time, the apps have a
+button, and the command line has the same step. It changes one key, `env.NODE_EXTRA_CA_CERTS`, in
+`~/.claude/settings.json`, after a backup, and can undo it:
+
+```fish
+cainary-otel-debug --trust claude-code --dry-run   # shows exactly what would change
+cainary-otel-debug --trust claude-code             # does it (and the apps ask you to confirm first)
+cainary-otel-debug --trust-status
+cainary-otel-debug --trust claude-code --undo
+```
+
+If that key already points at another file, the program makes a combined bundle (your file plus the
+collector's certificate) and points the key at that; if your organization's managed settings set the
+key, it refuses. For Codex, `cainary-otel-debug --trust codex` writes a combined certificate bundle
+and prints the command that uses it (it never edits Codex's configuration or your shell profile):
+
+```fish
+cainary-otel-debug --trust codex
+env CODEX_CA_CERTIFICATE=$HOME/.local/state/cainary/otel-debug-codex-bundle.pem codex
+```
+
+The no-write alternative is to set the variable for one run, as above. Either way, start the
+exporting process after the program prints its certificate path, and restart it after
 every run (each run makes a new authority). `cainary-otel-debug --delete-ca` removes the certificate
 file; a process that already loaded it keeps trusting it until it exits. It never runs `sudo`,
 `setcap` or `nft` itself, and it writes only that public certificate file. See

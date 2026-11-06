@@ -160,7 +160,7 @@ impl CaDir {
     ///   only a few such links are followed.
     /// - With `create`, missing directories are made with `mkdirat(0700)` and reopened through
     ///   the same checks. Without it, a missing one is `Ok(None)`.
-    fn walk(dir: &Path, create: bool) -> Result<Option<CaDir>, CaFileError> {
+    fn walk(dir: &Path, create: bool, group_ok: bool) -> Result<Option<CaDir>, CaFileError> {
         use std::path::Component;
         if !dir.is_absolute() {
             return failed(format!(
@@ -280,7 +280,14 @@ impl CaDir {
             let last = todo.is_empty();
             let group_other_write = st.mode & 0o022 != 0;
             let ok = if last && depth >= total {
-                st.uid == me && !group_other_write
+                // The settings directory of another program may be group-writable (user-private
+                // groups under umask 002): `group_ok` still refuses anything other can write.
+                let bad_write = if group_ok {
+                    st.mode & 0o002 != 0
+                } else {
+                    group_other_write
+                };
+                st.uid == me && !bad_write
             } else {
                 (st.uid == 0 || st.uid == me) && (!group_other_write || st.mode & 0o1000 != 0)
             };
@@ -304,7 +311,26 @@ impl CaDir {
     }
 
     pub fn open(dir: &Path) -> Result<CaDir, CaFileError> {
-        Ok(CaDir::walk(dir, true)?.expect("create always yields a directory"))
+        Ok(CaDir::walk(dir, true, false)?.expect("create always yields a directory"))
+    }
+
+    /// The same walk for a directory that is not ours to create or tighten (`~/.claude`):
+    /// `create` makes it 0700 if missing; a group-writable final directory is accepted.
+    pub(crate) fn open_shared(dir: &Path, create: bool) -> Result<Option<CaDir>, CaFileError> {
+        CaDir::walk(dir, create, true)
+    }
+
+    /// An existing certificate directory, strictly validated (never created).
+    pub(crate) fn open_existing(dir: &Path) -> Result<Option<CaDir>, CaFileError> {
+        CaDir::walk(dir, false, false)
+    }
+
+    pub(crate) fn raw_fd(&self) -> std::os::fd::RawFd {
+        self.fd.as_raw_fd()
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.dir
     }
 
     fn exists(&self, name: &str) -> bool {
@@ -420,7 +446,7 @@ pub fn publish(dir: &Path, pem: &str) -> Result<Published, CaFileError> {
 
 /// `--delete-ca`: removes the certificate file. Refuses while a run holds the lock.
 pub fn delete(dir: &Path) -> Result<bool, CaFileError> {
-    let Some(d) = CaDir::walk(dir, false)? else {
+    let Some(d) = CaDir::walk(dir, false, false)? else {
         return Ok(false);
     };
     let _lock = d.lock()?;

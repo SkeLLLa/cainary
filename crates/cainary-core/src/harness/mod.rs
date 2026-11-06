@@ -24,6 +24,12 @@ pub struct Loc {
 }
 
 impl Loc {
+    /// The physical path, for a caller that must open the location itself (the collector's
+    /// `--trust`, which edits one key and so can't go through the read-only harness).
+    pub fn path(&self) -> &Path {
+        &self.physical
+    }
+
     /// A child of this location. `rel` is a relative path such as `settings.json`.
     pub fn join(&self, rel: &str) -> Loc {
         let rel = rel.trim_start_matches('/');

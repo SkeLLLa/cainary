@@ -20,6 +20,9 @@ usage:
                      [--red-flags <file>] [--preset <name>]... [--no-default-red-flags] [--list-presets]
                      [--exit-on-stdin-eof] [--config-stdin]
                      [--tls --tls-host <name>... [--tls-public-port <n>]]
+  cainary-otel-debug --trust claude-code [--dry-run] [--undo] [--json]
+  cainary-otel-debug --trust codex [--undo] [--json]
+  cainary-otel-debug --trust-status [--json]
   cainary-otel-debug --delete-ca
   cainary-otel-debug --version | --help
 
@@ -36,6 +39,11 @@ machine, and every other request to those names fails. It listens on 8443 by def
 the 443 redirect, the /etc/hosts lines and how to trust the certificate; it never runs sudo,
 setcap or nft, and it needs a build with the `tls` cargo feature. `--delete-ca` removes the
 certificate file it writes.
+
+--trust claude-code sets one key, env.NODE_EXTRA_CA_CERTS, in ~/.claude/settings.json (after a
+backup; --dry-run shows the change, --undo reverses it) so Claude Code trusts that certificate;
+--trust codex writes a combined certificate bundle and prints the command that uses it. Neither
+edits shell profiles or any system trust store, and --trust-status shows where things stand.
 
 ";
 
@@ -71,6 +79,13 @@ fn run(args: &[String]) -> u8 {
             0
         }
         Ok(Action::DeleteCa) => delete_ca(),
+        Ok(Action::Trust {
+            target,
+            dry_run,
+            undo,
+            json,
+        }) => trust_cmd(target, dry_run, undo, json),
+        Ok(Action::TrustStatus { json }) => trust_status_cmd(json),
         Ok(Action::ListPresets) => {
             for p in presets::PRESETS {
                 let on = if p.default_on { "on " } else { "off" };
@@ -247,6 +262,79 @@ fn delete_ca() -> u8 {
     fail(NO_TLS, 2)
 }
 
+#[cfg(feature = "tls")]
+fn trust_env() -> Result<(cainary_core::harness::Harness, std::path::PathBuf), String> {
+    use cainary_core::harness::Harness;
+    use cainary_core::harness::platform::EnvKind;
+    Ok((Harness::live(EnvKind::Shell), ca_dir()?))
+}
+
+#[cfg(feature = "tls")]
+fn trust_cmd(target: args::TrustTarget, dry_run: bool, undo: bool, json: bool) -> u8 {
+    use cainary_net::trust::{self, Mode, Target};
+    let (harness, ca_dir) = match trust_env() {
+        Ok(e) => e,
+        Err(m) => return fail(m, 1),
+    };
+    let env = trust::Env {
+        harness: &harness,
+        ca_dir,
+    };
+    let line = match target {
+        args::TrustTarget::ClaudeCode => {
+            let mode = if undo {
+                Mode::Undo { dry_run }
+            } else {
+                Mode::Apply { dry_run }
+            };
+            trust::claude_code(&env, mode)
+        }
+        args::TrustTarget::Codex => trust::codex(&env, undo),
+    };
+    debug_assert!(matches!(line.target, Target::ClaudeCode | Target::Codex));
+    if json {
+        print!(
+            "{}",
+            line.json(&cainary_core::value::rfc3339(harness.now()))
+        );
+    } else {
+        print!("{}", line.text());
+    }
+    line.code()
+}
+
+#[cfg(feature = "tls")]
+fn trust_status_cmd(json: bool) -> u8 {
+    use cainary_net::trust;
+    let (harness, ca_dir) = match trust_env() {
+        Ok(e) => e,
+        Err(m) => return fail(m, 1),
+    };
+    let env = trust::Env {
+        harness: &harness,
+        ca_dir,
+    };
+    if json {
+        print!(
+            "{}",
+            trust::status_json(&env, &cainary_core::value::rfc3339(harness.now()))
+        );
+    } else {
+        print!("{}", trust::status_text(&env));
+    }
+    0
+}
+
+#[cfg(not(feature = "tls"))]
+fn trust_cmd(_: args::TrustTarget, _: bool, _: bool, _: bool) -> u8 {
+    fail(NO_TLS, 2)
+}
+
+#[cfg(not(feature = "tls"))]
+fn trust_status_cmd(_: bool) -> u8 {
+    fail(NO_TLS, 2)
+}
+
 fn serve(o: Options, args: &[String]) -> u8 {
     #[cfg(not(feature = "tls"))]
     if o.tls {
@@ -318,10 +406,22 @@ fn serve(o: Options, args: &[String]) -> u8 {
             Err(m) => return fail(m, 1),
         };
         match cainary_net::tls::Tls::start(&o.tls_hosts, &dir) {
-            Ok(tls) => Some(server::TlsRun {
-                tls,
-                public_port: o.tls_public_port.unwrap_or(443),
-            }),
+            Ok(tls) => {
+                // A new CA was just published: refresh the trust bundles built from the last one.
+                if let Ok((harness, ca_dir)) = trust_env() {
+                    let env = cainary_net::trust::Env {
+                        harness: &harness,
+                        ca_dir,
+                    };
+                    for w in cainary_net::trust::refresh(&env) {
+                        eprintln!("cainary-otel-debug: {w}");
+                    }
+                }
+                Some(server::TlsRun {
+                    tls,
+                    public_port: o.tls_public_port.unwrap_or(443),
+                })
+            }
             Err(
                 cainary_net::tls::StartError::Busy(m) | cainary_net::tls::StartError::Failed(m),
             ) => {
