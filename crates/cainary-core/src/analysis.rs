@@ -313,6 +313,7 @@ mod tests {
             best_effort: false,
             in_effect: true,
             counts: false,
+            payload: None,
         };
         f.finish();
         f

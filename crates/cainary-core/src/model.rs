@@ -2,6 +2,7 @@
 
 use crate::harness::platform::{EnvKind, Os};
 use crate::redact;
+use crate::rules::otel_catalog::{Export, Group, ItemKind};
 use serde::{Deserialize, Serialize};
 
 macro_rules! slug_enum {
@@ -264,6 +265,22 @@ slug_enum!(Origin {
 });
 
 impl Origin {
+    /// Who set a value, in plain words.
+    pub fn set_by(self) -> &'static str {
+        match self {
+            Origin::Server => "organization (server-managed)",
+            Origin::Mdm => "organization (MDM profile)",
+            Origin::System => "organization (system config file)",
+            Origin::OrgInstalled => "organization (installed by admin)",
+            Origin::Unattributed => "unknown",
+            Origin::Environment => "environment variable",
+            Origin::User => "you",
+            Origin::VendorDefault => "vendor default",
+        }
+    }
+}
+
+impl Origin {
     pub fn is_org(self) -> bool {
         matches!(
             self,
@@ -389,6 +406,86 @@ pub struct Finding {
     pub in_effect: bool,
     /// Counts toward alerts at `Report::alert`. Computed by analysis.
     pub counts: bool,
+    /// What an in-effect telemetry export carries (architecture.md §3.7).
+    pub payload: Option<Box<Payload>>,
+}
+
+/// Whether a gated item reaches the receiver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Sent {
+    Yes,
+    Redacted,
+    Generic,
+    No,
+    Local,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+/// One flag that decides what an export carries, as resolved in this scan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GateState {
+    pub flag: String,
+    pub label: String,
+    pub on: bool,
+    pub sent: Sent,
+    /// Redacted.
+    pub value: Option<String>,
+    pub set_by: Option<Origin>,
+    pub path: Option<String>,
+    /// One plain line; every UI prints it verbatim.
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttrOut {
+    pub key: String,
+    pub what: String,
+    pub group: Group,
+    #[serde(skip_serializing_if = "is_false")]
+    pub maybe: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sent: Option<Sent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordOut {
+    pub name: String,
+    pub kind: ItemKind,
+    pub what: String,
+    pub unit: Option<String>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub maybe: bool,
+    pub observed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sent: Option<Sent>,
+    pub attrs: Vec<AttrOut>,
+}
+
+/// What one telemetry export carries, built from the catalog and the resolved config.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Payload {
+    pub export: Export,
+    pub catalog: String,
+    pub docs: String,
+    #[serde(skip_serializing_if = "is_false")]
+    pub maybe: bool,
+    pub gates: Vec<GateState>,
+    pub identity: Vec<AttrOut>,
+    pub resource: Vec<AttrOut>,
+    pub records: Vec<RecordOut>,
+    pub sample: Vec<String>,
 }
 
 impl Finding {
@@ -445,6 +542,8 @@ struct FindingWire<'a> {
     counts: bool,
     config: ConfigWire<'a>,
     docs: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payload: Option<&'a Payload>,
 }
 
 impl Serialize for Finding {
@@ -467,6 +566,7 @@ impl Serialize for Finding {
                 evidence: &self.evidence,
             },
             docs: self.reference.as_deref(),
+            payload: self.payload.as_deref(),
         }
         .serialize(s)
     }
@@ -517,6 +617,7 @@ impl<'de> Deserialize<'de> for Finding {
             best_effort: w.maybe,
             in_effect: w.in_effect,
             counts: w.counts,
+            payload: None,
         };
         f.finish();
         Ok(f)
@@ -536,6 +637,7 @@ pub struct FindingBuilder {
     reference: Option<String>,
     best_effort: bool,
     in_effect: bool,
+    payload: Option<Box<Payload>>,
 }
 
 impl FindingBuilder {
@@ -550,6 +652,7 @@ impl FindingBuilder {
             reference: None,
             best_effort: false,
             in_effect: true,
+            payload: None,
         }
     }
 
@@ -599,6 +702,11 @@ impl FindingBuilder {
         self
     }
 
+    pub fn payload(mut self, p: Payload) -> Self {
+        self.payload = Some(Box::new(p));
+        self
+    }
+
     /// Fill in `tool`, clear the signals when `!in_effect`, run the final `redact::text` pass
     /// over title, detail and evidence, and finish. The id stays empty and `counts` false until
     /// `analysis::sort_and_number` and `analysis::analyze` run.
@@ -627,6 +735,7 @@ impl FindingBuilder {
             best_effort: self.best_effort,
             in_effect: self.in_effect,
             counts: false,
+            payload: self.payload,
         };
         f.finish();
         f
@@ -900,6 +1009,7 @@ mod tests {
             best_effort: false,
             in_effect: true,
             counts: false,
+            payload: None,
         }
     }
 

@@ -448,6 +448,28 @@ mod tests {
     }
 
     #[test]
+    fn reports_differing_only_in_payload_have_no_changes() {
+        use crate::model::Payload;
+        use crate::rules::otel_catalog::Export;
+        let plain = report(vec![usage("x")], &[Tool::ClaudeCode], vec![]);
+        let mut f = usage("x");
+        f.payload = Some(Box::new(Payload {
+            export: Export::Logs,
+            catalog: "claude-code 0.0.0".into(),
+            docs: "https://example.com".into(),
+            maybe: false,
+            gates: vec![],
+            identity: vec![],
+            resource: vec![],
+            records: vec![],
+            sample: vec![],
+        }));
+        let with = report(vec![f], &[Tool::ClaudeCode], vec![]);
+        assert!(diff(&plain, &with).is_empty());
+        assert!(diff(&with, &plain).is_empty());
+    }
+
+    #[test]
     fn a_moved_key_with_the_same_title_is_not_gone_and_new() {
         let at = |path: &str, value: &str| {
             crate::model::FindingBuilder::new("x")

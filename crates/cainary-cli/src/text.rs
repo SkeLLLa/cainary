@@ -259,16 +259,7 @@ fn block(out: &mut String, e: &Entry, p: &Paint) {
 }
 
 fn set_by(o: Origin) -> &'static str {
-    match o {
-        Origin::Server => "organization (server-managed)",
-        Origin::Mdm => "organization (MDM profile)",
-        Origin::System => "organization (system config file)",
-        Origin::OrgInstalled => "organization (installed by admin)",
-        Origin::Unattributed => "unknown",
-        Origin::Environment => "environment variable",
-        Origin::User => "you",
-        Origin::VendorDefault => "vendor default",
-    }
+    o.set_by()
 }
 
 fn finding(out: &mut String, f: &Finding, multi: bool, p: &Paint) {
@@ -378,6 +369,7 @@ mod tests {
             best_effort: false,
             in_effect: true,
             counts: false,
+            payload: None,
         };
         f.finish();
         f
