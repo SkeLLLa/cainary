@@ -42,6 +42,8 @@ pub struct Tunables {
     pub limits: Limits,
     /// Window of the rejection-line rate limit (`ERRORS_PER_SECOND` per window).
     pub error_window: Duration,
+    /// Takeover mode: absolute time from accept for the handshake and the first request.
+    pub first_request_deadline: Duration,
 }
 
 impl Default for Tunables {
@@ -58,6 +60,7 @@ impl Default for Tunables {
             wire_budget: WIRE_BUDGET,
             limits: Limits::default(),
             error_window: Duration::from_secs(1),
+            first_request_deadline: Duration::from_secs(30),
         }
     }
 }
@@ -75,6 +78,16 @@ pub struct Config {
     pub sink: Box<dyn Write + Send>,
     pub status: Box<dyn Write + Send>,
     pub generator: String,
+    /// Takeover mode (design §16): the TLS state, and the port the exporter's URL uses.
+    #[cfg(feature = "tls")]
+    pub tls: Option<TlsRun>,
+}
+
+/// A takeover run: the built TLS state and the port a redirect forwards from (443).
+#[cfg(feature = "tls")]
+pub struct TlsRun {
+    pub tls: crate::tls::Tls,
+    pub public_port: u16,
 }
 
 impl Config {
@@ -91,6 +104,8 @@ impl Config {
             sink,
             status: Box::new(io::sink()),
             generator: format!("cainary-otel-debug {}", env!("CARGO_PKG_VERSION")),
+            #[cfg(feature = "tls")]
+            tls: None,
         }
     }
 }
@@ -204,6 +219,11 @@ struct Shared {
     jobs: Arc<Semaphore>,
     limiter: Mutex<ErrLimiter>,
     hosts: Vec<String>,
+    /// Takeover mode: the configured hosts (empty in plain mode) and the ports a `Host` may name.
+    tls_hosts: Vec<String>,
+    host_ports: Vec<u16>,
+    #[cfg(feature = "tls")]
+    tls: Option<crate::tls::Tls>,
     active: Arc<AtomicUsize>,
     stop: Arc<AtomicBool>,
 }
@@ -265,6 +285,14 @@ fn bind_all(cfg: &Config) -> Result<(Vec<TcpListener>, Vec<String>), SetupError>
                     format!("port {port} is in use (another collector?); try --port {next}"),
                 ));
             }
+            Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                return Err(setup_err(
+                    1,
+                    format!(
+                        "can't listen on {addr}: permission denied (ports under 1024 need a privilege). Use the default --port 8443 with the 443 redirect that --tls prints, or install the binary in a root-owned directory and run: sudo setcap cap_net_bind_service=+ep /usr/bin/cainary-otel-debug (it drops the capability right after binding; never run it as root)"
+                    ),
+                ));
+            }
             Err(e) => return Err(setup_err(1, format!("can't listen on {addr}: {e}"))),
         }
     }
@@ -273,6 +301,12 @@ fn bind_all(cfg: &Config) -> Result<(Vec<TcpListener>, Vec<String>), SetupError>
 
 pub fn run(cfg: Config) -> Result<Server, SetupError> {
     let (listeners, notes) = bind_all(&cfg)?;
+    // Whatever privilege bind needed is dropped before the first accept (design §16.7.5).
+    #[cfg(feature = "tls")]
+    if cfg.tls.is_some() {
+        crate::tls::privdrop::drop_capabilities()
+            .map_err(|e| setup_err(1, format!("can't drop capabilities after binding: {e}")))?;
+    }
     let addrs: Vec<SocketAddr> = listeners
         .iter()
         .map(|l| l.local_addr().expect("bound"))
@@ -298,8 +332,52 @@ pub fn run(cfg: Config) -> Result<Server, SetupError> {
     };
     let mut listen: Vec<String> = addrs.iter().map(SocketAddr::to_string).collect();
     listen.extend(notes);
+    #[allow(unused_mut)]
+    let mut tls_hosts: Vec<String> = Vec::new();
+    #[allow(unused_mut)]
+    let mut host_ports: Vec<u16> = Vec::new();
+    #[allow(unused_mut)]
+    let mut setup_info = setup::setup(&endpoint);
+    #[allow(unused_mut)]
+    let mut mode = "receiver";
+    #[allow(unused_mut)]
+    let mut tls_hello = None;
+    #[cfg(feature = "tls")]
+    if let Some(run) = &cfg.tls {
+        mode = "tls-receiver";
+        tls_hosts = run.tls.hosts().to_vec();
+        host_ports = vec![port];
+        if run.public_port != port {
+            host_ports.push(run.public_port);
+        }
+        let ca_path = run.tls.ca_path.display().to_string();
+        let fingerprint = run.tls.fingerprint();
+        // The plain endpoint lines would point at http://; here the exporter keeps its own URL
+        // and only needs to trust the certificate.
+        setup_info.claude_code = vec![format!("NODE_EXTRA_CA_CERTS={ca_path}")];
+        setup_info.codex = vec![
+            format!("SSL_CERT_FILE={ca_path}"),
+            format!("CODEX_CA_CERTIFICATE={ca_path}"),
+        ];
+        setup_info.takeover = Some(setup::takeover(&setup::Takeover {
+            hosts: &tls_hosts,
+            ca_path: &ca_path,
+            fingerprint: &fingerprint,
+            port,
+            public_port: run.public_port,
+            v4: addrs.iter().any(SocketAddr::is_ipv4),
+            v6: addrs.iter().any(SocketAddr::is_ipv6),
+        }));
+        tls_hello = Some(output::TlsHello {
+            hosts: tls_hosts.clone(),
+            ca_path,
+            ca_sha256: fingerprint,
+        });
+    }
     let hello = Hello {
         generator: cfg.generator.clone(),
+        mode,
+        tls: tls_hello,
         listen,
         endpoint: endpoint.clone(),
         show_values: cfg.show_values,
@@ -315,7 +393,7 @@ pub fn run(cfg: Config) -> Result<Server, SetupError> {
                 case_sensitive: p.case_sensitive,
             })
             .collect(),
-        setup: setup::setup(&endpoint),
+        setup: setup_info,
     };
 
     let out_cfg = output::Config {
@@ -348,6 +426,10 @@ pub fn run(cfg: Config) -> Result<Server, SetupError> {
             dropped: 0,
         }),
         hosts,
+        tls_hosts,
+        host_ports,
+        #[cfg(feature = "tls")]
+        tls: cfg.tls.map(|r| r.tls),
         active: Arc::new(AtomicUsize::new(0)),
         stop: Arc::clone(&stop),
     });
@@ -386,17 +468,22 @@ fn accept_loop(l: TcpListener, sh: Arc<Shared>) {
                 continue;
             }
         };
+        let accepted_at = Instant::now();
         let _ = stream.set_nonblocking(false);
+        // The slot comes before any TLS state exists for the connection (design §16.7.3).
         if sh.active.fetch_add(1, Ordering::SeqCst) >= sh.t.max_connections {
             sh.active.fetch_sub(1, Ordering::SeqCst);
-            busy(stream);
+            // No handshake and no plaintext reply on a TLS port: just close.
+            if sh.tls_hosts.is_empty() {
+                busy(stream);
+            }
             continue;
         }
         let slot = Slot(Arc::clone(&sh.active));
         let shared = Arc::clone(&sh);
         let spawned = thread::Builder::new().name("conn".into()).spawn(move || {
             let _slot = slot;
-            serve(stream, &shared);
+            connection(stream, accepted_at, &shared);
         });
         // On failure the closure (slot included) is dropped, which frees the slot.
         drop(spawned);
@@ -410,17 +497,138 @@ fn busy(stream: TcpStream) {
     let _ = stream.shutdown(Shutdown::Both);
 }
 
-/// One connection's byte stream: plain TCP today, TLS over TCP in takeover mode. Requests and
-/// responses go through this one object; `tcp()` is the socket underneath, for timeouts and
-/// shutdown.
-trait Wire: Read + Write {
-    fn tcp(&self) -> &TcpStream;
+/// One connection's byte stream: plain TCP, or TLS over a deadline-clipped TCP stream in
+/// takeover mode. Requests and responses go through this one object; the methods are what the
+/// server needs from the socket underneath, so nothing outside this file names a socket type.
+pub(crate) trait Wire: Read + Write {
+    fn set_read_timeout(&self, d: Option<Duration>) -> io::Result<()>;
+    fn set_write_timeout(&self, d: Option<Duration>) -> io::Result<()>;
+    fn set_nodelay(&self);
+    fn shutdown_write(&self);
+    /// The server name the TLS handshake accepted; `None` on plain TCP.
+    fn sni(&self) -> Option<&str> {
+        None
+    }
+    /// The first request on the connection finished: the absolute deadline ends.
+    fn first_request_done(&self) {}
+    /// Before closing: a TLS `close_notify`.
+    fn finish(&mut self) {}
 }
 
 impl Wire for TcpStream {
-    fn tcp(&self) -> &TcpStream {
-        self
+    fn set_read_timeout(&self, d: Option<Duration>) -> io::Result<()> {
+        TcpStream::set_read_timeout(self, d)
     }
+    fn set_write_timeout(&self, d: Option<Duration>) -> io::Result<()> {
+        TcpStream::set_write_timeout(self, d)
+    }
+    fn set_nodelay(&self) {
+        let _ = TcpStream::set_nodelay(self, true);
+    }
+    fn shutdown_write(&self) {
+        let _ = self.shutdown(Shutdown::Write);
+    }
+}
+
+/// A TCP stream under an absolute deadline: every read and write first clips the socket's
+/// timeout to the time left, so a trickling handshake or a stalled write can't outlive it,
+/// whatever the layers above do. `release_deadline` ends it after the first request.
+#[cfg_attr(not(feature = "tls"), allow(dead_code))]
+pub(crate) struct Clipped {
+    tcp: TcpStream,
+    until: Cell<Option<Instant>>,
+}
+
+#[cfg_attr(not(feature = "tls"), allow(dead_code))]
+impl Clipped {
+    pub(crate) fn new(tcp: TcpStream, until: Instant) -> Clipped {
+        Clipped {
+            tcp,
+            until: Cell::new(Some(until)),
+        }
+    }
+
+    pub(crate) fn release_deadline(&self) {
+        self.until.set(None);
+    }
+
+    /// The time left before `until`, or a timeout error.
+    fn left(&self) -> io::Result<Option<Duration>> {
+        match self.until.get() {
+            None => Ok(None),
+            Some(t) => match t.checked_duration_since(Instant::now()) {
+                Some(d) if !d.is_zero() => Ok(Some(d)),
+                _ => Err(io::Error::from(io::ErrorKind::TimedOut)),
+            },
+        }
+    }
+}
+
+#[cfg_attr(not(feature = "tls"), allow(dead_code))]
+fn clip(current: Option<Duration>, left: Option<Duration>) -> Option<Duration> {
+    match (current, left) {
+        (Some(c), Some(l)) => Some(c.min(l)),
+        (None, l) => l,
+        (c, None) => c,
+    }
+}
+
+impl Read for Clipped {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if let Some(left) = self.left()? {
+            let cur = self.tcp.read_timeout()?;
+            self.tcp.set_read_timeout(clip(cur, Some(left)))?;
+        }
+        (&self.tcp).read(buf)
+    }
+}
+
+impl Write for Clipped {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if let Some(left) = self.left()? {
+            let cur = self.tcp.write_timeout()?;
+            self.tcp.set_write_timeout(clip(cur, Some(left)))?;
+        }
+        (&self.tcp).write(buf)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        (&self.tcp).flush()
+    }
+}
+
+impl Wire for Clipped {
+    fn set_read_timeout(&self, d: Option<Duration>) -> io::Result<()> {
+        self.tcp.set_read_timeout(d)
+    }
+    fn set_write_timeout(&self, d: Option<Duration>) -> io::Result<()> {
+        self.tcp.set_write_timeout(d)
+    }
+    fn set_nodelay(&self) {
+        let _ = self.tcp.set_nodelay(true);
+    }
+    fn shutdown_write(&self) {
+        let _ = self.tcp.shutdown(Shutdown::Write);
+    }
+    fn first_request_done(&self) {
+        self.release_deadline();
+    }
+}
+
+/// One accepted connection, in its own thread: plain, or the takeover's TLS handshake first.
+fn connection(stream: TcpStream, accepted_at: Instant, sh: &Shared) {
+    #[cfg(feature = "tls")]
+    if let Some(tls) = &sh.tls {
+        let _ = stream.set_read_timeout(Some(sh.t.read_timeout));
+        let _ = stream.set_write_timeout(Some(sh.t.write_timeout));
+        let clipped = Clipped::new(stream, accepted_at + sh.t.first_request_deadline);
+        match tls.accept(clipped) {
+            Ok(s) => serve(s, sh),
+            Err(refusal) => sh.emit_error(ErrorEvent::other("tls", refusal.message())),
+        }
+        return;
+    }
+    let _ = accepted_at;
+    serve(stream, sh);
 }
 
 /// The stream plus the clocks: a deadline checked before every read, a read timeout clipped to
@@ -444,7 +652,6 @@ impl<S: Wire> Read for Guarded<S> {
             return Err(io::Error::from(io::ErrorKind::FileTooLarge));
         }
         self.stream
-            .tcp()
             .set_read_timeout(Some(self.read_timeout.min(deadline - now)))?;
         let take = buf.len().min(left);
         let n = self.stream.read(&mut buf[..take])?;
@@ -459,8 +666,8 @@ enum Next {
 }
 
 fn serve<S: Wire>(stream: S, sh: &Shared) {
-    let _ = stream.tcp().set_nodelay(true);
-    let _ = stream.tcp().set_write_timeout(Some(sh.t.write_timeout));
+    stream.set_nodelay();
+    let _ = stream.set_write_timeout(Some(sh.t.write_timeout));
     let mut reader = BufReader::with_capacity(
         8192,
         Guarded {
@@ -482,12 +689,13 @@ fn serve<S: Wire>(stream: S, sh: &Shared) {
         g.wire_left.set(sh.t.wire_budget);
         g.deadline.set(Instant::now() + sh.t.request_deadline);
         match request(&mut reader, sh) {
-            Next::KeepAlive => {}
+            Next::KeepAlive => reader.get_ref().stream.first_request_done(),
             Next::Close { linger } => break linger,
         }
     };
-    let stream = reader.get_ref().stream.tcp();
-    let _ = stream.shutdown(Shutdown::Write);
+    let stream = &mut reader.get_mut().stream;
+    stream.finish();
+    stream.shutdown_write();
     if linger {
         // Read what the client is still sending, briefly, so closing doesn't turn into a reset
         // that destroys the response it hasn't read yet.
@@ -495,9 +703,8 @@ fn serve<S: Wire>(stream: S, sh: &Shared) {
         let end = Instant::now() + Duration::from_millis(250);
         let mut sink = [0u8; 4096];
         let mut total = 0usize;
-        let mut s = stream;
         while Instant::now() < end && total < (1 << 20) {
-            match s.read(&mut sink) {
+            match stream.read(&mut sink) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => total += n,
             }
@@ -587,17 +794,27 @@ fn request<S: Wire>(reader: &mut BufReader<Guarded<S>>, sh: &Shared) -> Next {
         }};
     }
 
-    // DNS rebinding and browsers (design §14.4): before any body is read or 100 sent.
+    // DNS rebinding and browsers (design §14.4, §16.7.4): before any body is read or 100 sent.
     let hosts: Vec<&str> = head
         .headers
         .iter()
         .filter(|(k, _)| k == "host")
         .map(|(_, v)| v.as_str())
         .collect();
-    match hosts.as_slice() {
-        [h] if sh.hosts.iter().any(|a| a.eq_ignore_ascii_case(h)) => {}
-        [_] => return deny!(421, "unexpected Host"),
-        _ => return deny!(400, "exactly one Host header is required"),
+    let tls_mode = !sh.tls_hosts.is_empty();
+    let mut batch_host: Option<String> = None;
+    if tls_mode {
+        let sni = reader.get_ref().stream.sni().map(str::to_string);
+        match takeover_host(&hosts, sni.as_deref(), &sh.host_ports) {
+            Ok(h) => batch_host = Some(h),
+            Err((status, message)) => return deny!(status, message),
+        }
+    } else {
+        match hosts.as_slice() {
+            [h] if sh.hosts.iter().any(|a| a.eq_ignore_ascii_case(h)) => {}
+            [_] => return deny!(421, "unexpected Host"),
+            _ => return deny!(400, "exactly one Host header is required"),
+        }
     }
     if head
         .headers
@@ -607,7 +824,24 @@ fn request<S: Wire>(reader: &mut BufReader<Guarded<S>>, sh: &Shared) -> Next {
         return deny!(403, "browser requests are refused");
     }
 
-    let signal = match otlp::route(&head.method, head.path()) {
+    // Plain mode keeps the strict routes; takeover mode takes any path (POST only) and works
+    // the signal out from the path, then the body.
+    let route = if tls_mode {
+        if head.method == "POST" {
+            Route::Signal(otlp::route_any(head.path()).unwrap_or(otlp::Signal::Logs))
+        } else {
+            Route::NotAllowed
+        }
+    } else {
+        otlp::route(&head.method, head.path())
+    };
+    let hint = if tls_mode {
+        otlp::route_any(head.path())
+    } else {
+        None
+    };
+    #[allow(unused_assignments)]
+    let mut signal = match route {
         Route::Signal(s) => s,
         Route::NotFound => return deny!(404, "not found"),
         Route::NotAllowed => {
@@ -641,8 +875,24 @@ fn request<S: Wire>(reader: &mut BufReader<Guarded<S>>, sh: &Shared) -> Next {
         Ok(d) => d,
         Err(m) => return deny!(400, &m),
     };
+    if tls_mode {
+        signal = match (hint, otlp::root_signal(&doc)) {
+            (Some(h), Ok(Some(r))) if h != r => {
+                return deny!(400, "the path and the body name different signals");
+            }
+            (Some(h), Ok(_)) => h,
+            (None, Ok(Some(r))) => r,
+            (None, Ok(None)) => return deny!(400, "can't tell which signal this is"),
+            (_, Err(_)) => return deny!(400, "the body names more than one signal"),
+        };
+    }
     let bytes = body.len();
-    let prepared = match otlp::process(signal, bytes, &doc, &sh.ctx) {
+    let meta = otlp::Meta {
+        // Paths are never printed: the canonical one, or a fixed marker (design §16.7.7).
+        path: tls_mode.then_some(path.unwrap_or("<custom path>")),
+        host: batch_host.as_deref(),
+    };
+    let prepared = match otlp::process_with(signal, bytes, &doc, &sh.ctx, &meta) {
         Ok(p) => p,
         Err(f) => return deny!(f.status(), &f.message()),
     };
@@ -671,6 +921,34 @@ fn request<S: Wire>(reader: &mut BufReader<Guarded<S>>, sh: &Shared) -> Next {
     } else {
         Next::Close { linger: false }
     }
+}
+
+/// Takeover mode's `Host` rule (design §16.7.4): exactly one, a DNS name equal to the SNI the
+/// handshake accepted, with no port (443) or a port the listener is reachable on.
+fn takeover_host(
+    hosts: &[&str],
+    sni: Option<&str>,
+    ports: &[u16],
+) -> Result<String, (u16, &'static str)> {
+    let [h] = hosts else {
+        return Err((400, "exactly one Host header is required"));
+    };
+    let h = h.to_ascii_lowercase();
+    let (name, port) = match h.rsplit_once(':') {
+        Some((n, text)) if !n.is_empty() => match text.parse::<u16>() {
+            // No signs, no leading zeros: the text must be the number's own spelling.
+            Ok(p) if p.to_string() == text => (n.to_string(), p),
+            _ => return Err((400, "malformed Host header")),
+        },
+        _ => (h.clone(), 443),
+    };
+    if !crate::host::valid_host(&name) {
+        return Err((400, "malformed Host header"));
+    }
+    if Some(name.as_str()) != sni || !ports.contains(&port) {
+        return Err((421, "unexpected Host"));
+    }
+    Ok(name)
 }
 
 /// A read failed: the wire budget is answered with 413, timeouts and resets just close.
@@ -726,5 +1004,126 @@ mod tests {
         assert_eq!(l.admit(t0), (false, None));
         assert_eq!(l.admit(t0 + Duration::from_millis(1100)), (true, Some(2)));
         assert_eq!(l.admit(t0 + Duration::from_millis(1200)), (true, None));
+    }
+
+    fn pair() -> (TcpStream, TcpStream) {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let a = TcpStream::connect(l.local_addr().unwrap()).unwrap();
+        let (b, _) = l.accept().unwrap();
+        (a, b)
+    }
+
+    #[test]
+    fn clipped_reads_stop_at_the_absolute_deadline() {
+        let (server_side, _client) = pair();
+        // No socket timeout at all: only the absolute deadline can end a silent peer.
+        let mut c = Clipped::new(server_side, Instant::now() + Duration::from_millis(250));
+        let t = Instant::now();
+        let e = c.read(&mut [0u8; 8]).unwrap_err();
+        assert!(
+            matches!(
+                e.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+            ),
+            "{e:?}"
+        );
+        assert!(t.elapsed() < Duration::from_secs(3), "{:?}", t.elapsed());
+        // Past the deadline nothing is attempted.
+        assert_eq!(
+            c.read(&mut [0u8; 8]).unwrap_err().kind(),
+            io::ErrorKind::TimedOut
+        );
+        assert_eq!(c.write(b"x").unwrap_err().kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn clipped_writes_to_a_peer_that_never_reads_stop_at_the_deadline() {
+        let (server_side, _client_never_reads) = pair();
+        let mut c = Clipped::new(server_side, Instant::now() + Duration::from_millis(400));
+        let chunk = vec![0u8; 256 * 1024];
+        let t = Instant::now();
+        let mut err = None;
+        while t.elapsed() < Duration::from_secs(10) {
+            match c.write_all(&chunk) {
+                Ok(()) => {}
+                Err(e) => {
+                    err = Some(e);
+                    break;
+                }
+            }
+        }
+        let e = err.expect("a stalled peer must stop the writer");
+        assert!(
+            matches!(
+                e.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+            ),
+            "{e:?}"
+        );
+        assert!(t.elapsed() < Duration::from_secs(5), "{:?}", t.elapsed());
+    }
+
+    #[test]
+    fn released_deadlines_stop_clipping() {
+        let (server_side, mut client) = pair();
+        let mut c = Clipped::new(server_side, Instant::now() + Duration::from_millis(100));
+        c.release_deadline();
+        std::thread::sleep(Duration::from_millis(200));
+        client.write_all(b"hi").unwrap();
+        let mut b = [0u8; 2];
+        assert_eq!(c.read(&mut b).unwrap(), 2);
+    }
+
+    #[test]
+    fn clip_picks_the_sooner_limit() {
+        let s = |n| Some(Duration::from_secs(n));
+        assert_eq!(clip(s(10), s(3)), s(3));
+        assert_eq!(clip(s(2), s(3)), s(2));
+        assert_eq!(clip(None, s(3)), s(3));
+        assert_eq!(clip(s(2), None), s(2));
+    }
+
+    #[test]
+    fn takeover_host_rules() {
+        let ports = [8443u16, 443];
+        let ok = |h: &str| takeover_host(&[h], Some("a.example.test"), &ports);
+        assert_eq!(ok("a.example.test"), Ok("a.example.test".to_string()));
+        assert_eq!(ok("A.Example.Test:8443"), Ok("a.example.test".to_string()));
+        assert_eq!(ok("a.example.test:443"), Ok("a.example.test".to_string()));
+        assert_eq!(ok("b.example.test"), Err((421, "unexpected Host")));
+        assert_eq!(ok("a.example.test:80"), Err((421, "unexpected Host")));
+        for bad in [
+            "a.example.test:",
+            ":443",
+            "a.example.test:+443",
+            "a.example.test:0443",
+            "127.0.0.1:8443",
+            "[::1]:443",
+            "",
+        ] {
+            assert_eq!(ok(bad).unwrap_err().0, 400, "{bad:?}");
+        }
+        assert_eq!(
+            takeover_host(&[], Some("a.example.test"), &ports)
+                .unwrap_err()
+                .0,
+            400
+        );
+        assert_eq!(
+            takeover_host(
+                &["a.example.test", "a.example.test"],
+                Some("a.example.test"),
+                &ports
+            )
+            .unwrap_err()
+            .0,
+            400
+        );
+        assert_eq!(
+            takeover_host(&["a.example.test"], None, &ports)
+                .unwrap_err()
+                .0,
+            421
+        );
     }
 }

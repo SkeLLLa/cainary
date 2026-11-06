@@ -172,8 +172,18 @@ pub struct FlagInfo {
 }
 
 #[derive(Debug, Clone)]
+pub struct TlsHello {
+    pub hosts: Vec<String>,
+    pub ca_path: String,
+    pub ca_sha256: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct Hello {
     pub generator: String,
+    /// `receiver`, or `tls-receiver` in takeover mode.
+    pub mode: &'static str,
+    pub tls: Option<TlsHello>,
     /// Bound addresses, plus a note for any that couldn't be bound.
     pub listen: Vec<String>,
     pub endpoint: String,
@@ -194,15 +204,24 @@ impl Hello {
             .collect();
         let mut m = Map::new();
         m.insert("generator".into(), json!(self.generator));
+        m.insert("mode".into(), json!(self.mode));
         m.insert("listen".into(), json!(self.listen));
         m.insert("endpoint".into(), json!(self.endpoint));
         m.insert("showValues".into(), json!(self.show_values));
         m.insert("logFile".into(), json!(self.log_file));
         m.insert("redFlags".into(), Value::Array(flags));
-        m.insert(
-            "setup".into(),
-            json!({"claudeCode": self.setup.claude_code, "codex": self.setup.codex, "notes": self.setup.notes}),
-        );
+        if let Some(t) = &self.tls {
+            // The names are what the user configured, not a sender identity.
+            m.insert(
+                "tls".into(),
+                json!({"hosts": t.hosts, "ca": {"path": t.ca_path, "sha256": t.ca_sha256}}),
+            );
+        }
+        let mut setup = json!({"claudeCode": self.setup.claude_code, "codex": self.setup.codex, "notes": self.setup.notes});
+        if let Some(t) = &self.setup.takeover {
+            setup["takeover"] = json!(t);
+        }
+        m.insert("setup".into(), setup);
         tail(m)
     }
 }

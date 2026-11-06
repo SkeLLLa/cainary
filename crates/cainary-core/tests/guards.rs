@@ -99,6 +99,7 @@ const NET_LOGFILE: &str = "cainary-net/src/logfile.rs";
 const NET_REDFLAG_FILE: &str = "cainary-net/src/redflag/file.rs";
 const NET_TLS: &str = "cainary-net/src/tls/";
 const NET_CA_FILE: &str = "cainary-net/src/tls/ca_file.rs";
+const NET_TLS_MOD: &str = "cainary-net/src/tls/mod.rs";
 const NET_PRIVDROP: &str = "cainary-net/src/tls/privdrop.rs";
 const NET_MAIN: &str = "cainary-net/src/main.rs";
 
@@ -321,7 +322,10 @@ fn check_n2(srcs: &[Src]) -> Vec<String> {
                 bad.push(format!("{}: OpenOptions outside logfile.rs", s.rel));
             }
             for m in WRITE_SHAPED {
-                if code.contains(m) {
+                // Sockets write too: `.write(` is the byte-stream method, and these two files
+                // can't open a file (no `std::fs`, no `OpenOptions`, no `libc`).
+                let socket_file = s.rel == NET_SERVER || s.rel == NET_TLS_MOD;
+                if code.contains(m) && !(socket_file && m == ".write(") {
                     bad.push(format!(
                         "{}: write-shaped call `{m}` outside logfile.rs and tls/ca_file.rs",
                         s.rel
@@ -935,6 +939,12 @@ mod fires {
             check_n2(&net("otlp.rs", "let f = OpenOptions::new();")).len(),
             1
         );
+        // Socket writes are fine where there is no file access to misuse.
+        assert!(check_n2(&net("server.rs", "stream.write(b)")).is_empty());
+        assert!(check_n2(&net("tls/mod.rs", "inner.write(b)")).is_empty());
+        assert!(!check_n2(&net("server.rs", "OpenOptions::new()")).is_empty());
+        assert!(!check_n2(&net("server.rs", "std::fs::write(p, b)")).is_empty());
+        assert!(!check_n2(&net("tls/mod.rs", "std::fs::remove_file(p)")).is_empty());
         for m in WRITE_SHAPED {
             assert_eq!(
                 check_n2(&net("output.rs", &format!("x{m}y"))).len(),

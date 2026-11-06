@@ -19,12 +19,23 @@ usage:
                      [--red-flag <name>=<text>]... [--red-flag-re <name>=<regex>]... [--match-case <name>]...
                      [--red-flags <file>] [--preset <name>]... [--no-default-red-flags] [--list-presets]
                      [--exit-on-stdin-eof] [--config-stdin]
+                     [--tls --tls-host <name>... [--tls-public-port <n>]]
+  cainary-otel-debug --delete-ca
   cainary-otel-debug --version | --help
 
 A local OTLP/HTTP receiver, loopback only (127.0.0.1 and ::1), OTLP/JSON only (no protobuf, no
 gzip). It never opens an outbound connection. Attribute values are masked unless --show-values.
 Red flags (secrets, emails, your own words) raise `alert` lines; --list-presets shows the built-ins.
 --red-flag values land in your shell history; GUIs use --config-stdin instead.
+
+--tls --tls-host <name> is the endpoint takeover, for a telemetry host your organization pins to
+HTTPS (managed settings that a shell variable can't override). You point that name at loopback,
+and this serves it with a certificate from a throwaway CA limited to the names you give. It
+FORWARDS NOTHING: while it runs, your organization's collector receives nothing from this
+machine, and every other request to those names fails. It listens on 8443 by default and prints
+the 443 redirect, the /etc/hosts lines and how to trust the certificate; it never runs sudo,
+setcap or nft, and it needs a build with the `tls` cargo feature. `--delete-ca` removes the
+certificate file it writes.
 
 ";
 
@@ -59,6 +70,7 @@ fn run(args: &[String]) -> u8 {
             );
             0
         }
+        Ok(Action::DeleteCa) => delete_ca(),
         Ok(Action::ListPresets) => {
             for p in presets::PRESETS {
                 let on = if p.default_on { "on " } else { "off" };
@@ -72,10 +84,20 @@ fn run(args: &[String]) -> u8 {
 
 /// Reads the config line (if asked), then keeps reading stdin as the lifeline: EOF means the
 /// parent is gone, so exit. A separate thread, so nothing in the output path can delay it.
-fn stdin_thread(config_line: bool) -> (mpsc::Receiver<Result<String, String>>, mpsc::Sender<()>) {
+fn stdin_thread(
+    config_line: bool,
+    drop_caps: bool,
+) -> (mpsc::Receiver<Result<String, String>>, mpsc::Sender<()>) {
     let (tx, rx) = mpsc::channel();
     let (go_tx, go_rx) = mpsc::channel::<()>();
     std::thread::spawn(move || {
+        // This thread was started before the bind, so it inherited any bind capability: it has
+        // no use for it (design §16.7.5). The bind thread drops its own right after binding.
+        #[cfg(feature = "tls")]
+        if drop_caps {
+            let _ = cainary_net::tls::privdrop::drop_capabilities();
+        }
+        let _ = drop_caps;
         let mut r = io::BufReader::new(io::stdin());
         if config_line {
             let mut buf = Vec::new();
@@ -118,7 +140,67 @@ fn fail(msg: impl std::fmt::Display, code: u8) -> u8 {
     code
 }
 
+#[cfg(not(feature = "tls"))]
+const NO_TLS: &str = "this build has no TLS support (cargo feature `tls`)";
+
+/// Where the takeover CA's public certificate lives (design §16.2): the state directory, so a
+/// stable path survives restarts.
+#[cfg(feature = "tls")]
+fn ca_dir() -> Result<std::path::PathBuf, String> {
+    use std::path::PathBuf;
+    let home = || {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .filter(|h| h.is_absolute())
+            .ok_or_else(|| "HOME is not set to an absolute path".to_string())
+    };
+    #[cfg(target_os = "macos")]
+    {
+        Ok(home()?.join("Library/Application Support/cAInary"))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let base = match std::env::var_os("XDG_STATE_HOME").map(PathBuf::from) {
+            Some(p) if p.is_absolute() => p,
+            _ => home()?.join(".local/state"),
+        };
+        Ok(base.join("cainary"))
+    }
+}
+
+#[cfg(feature = "tls")]
+fn delete_ca() -> u8 {
+    use cainary_net::tls::ca_file;
+    let dir = match ca_dir() {
+        Ok(d) => d,
+        Err(m) => return fail(m, 1),
+    };
+    match ca_file::delete(&dir) {
+        Ok(true) => {
+            println!("removed {}", dir.join(ca_file::CA_FILE).display());
+            0
+        }
+        Ok(false) => {
+            println!(
+                "no certificate file at {}",
+                dir.join(ca_file::CA_FILE).display()
+            );
+            0
+        }
+        Err(e) => fail(e, 1),
+    }
+}
+
+#[cfg(not(feature = "tls"))]
+fn delete_ca() -> u8 {
+    fail(NO_TLS, 2)
+}
+
 fn serve(o: Options) -> u8 {
+    #[cfg(not(feature = "tls"))]
+    if o.tls {
+        return fail(NO_TLS, 2);
+    }
     if o.show_values {
         let mut w = String::from(
             "warning: --show-values prints attribute values unmasked (emails, commands and any secrets in them)",
@@ -129,7 +211,8 @@ fn serve(o: Options) -> u8 {
         eprintln!("{w}");
     }
 
-    let stdin = (o.exit_on_stdin_eof || o.config_stdin).then(|| stdin_thread(o.config_stdin));
+    let stdin =
+        (o.exit_on_stdin_eof || o.config_stdin).then(|| stdin_thread(o.config_stdin, o.tls));
     let mut configs = Vec::new();
     if let Some(path) = &o.red_flags_file {
         match file::load(path) {
@@ -170,7 +253,32 @@ fn serve(o: Options) -> u8 {
         None => None,
     };
 
+    #[cfg(feature = "tls")]
+    let tls_run = if o.tls {
+        let dir = match ca_dir() {
+            Ok(d) => d,
+            Err(m) => return fail(m, 1),
+        };
+        match cainary_net::tls::Tls::start(&o.tls_hosts, &dir) {
+            Ok(tls) => Some(server::TlsRun {
+                tls,
+                public_port: o.tls_public_port.unwrap_or(443),
+            }),
+            Err(
+                cainary_net::tls::StartError::Busy(m) | cainary_net::tls::StartError::Failed(m),
+            ) => {
+                return fail(m, 1);
+            }
+        }
+    } else {
+        None
+    };
+
     let mut cfg = Config::new(Box::new(io::stdout()));
+    #[cfg(feature = "tls")]
+    {
+        cfg.tls = tls_run;
+    }
     cfg.listen = o.listen.clone();
     cfg.port = o.port;
     cfg.matcher = matcher;

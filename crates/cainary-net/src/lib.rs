@@ -5,6 +5,7 @@
 
 pub mod args;
 pub mod config;
+pub mod host;
 pub mod http;
 pub mod logfile;
 pub mod otlp;
@@ -13,3 +14,5 @@ pub mod queue;
 pub mod redflag;
 pub mod server;
 pub mod setup;
+#[cfg(feature = "tls")]
+pub mod tls;

@@ -5,11 +5,15 @@ use crate::server;
 use std::path::PathBuf;
 
 pub const DEFAULT_PORT: u16 = 4318;
+/// `--tls` listens here unless `--port` says otherwise; a redirect maps 443 to it (design §16.7.5).
+pub const DEFAULT_TLS_PORT: u16 = 8443;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Run(Box<Options>),
     ListPresets,
+    /// `--delete-ca`: remove the takeover CA's certificate file and exit.
+    DeleteCa,
     Version,
     Help,
 }
@@ -35,6 +39,12 @@ pub struct Options {
     pub exit_on_stdin_eof: bool,
     /// The first stdin line is the JSON config; implies `exit_on_stdin_eof` (design §14.7).
     pub config_stdin: bool,
+    /// `--tls`: the endpoint takeover (design §16); needs the `tls` cargo feature to run.
+    pub tls: bool,
+    /// Validated, lowercased, deduplicated.
+    pub tls_hosts: Vec<String>,
+    /// The port the exporter's URL uses, when it isn't 443.
+    pub tls_public_port: Option<u16>,
 }
 
 impl Default for Options {
@@ -55,6 +65,9 @@ impl Default for Options {
             no_default_red_flags: false,
             exit_on_stdin_eof: false,
             config_stdin: false,
+            tls: false,
+            tls_hosts: Vec::new(),
+            tls_public_port: None,
         }
     }
 }
@@ -105,6 +118,8 @@ fn split_pattern(flag: &str, v: &str) -> Result<(String, String), ArgError> {
 pub fn parse(args: &[String]) -> Result<Action, ArgError> {
     let mut o = Options::default();
     let mut match_case: Vec<String> = Vec::new();
+    let mut port_set = false;
+    let mut delete_ca = false;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         let (flag, inline) = match arg.split_once('=') {
@@ -131,7 +146,29 @@ pub fn parse(args: &[String]) -> Result<Action, ArgError> {
                 o.exit_on_stdin_eof = true;
             }
             "--no-default-red-flags" if bare => o.no_default_red_flags = true,
-            "--port" => o.port = number(flag, &value()?, 0u16, u16::MAX)?,
+            "--port" => {
+                o.port = number(flag, &value()?, 0u16, u16::MAX)?;
+                port_set = true;
+            }
+            "--tls" if bare => o.tls = true,
+            "--delete-ca" if bare => delete_ca = true,
+            "--tls-host" => {
+                let h = value()?.to_ascii_lowercase();
+                if !crate::host::valid_host(&h) {
+                    return Err(usage(
+                        "--tls-host needs a DNS name with at least two labels (no wildcard, no IP address, at most 253 bytes)",
+                    ));
+                }
+                if !o.tls_hosts.contains(&h) {
+                    if o.tls_hosts.len() >= crate::host::MAX_HOSTS {
+                        return Err(usage("at most 32 --tls-host names"));
+                    }
+                    o.tls_hosts.push(h);
+                }
+            }
+            "--tls-public-port" => {
+                o.tls_public_port = Some(number(flag, &value()?, 1u16, u16::MAX)?)
+            }
             "--listen" => {
                 let v = value()?;
                 server::check_listen(&v).map_err(usage)?;
@@ -170,6 +207,18 @@ pub fn parse(args: &[String]) -> Result<Action, ArgError> {
         }
     }
 
+    if delete_ca {
+        return Ok(Action::DeleteCa);
+    }
+    if o.tls && o.tls_hosts.is_empty() {
+        return Err(usage("--tls needs at least one --tls-host <name>"));
+    }
+    if !o.tls && (!o.tls_hosts.is_empty() || o.tls_public_port.is_some()) {
+        return Err(usage("--tls-host and --tls-public-port need --tls"));
+    }
+    if o.tls && !port_set {
+        o.port = DEFAULT_TLS_PORT;
+    }
     for (i, p) in o.patterns.iter().enumerate() {
         if o.patterns[..i].iter().any(|q| q.name == p.name) {
             return Err(usage(format!(
@@ -356,5 +405,62 @@ mod tests {
         assert!(err(&["stray"]).message.contains("stray"));
         assert_eq!(err(&["--json=1"]).code, 2);
         assert_eq!(err(&["--once=1"]).code, 2);
+    }
+
+    #[test]
+    fn tls_flags() {
+        let o = run(&[
+            "--tls",
+            "--tls-host",
+            "Otel.Example-Corp.test",
+            "--tls-host=otel.example-corp.test",
+            "--tls-host",
+            "b.example.test",
+        ])
+        .unwrap();
+        assert!(o.tls);
+        assert_eq!(
+            o.tls_hosts,
+            vec!["otel.example-corp.test", "b.example.test"]
+        );
+        assert_eq!(o.port, DEFAULT_TLS_PORT, "the takeover defaults to 8443");
+        let o = run(&[
+            "--tls",
+            "--tls-host",
+            "a.example.test",
+            "--port",
+            "443",
+            "--tls-public-port",
+            "8444",
+        ])
+        .unwrap();
+        assert_eq!((o.port, o.tls_public_port), (443, Some(8444)));
+        assert_eq!(run(&[]).unwrap().port, DEFAULT_PORT);
+        assert_eq!(err(&["--tls"]).code, 2);
+        assert_eq!(err(&["--tls-host", "a.example.test"]).code, 2);
+        assert_eq!(err(&["--tls-public-port", "443"]).code, 2);
+        assert_eq!(
+            err(&[
+                "--tls",
+                "--tls-public-port",
+                "0",
+                "--tls-host",
+                "a.example.test"
+            ])
+            .code,
+            2
+        );
+        for bad in ["localhost", "*.example.com", "1.2.3.4", "a..b", "[::1]", ""] {
+            assert_eq!(err(&["--tls", "--tls-host", bad]).code, 2, "{bad}");
+        }
+        let many: Vec<String> = (0..33)
+            .flat_map(|i| ["--tls-host".to_string(), format!("h{i}.example.test")])
+            .collect();
+        let args: Vec<String> = ["--tls".to_string()].into_iter().chain(many).collect();
+        assert_eq!(parse(&args).unwrap_err().code, 2);
+        assert_eq!(
+            parse(&["--delete-ca".to_string()]).unwrap(),
+            Action::DeleteCa
+        );
     }
 }

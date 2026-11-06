@@ -88,6 +88,49 @@ pub fn route(method: &str, path: &str) -> Route {
     }
 }
 
+/// Takeover mode (design §16.3, §16.7.7): the exporter's own URL path is an organization's, so
+/// the signal comes from the path suffix `/v1/<signal>`, else the last path segment, else (the
+/// caller falls back to) the JSON root key. The query is ignored by the caller.
+pub fn route_any(path: &str) -> Option<Signal> {
+    let signals = [Signal::Logs, Signal::Metrics, Signal::Traces];
+    if let Some(s) = signals.iter().find(|s| path.ends_with(s.path())) {
+        return Some(*s);
+    }
+    let last = path.rsplit('/').next().unwrap_or("");
+    signals.into_iter().find(|s| s.name() == last)
+}
+
+/// The body names more than one OTLP signal.
+#[derive(Debug, PartialEq, Eq)]
+pub struct MultipleRoots;
+
+/// The signal named by the document's root key: `Ok(None)` for no OTLP root, `Err` for several.
+pub fn root_signal(doc: &Value) -> Result<Option<Signal>, MultipleRoots> {
+    let found: Vec<Signal> = [
+        (Signal::Logs, "resourceLogs"),
+        (Signal::Metrics, "resourceMetrics"),
+        (Signal::Traces, "resourceSpans"),
+    ]
+    .into_iter()
+    .filter(|(_, k)| doc.get(k).is_some())
+    .map(|(s, _)| s)
+    .collect();
+    match found.as_slice() {
+        [] => Ok(None),
+        [one] => Ok(Some(*one)),
+        _ => Err(MultipleRoots),
+    }
+}
+
+/// What a batch line says about how the request arrived, beyond its signal.
+#[derive(Debug, Clone, Default)]
+pub struct Meta<'a> {
+    /// `/v1/<signal>` or the fixed marker `<custom path>`: paths are never printed.
+    pub path: Option<&'a str>,
+    /// Takeover mode: the validated host the request named.
+    pub host: Option<&'a str>,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct Reject {
     pub status: u16,
@@ -590,6 +633,16 @@ struct Entry {
 }
 
 pub fn process(signal: Signal, bytes: usize, doc: &Value, ctx: &Ctx) -> Result<Prepared, Fail> {
+    process_with(signal, bytes, doc, ctx, &Meta::default())
+}
+
+pub fn process_with(
+    signal: Signal,
+    bytes: usize,
+    doc: &Value,
+    ctx: &Ctx,
+    meta: &Meta<'_>,
+) -> Result<Prepared, Fail> {
     precount(signal, doc)?;
     let export = match signal {
         Signal::Logs => Export::Logs,
@@ -845,7 +898,10 @@ pub fn process(signal: Signal, bytes: usize, doc: &Value, ctx: &Ctx) -> Result<P
         .unwrap_or(Value::Null);
     let mut m = Map::new();
     m.insert("signal".into(), json!(signal.name()));
-    m.insert("path".into(), json!(signal.path()));
+    m.insert("path".into(), json!(meta.path.unwrap_or(signal.path())));
+    if let Some(h) = meta.host {
+        m.insert("host".into(), json!(h));
+    }
     m.insert("bytes".into(), json!(bytes));
     m.insert("vendor".into(), json!(vendor));
     m.insert("service".into(), service_json);
@@ -1387,5 +1443,58 @@ mod tests {
         let a: Value = serde_json::from_str(&p.batch.alerts[0].tail).unwrap();
         assert_eq!(a["count"], 2);
         assert!(!p.batch.tail.contains("SECRET-TOKEN"));
+    }
+
+    #[test]
+    fn any_path_routing() {
+        assert_eq!(route_any("/v1/logs"), Some(Signal::Logs));
+        assert_eq!(
+            route_any("/_x/claude_code/v1/metrics"),
+            Some(Signal::Metrics)
+        );
+        assert_eq!(route_any("/_x/claude_code/logs"), Some(Signal::Logs));
+        assert_eq!(route_any("/a/b/traces"), Some(Signal::Traces));
+        assert_eq!(route_any("/"), None);
+        assert_eq!(route_any("/a/logs/x"), None);
+        assert_eq!(route_any("/v1/logs/"), None);
+        assert_eq!(
+            root_signal(&json!({"resourceLogs": []})),
+            Ok(Some(Signal::Logs))
+        );
+        assert_eq!(
+            root_signal(&json!({"resourceSpans": []})),
+            Ok(Some(Signal::Traces))
+        );
+        assert_eq!(root_signal(&json!({})), Ok(None));
+        assert_eq!(
+            root_signal(&json!({"resourceLogs": [], "resourceSpans": []})),
+            Err(MultipleRoots)
+        );
+    }
+
+    #[test]
+    fn batch_meta_never_carries_a_raw_path() {
+        let c = ctx(false);
+        let doc = logs(vec![], json!({"name": "s"}), vec![json!({})]);
+        let m = Meta {
+            path: Some("<custom path>"),
+            host: Some("otel.example-corp.test"),
+        };
+        let p = process_with(Signal::Logs, 1, &doc, &c, &m).unwrap();
+        let v: Value = serde_json::from_str(&p.batch.tail).unwrap();
+        assert_eq!(v["path"], "<custom path>");
+        assert_eq!(v["host"], "otel.example-corp.test");
+        let keys: Vec<&str> = v
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .take(4)
+            .collect();
+        assert_eq!(keys, ["signal", "path", "host", "bytes"]);
+        let plain: Value =
+            serde_json::from_str(&process(Signal::Logs, 1, &doc, &c).unwrap().batch.tail).unwrap();
+        assert!(plain.get("host").is_none());
+        assert_eq!(plain["path"], "/v1/logs");
     }
 }
