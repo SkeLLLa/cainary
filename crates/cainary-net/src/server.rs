@@ -509,8 +509,12 @@ pub(crate) trait Wire: Read + Write {
     fn sni(&self) -> Option<&str> {
         None
     }
-    /// The first request on the connection finished: the absolute deadline ends.
+    /// The first request on the connection finished: the accept deadline ends.
     fn first_request_done(&self) {}
+    /// An absolute deadline for every underlying read and write from now on, until the next
+    /// call. TLS turns one logical read into several socket reads, so a per-read timeout alone
+    /// would let a trickled record outlive the idle or request deadline.
+    fn set_deadline(&self, _until: Option<Instant>) {}
     /// Before closing: a TLS `close_notify`.
     fn finish(&mut self) {}
 }
@@ -536,7 +540,10 @@ impl Wire for TcpStream {
 #[cfg_attr(not(feature = "tls"), allow(dead_code))]
 pub(crate) struct Clipped {
     tcp: TcpStream,
+    /// From accept: covers the handshake and the first request, then is released.
     until: Cell<Option<Instant>>,
+    /// The current idle, request, write or linger deadline, set by the layer above.
+    cap: Cell<Option<Instant>>,
 }
 
 #[cfg_attr(not(feature = "tls"), allow(dead_code))]
@@ -545,6 +552,7 @@ impl Clipped {
         Clipped {
             tcp,
             until: Cell::new(Some(until)),
+            cap: Cell::new(None),
         }
     }
 
@@ -554,7 +562,11 @@ impl Clipped {
 
     /// The time left before `until`, or a timeout error.
     fn left(&self) -> io::Result<Option<Duration>> {
-        match self.until.get() {
+        let sooner = match (self.until.get(), self.cap.get()) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        match sooner {
             None => Ok(None),
             Some(t) => match t.checked_duration_since(Instant::now()) {
                 Some(d) if !d.is_zero() => Ok(Some(d)),
@@ -612,6 +624,9 @@ impl Wire for Clipped {
     fn first_request_done(&self) {
         self.release_deadline();
     }
+    fn set_deadline(&self, until: Option<Instant>) {
+        self.cap.set(until);
+    }
 }
 
 /// One accepted connection, in its own thread: plain, or the takeover's TLS handshake first.
@@ -651,6 +666,7 @@ impl<S: Wire> Read for Guarded<S> {
         if left == 0 {
             return Err(io::Error::from(io::ErrorKind::FileTooLarge));
         }
+        self.stream.set_deadline(Some(deadline));
         self.stream
             .set_read_timeout(Some(self.read_timeout.min(deadline - now)))?;
         let take = buf.len().min(left);
@@ -694,9 +710,11 @@ fn serve<S: Wire>(stream: S, sh: &Shared) {
         }
     };
     let stream = &mut reader.get_mut().stream;
+    stream.set_deadline(Some(Instant::now() + Duration::from_secs(1)));
     stream.finish();
     stream.shutdown_write();
     if linger {
+        stream.set_deadline(Some(Instant::now() + Duration::from_millis(300)));
         // Read what the client is still sending, briefly, so closing doesn't turn into a reset
         // that destroys the response it hasn't read yet.
         let _ = stream.set_read_timeout(Some(Duration::from_millis(100)));
@@ -738,7 +756,10 @@ impl Shared {
 }
 
 fn send<S: Wire>(r: &mut BufReader<Guarded<S>>, bytes: &[u8]) -> bool {
+    // Writes get the request's deadline too, so a stalled peer can't hold a TLS write open.
+    let until = r.get_ref().deadline.get();
     let s = &mut r.get_mut().stream;
+    s.set_deadline(Some(until));
     s.write_all(bytes).and_then(|()| s.flush()).is_ok()
 }
 

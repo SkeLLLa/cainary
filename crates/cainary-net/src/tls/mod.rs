@@ -18,7 +18,7 @@ use rustls::{ServerConfig, ServerConnection, StreamOwned};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Why a handshake was refused: fixed categories only, never the name or a TLS error text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -204,6 +204,9 @@ impl Wire for TlsStream {
     }
     fn first_request_done(&self) {
         self.inner.sock.first_request_done();
+    }
+    fn set_deadline(&self, until: Option<Instant>) {
+        self.inner.sock.set_deadline(until);
     }
     fn finish(&mut self) {
         self.inner.conn.send_close_notify();

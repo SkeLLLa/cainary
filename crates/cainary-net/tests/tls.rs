@@ -822,3 +822,63 @@ fn a_symlinked_state_directory_is_refused_with_exit_1() {
     assert_eq!(del.status.code(), Some(1));
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// The encrypted bytes of one request, as the client would put them on the wire.
+fn wire_bytes(s: &mut Tls_, req: &[u8]) -> Vec<u8> {
+    s.conn.writer().write_all(req).unwrap();
+    let mut out = Vec::new();
+    s.conn.write_tls(&mut out).unwrap();
+    out
+}
+
+#[test]
+fn a_record_trickled_after_a_good_first_request_is_cut_off_at_the_idle_deadline() {
+    let run = start_with("trickle2", |c| {
+        c.tunables.idle_timeout = Duration::from_millis(1200);
+        c.tunables.request_deadline = Duration::from_secs(30);
+        c.tunables.read_timeout = Duration::from_millis(500);
+        c.tunables.first_request_deadline = Duration::from_secs(30);
+    });
+    let cfg = client_config(&run.ca_pem, &[b"http/1.1"]);
+    let mut s = connect(run.srv.addrs[0], &cfg, HOST).unwrap();
+    let h = host_port(&run, HOST);
+    let body = fixture("codex-0.166.0/logs.json");
+    s.write_all(&request("/v1/logs", Some(&h), "", &body))
+        .unwrap();
+    assert_eq!(
+        read_reply(&mut s).unwrap().status,
+        200,
+        "the first request succeeds"
+    );
+    // The second request's encrypted record, one byte every 150 ms: every socket read succeeds
+    // within the 500 ms read timeout, so only an absolute deadline can end it.
+    let bytes = wire_bytes(&mut s, &request("/v1/logs", Some(&h), "", &body));
+    assert!(bytes.len() > 40, "{}", bytes.len());
+    let t0 = Instant::now();
+    let mut closed = false;
+    for b in &bytes {
+        if s.sock.write_all(&[*b]).is_err() {
+            closed = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(150));
+        s.sock
+            .set_read_timeout(Some(Duration::from_millis(1)))
+            .unwrap();
+        let mut one = [0u8; 1];
+        if matches!((&s.sock).read(&mut one), Ok(0)) {
+            closed = true;
+            break;
+        }
+        if t0.elapsed() > Duration::from_secs(8) {
+            break;
+        }
+    }
+    assert!(
+        closed,
+        "the idle deadline should have closed the connection"
+    );
+    assert!(t0.elapsed() < Duration::from_secs(4), "{:?}", t0.elapsed());
+    run.srv.shutdown();
+    let _ = std::fs::remove_dir_all(&run.dir);
+}
