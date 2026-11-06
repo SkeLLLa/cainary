@@ -23,6 +23,7 @@ enum Snapshots {
         await detailChangesSnapshot(root: root, out: out)
         await detailFailedSnapshots(root: root, out: out)
         menuBarSnapshot(out: out)
+        collectorSnapshot(out: out)
 
         exit(finishChecks())
     }

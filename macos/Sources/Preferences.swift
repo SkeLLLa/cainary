@@ -27,6 +27,16 @@ enum PrefKey {
     static let menuBarIconStyle = "menuBarIconStyle"
     static let refreshMinutes = "refreshMinutes"
     static let notInstalledExpanded = "notInstalledExpanded"
+    // The opt-in OTel debug collector (design §9).
+    static let otelCollectorEnabled = "otelCollectorEnabled"
+    static let otelCollectorPort = "otelCollectorPort"
+    static let otelCollectorLogToFile = "otelCollectorLogToFile"
+    static let otelCollectorLogPath = "otelCollectorLogPath"
+    /// The preset names that are on. Absent means the default-on set.
+    static let otelCollectorPresets = "otelCollectorPresets"
+    /// JSON `[{name, kind, pattern, caseSensitive}]`.
+    static let otelCollectorPatterns = "otelCollectorPatterns"
+    static let otelCollectorNotify = "otelCollectorNotify"
 }
 
 enum Prefs {

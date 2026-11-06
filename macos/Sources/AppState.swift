@@ -65,6 +65,8 @@ enum DetailSelection: Hashable, Sendable {
     case changes
     case entry(String)
     case sources
+    /// The opt-in OTel debug collector.
+    case collector
 }
 
 /// What the menu bar icon looks like for a scan state (§2.1). Pure: the drawing code only reads it.

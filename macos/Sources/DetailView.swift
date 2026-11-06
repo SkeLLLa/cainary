@@ -10,6 +10,7 @@ import SwiftUI
 struct DetailView: View {
     let state: ScanState
     @ObservedObject var navigation: Navigation
+    @ObservedObject var collector: CollectorStore
     let onRetry: () -> Void
 
     var body: some View {
@@ -63,6 +64,7 @@ struct DetailView: View {
             return .entry(id)
         }
         if navigation.selection == .sources { return .sources }
+        if navigation.selection == .collector { return .collector }
         if navigation.selection == .changes, !(report.changes ?? []).isEmpty { return .changes }
         let first = report.apps.first(where: \.installed) ?? report.entries.first
         return first.map { .entry($0.id) } ?? .sources
@@ -87,6 +89,8 @@ struct DetailView: View {
             Section {
                 Label("Checked locations", systemImage: "doc.text.magnifyingglass")
                     .tag(DetailSelection.sources)
+                Label("OTel debug collector", systemImage: "antenna.radiowaves.left.and.right")
+                    .tag(DetailSelection.collector)
             }
         }
         .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)
@@ -112,6 +116,8 @@ struct DetailView: View {
                 }
             case .changes:
                 ChangesPaneView(report: report)
+            case .collector:
+                CollectorView(store: collector)
             default:
                 CheckedLocationsView(sources: report.sources)
             }

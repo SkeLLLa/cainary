@@ -69,7 +69,7 @@ final class UNNotifier: NotificationPosting {
         let all = Set(planned.flatMap(\.changeIds))
         guard let center, defaults.notifyChanges else { return all }
         // Authorization is asked on the first post, not at launch.
-        let allowed = await authorized(center)
+        let allowed = await isAuthorized(center)
         guard isCurrent() else { return [] }
         guard allowed else { return all }
         var handled: Set<String> = []
@@ -96,13 +96,37 @@ final class UNNotifier: NotificationPosting {
         }
         return handled
     }
+}
 
-    /// Whether banners are allowed, asking once if the user hasn't decided.
-    private func authorized(_ center: NotificationCentering) async -> Bool {
-        switch await center.authorizationStatus() {
-        case .notDetermined: return await center.requestAuthorization()
-        case .denied: return false
-        default: return true
-        }
+/// Whether banners are allowed, asking once if the user hasn't decided.
+@MainActor
+private func isAuthorized(_ center: NotificationCentering) async -> Bool {
+    switch await center.authorizationStatus() {
+    case .notDetermined: return await center.requestAuthorization()
+    case .denied: return false
+    default: return true
+    }
+}
+
+/// Posts the collector's red-flag alerts (design §9): plain text, one per `identifier`, so a
+/// newer alert for the same pattern replaces the older banner. Whether to notify at all is the
+/// store's decision (the "Notify about red flags" pref).
+@MainActor
+final class UNAlertNotifier: AlertPosting {
+    private let center: NotificationCentering?
+
+    init(center: NotificationCentering? = nil) {
+        self.center =
+            center ?? (Bundle.main.bundleIdentifier != nil ? SystemNotificationCenter() : nil)
+    }
+
+    func post(title: String, body: String, identifier: String) async {
+        guard let center, await isAuthorized(center) else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.threadIdentifier = "otel-collector"
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
+        try? await center.add(request)
     }
 }

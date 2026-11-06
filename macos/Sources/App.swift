@@ -7,28 +7,32 @@ struct CainaryApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var store: ReportStore
     @StateObject private var navigation = Navigation()
+    @StateObject private var collector: CollectorStore
 
     init() {
         let client = CoreClient()
         _store = StateObject(wrappedValue: ReportStore(client: client, defaults: Prefs.defaults))
+        _collector = StateObject(
+            wrappedValue: CollectorStore(defaults: Prefs.defaults, poster: UNAlertNotifier()))
     }
 
     var body: some Scene {
         MenuBarExtra {
             PopoverHost(store: store, navigation: navigation)
         } label: {
-            LabelHost(store: store, navigation: navigation, delegate: delegate)
+            LabelHost(
+                store: store, navigation: navigation, collector: collector, delegate: delegate)
         }
         .menuBarExtraStyle(.window)
 
         Window("cAInary", id: WindowOpener.detailsID) {
-            DetailsHost(store: store, navigation: navigation)
+            DetailsHost(store: store, navigation: navigation, collector: collector)
         }
         .defaultSize(width: 780, height: 560)
         .commandsRemoved()
 
         Settings {
-            SettingsView(onRefreshChanged: { store.restartTimer() })
+            SettingsView(onRefreshChanged: { store.restartTimer() }, collector: collector)
         }
     }
 }
@@ -42,11 +46,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
     /// A click that arrived before `openEntry` was installed (the app was launched by it).
     private var pendingEntry: String?
+    /// Stops the OTel debug collector's child before the app exits; `LabelHost` installs it.
+    var onTerminate: (() -> Void)?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // `UNUserNotificationCenter` crashes outside an app bundle.
         guard Bundle.main.bundleIdentifier != nil else { return }
         UNUserNotificationCenter.current().delegate = self
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        onTerminate?()
     }
 
     nonisolated func userNotificationCenter(
@@ -80,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 private struct LabelHost: View {
     @ObservedObject var store: ReportStore
     @ObservedObject var navigation: Navigation
+    @ObservedObject var collector: CollectorStore
     let delegate: AppDelegate
     @AppStorage(PrefKey.menuBarIconStyle, store: Prefs.defaults) private var style = IconStyle.color
         .rawValue
@@ -91,14 +102,18 @@ private struct LabelHost: View {
             .task {
                 WindowOpener.shared.install(openWindow: openWindow, openSettings: openSettings)
                 delegate.openEntry = { id in
-                    navigation.select(.entry(id))
+                    // A red-flag notification opens the collector pane; anything else is an entry.
+                    navigation.select(
+                        id.hasPrefix(CollectorStore.notificationPrefix) ? .collector : .entry(id))
                     WindowOpener.shared.openDetails()
                 }
+                delegate.onTerminate = { collector.stopForQuit() }
                 _ = ActivationPolicy.shared
                 StatusItemMenu.shared.install(
                     actions: .live(store: store, navigation: navigation),
                     canCopy: { store.state.lastGood != nil })
                 store.start()
+                collector.launchIfEnabled()
             }
     }
 }
@@ -207,8 +222,11 @@ private struct OverlayScrollers: NSViewRepresentable {
 private struct DetailsHost: View {
     @ObservedObject var store: ReportStore
     @ObservedObject var navigation: Navigation
+    @ObservedObject var collector: CollectorStore
 
     var body: some View {
-        DetailView(state: store.state, navigation: navigation, onRetry: { store.refresh() })
+        DetailView(
+            state: store.state, navigation: navigation, collector: collector,
+            onRetry: { store.refresh() })
     }
 }

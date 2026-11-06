@@ -19,6 +19,7 @@ enum UnitTests {
         await storeTests()
         await trackingStoreTests()
         await copyReportStoreTests()
+        await collectorTests()
 
         exit(finishChecks())
     }
