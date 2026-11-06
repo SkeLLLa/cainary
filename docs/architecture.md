@@ -1454,6 +1454,23 @@ action only, and it needs the `tls` feature.
   after the swap, the change is committed (or the undo completed); before it, the record is
   cleared; if the file has changed since, it is left alone. A failure to write the final record is
   reported (never as success) and never rolls the settings back.
+- **One lock, and staging.** Every `--trust` and `--trust-status` call holds one exclusive lock
+  (`otel-debug-trust.lock` in the state directory, separate from the collector's run lock so
+  `--trust` works while it runs) across recovery, reads, edits and the final state write; a second
+  caller is refused with a fixed message after waiting 10 s (Codex and the bundle refresh at a
+  `--tls` start too). `--trust-status` waits 2 s and, if it can't get the lock, only inspects: it
+  never clears a transaction another process is in the middle of. The new settings file is written
+  and fsynced to a temporary first, then compared against the file, then renamed at once. A failure
+  after the rename or unlink (a failed directory fsync) is reported as uncertain, keeps the
+  transaction and never restores old state or claims nothing changed.
+- **Input hygiene.** The settings file must be valid UTF-8 (no lossy conversion); reads are
+  bounded by the 1 MiB cap itself, so a file that grows during the read is refused; the edited
+  result and any bundle are checked against the same cap before anything is recorded; file names
+  that come from a record are validated (`settings.json.cainary-…bak` only) and a NUL in a name is
+  an error, not a panic.
+- **Previews and status never write.** `--dry-run` (apply or undo) takes no lock, finishes or clears
+  nothing and deletes nothing: it only mentions a pending transaction. Recovery runs only in a call
+  that holds the lock.
 - **State and undo.** The state file records the settings path, the original value, what was
   written, whether the file and the `env` object were created, and the hashes and backup that make
   an exact restore possible. `--undo` acts only on the **same settings location** it recorded (a

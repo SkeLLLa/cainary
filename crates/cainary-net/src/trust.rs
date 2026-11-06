@@ -19,15 +19,16 @@ use serde_json::{Map, Value, json};
 use std::ffi::CString;
 use std::fs::File;
 use std::io::{self, Write};
-use std::os::fd::FromRawFd;
+use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 pub const KEY: &str = "NODE_EXTRA_CA_CERTS";
 pub const CLAUDE_BUNDLE: &str = "otel-debug-claude-bundle.pem";
 pub const CODEX_BUNDLE: &str = "otel-debug-codex-bundle.pem";
 pub const STATE_FILE: &str = "otel-debug-trust.json";
+pub const LOCK_FILE: &str = "otel-debug-trust.lock";
 const MAX_FILE: usize = 1 << 20;
 const BEGIN: &str = "-----BEGIN CERTIFICATE-----";
 const END: &str = "-----END CERTIFICATE-----";
@@ -175,8 +176,15 @@ fn with_shell(h: &Harness, base: &str) -> String {
 
 // ── descriptor-relative file operations (this file is the writer, design §17.1) ─────────────
 
-fn cname(name: &str) -> CString {
-    CString::new(name).expect("fixed names have no NUL")
+/// A name for a system call. Names that came from a record are checked with `plain_name` first;
+/// a NUL is an error with no content in it.
+fn cname(name: &str) -> io::Result<CString> {
+    CString::new(name).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))
+}
+
+/// A plain file name: no separator, no NUL, no `.`/`..`, at most 255 bytes.
+fn plain_name(n: &str) -> bool {
+    !n.is_empty() && n.len() <= 255 && n != "." && n != ".." && !n.contains(['/', '\0'])
 }
 
 fn euid() -> u32 {
@@ -216,7 +224,7 @@ struct Snapshot {
 /// Reads `name` in `dir` with its identity: `Ok(None)` if absent; refuses a symlink, a file that
 /// isn't ours or isn't a regular one-link file, and anything over 1 MiB.
 fn read_snapshot(dir: &CaDir, name: &str) -> Result<Option<Snapshot>, Why> {
-    let n = cname(name);
+    let n = cname(name).map_err(|_| Why::Io)?;
     // SAFETY: valid descriptor and NUL-terminated name; the flags are plain constants.
     let raw = unsafe {
         libc::openat(
@@ -245,8 +253,15 @@ fn read_snapshot(dir: &CaDir, name: &str) -> Result<Option<Snapshot>, Why> {
     if md.len() > MAX_FILE as u64 {
         return Err(Why::TooBig);
     }
+    hook::after_stat(name);
+    // Bounded by the cap, not by the size seen a moment ago: a file that grows while being read
+    // is refused, not buffered.
     let mut bytes = Vec::new();
-    io::Read::read_to_end(&mut f, &mut bytes).map_err(|_| Why::Io)?;
+    io::Read::read_to_end(&mut io::Read::take(&mut f, MAX_FILE as u64 + 1), &mut bytes)
+        .map_err(|_| Why::Io)?;
+    if bytes.len() > MAX_FILE {
+        return Err(Why::TooBig);
+    }
     let ident = Ident {
         dev: md.dev(),
         ino: md.ino(),
@@ -262,6 +277,9 @@ fn read_in(dir: &CaDir, name: &str) -> Result<Option<Vec<u8>>, Why> {
 
 /// Flushes a directory's entries (a created, renamed or removed file) to disk.
 fn sync_dir(dir: &CaDir) -> io::Result<()> {
+    if hook::fail_sync() {
+        return Err(io::Error::other("injected failure"));
+    }
     // SAFETY: the descriptor is valid for the call.
     if unsafe { libc::fsync(dir.raw_fd()) } == 0 {
         Ok(())
@@ -271,7 +289,7 @@ fn sync_dir(dir: &CaDir) -> io::Result<()> {
 }
 
 fn open_new(dir: &CaDir, name: &str, mode: u32) -> io::Result<File> {
-    let n = cname(name);
+    let n = cname(name)?;
     // SAFETY: valid descriptor and NUL-terminated name; `mode` is read only with O_CREAT.
     let raw = unsafe {
         libc::openat(
@@ -295,21 +313,12 @@ fn open_new(dir: &CaDir, name: &str, mode: u32) -> io::Result<File> {
 }
 
 fn unlink_in(dir: &CaDir, name: &str) -> io::Result<()> {
-    let n = cname(name);
-    // SAFETY: valid descriptor and NUL-terminated name.
-    let r = unsafe { libc::unlinkat(dir.raw_fd(), n.as_ptr(), 0) };
-    if r == 0 {
-        sync_dir(dir)
-    } else if io::Error::last_os_error().kind() == io::ErrorKind::NotFound {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
+    unlink_checked(dir, name).map_err(|_| io::Error::other("could not remove the file"))
 }
 
-/// Tmp (`create_new | O_NOFOLLOW`), 0600→`mode`, write, fsync, rename over `name` in the same
-/// directory.
-fn write_atomic(dir: &CaDir, name: &str, bytes: &[u8], mode: u32) -> io::Result<()> {
+/// Tmp (`create_new | O_NOFOLLOW`), 0600→`mode`, written and fsynced, not yet in place. Returns
+/// its name.
+fn stage(dir: &CaDir, name: &str, bytes: &[u8], mode: u32) -> io::Result<String> {
     // SAFETY: getpid has no preconditions and cannot fail.
     let tmp = format!("{name}.cainary-tmp.{}", unsafe { libc::getpid() });
     let mut f = open_new(dir, &tmp, mode)?;
@@ -319,15 +328,103 @@ fn write_atomic(dir: &CaDir, name: &str, bytes: &[u8], mode: u32) -> io::Result<
         let _ = unlink_in(dir, &tmp);
         return Err(e);
     }
-    let (t, n) = (cname(&tmp), cname(name));
+    Ok(tmp)
+}
+
+/// How a rename or unlink that was asked for ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Done {
+    /// It did not happen.
+    No,
+    /// It happened, but making it durable failed: what is on disk is uncertain, so nothing may be
+    /// restored or declared unchanged.
+    Uncertain,
+}
+
+/// `renameat(tmp, name)` and a directory fsync. The rename is the last thing before the answer.
+fn publish(dir: &CaDir, tmp: &str, name: &str) -> Result<(), Done> {
+    let (Ok(t), Ok(n)) = (cname(tmp), cname(name)) else {
+        return Err(Done::No);
+    };
     // SAFETY: valid descriptor and NUL-terminated names.
     let r = unsafe { libc::renameat(dir.raw_fd(), t.as_ptr(), dir.raw_fd(), n.as_ptr()) };
     if r != 0 {
-        let e = io::Error::last_os_error();
-        let _ = unlink_in(dir, &tmp);
-        return Err(e);
+        let _ = unlink_in(dir, tmp);
+        return Err(Done::No);
     }
-    sync_dir(dir)
+    sync_dir(dir).map_err(|_| Done::Uncertain)
+}
+
+/// `unlinkat(name)` and a directory fsync, with the same two kinds of failure.
+fn unlink_checked(dir: &CaDir, name: &str) -> Result<(), Done> {
+    let Ok(n) = cname(name) else {
+        return Err(Done::No);
+    };
+    // SAFETY: valid descriptor and NUL-terminated name.
+    let r = unsafe { libc::unlinkat(dir.raw_fd(), n.as_ptr(), 0) };
+    if r != 0 && io::Error::last_os_error().kind() != io::ErrorKind::NotFound {
+        return Err(Done::No);
+    }
+    sync_dir(dir).map_err(|_| Done::Uncertain)
+}
+
+fn discard(dir: &CaDir, tmp: &str) {
+    let _ = unlink_in(dir, tmp);
+}
+
+fn write_atomic(dir: &CaDir, name: &str, bytes: &[u8], mode: u32) -> io::Result<()> {
+    let tmp = stage(dir, name, bytes, mode)?;
+    publish(dir, &tmp, name).map_err(|_| io::Error::other("could not put the file in place"))
+}
+
+/// The one lock every `--trust` and `--trust-status` call holds across recovery, reads, edits and
+/// the final state write (design §17.2). Not the CA directory's run lock: `--trust` has to work
+/// while the collector runs. Dropped (and released) with the file.
+pub(crate) struct TrustLock {
+    _f: File,
+}
+
+/// Takes the lock, polling for up to `wait`. `Ok(None)`: someone else holds it.
+fn lock_trust(dir: &CaDir, wait: Duration) -> io::Result<Option<TrustLock>> {
+    let n = cname(LOCK_FILE)?;
+    // SAFETY: valid descriptor and NUL-terminated name; the flags are plain constants.
+    let raw = unsafe {
+        libc::openat(
+            dir.raw_fd(),
+            n.as_ptr(),
+            libc::O_RDWR | libc::O_CREAT | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            0o600 as libc::c_uint,
+        )
+    };
+    if raw < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `raw` is a fresh descriptor we own.
+    let f = unsafe { File::from_raw_fd(raw) };
+    let md = f.metadata()?;
+    // SAFETY: geteuid has no preconditions and cannot fail. (Not `euid()`: the tests' pretend
+    // user is about the settings file, not this one.)
+    let me = unsafe { libc::geteuid() };
+    if !md.is_file() || md.uid() != me || md.nlink() != 1 {
+        return Err(io::Error::other(
+            "the lock file is not a regular file of yours",
+        ));
+    }
+    let end = Instant::now() + wait;
+    loop {
+        // SAFETY: the descriptor is valid for the call.
+        if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            return Ok(Some(TrustLock { _f: f }));
+        }
+        let e = io::Error::last_os_error();
+        if e.raw_os_error() != Some(libc::EWOULDBLOCK) {
+            return Err(e);
+        }
+        if Instant::now() >= end {
+            return Ok(None);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 /// A backup next to the file: `<name>.cainary-<UTC yyyymmddThhmmssZ>.bak`, 0600, never
@@ -426,9 +523,11 @@ fn system_roots(h: &Harness) -> Option<Vec<String>> {
     CANDIDATES.iter().find_map(|c| read_certs(h.sys(c).path()))
 }
 
+const COLLECTOR_MISSING: &str = "Start the takeover once (cainary-otel-debug --tls …) so the collector certificate exists, then try again.";
+
 /// The collector's certificate, exactly one, from the CA directory.
 fn collector_ca(ca: &CaDir) -> Result<String, &'static str> {
-    const MISSING: &str = "Start the takeover once (cainary-otel-debug --tls …) so the collector certificate exists, then try again.";
+    const MISSING: &str = COLLECTOR_MISSING;
     match read_in(ca, CA_FILE) {
         Ok(Some(b)) => {
             let certs = pem_certs(&String::from_utf8_lossy(&b));
@@ -641,6 +740,9 @@ fn dir_error(target: Target, what: &str, dir: &Path) -> Line {
     )
 }
 
+const RESTORED: &str =
+    "Restored your previous Claude Code setting. Restart Claude Code for it to take effect.";
+const UNCERTAIN: &str = "The settings file may have been changed, but that could not be confirmed on disk. Run cainary-otel-debug --trust-status to check and finish.";
 const CHANGED: &str =
     "Your Claude Code settings changed while editing; close Claude Code and try again.";
 const WHERE_CHANGED: &str = "Your Claude Code settings location changed since cAInary edited it (CLAUDE_CONFIG_DIR?); leaving it alone.";
@@ -650,14 +752,13 @@ struct Settings {
     path: PathBuf,
     /// The file as read, when it existed, with its identity.
     snapshot: Option<Snapshot>,
+    /// Its bytes as text: validated UTF-8, never a lossy rendering.
+    text: String,
 }
 
 impl Settings {
     fn text(&self) -> String {
-        self.snapshot
-            .as_ref()
-            .map(|s| String::from_utf8_lossy(&s.bytes).into_owned())
-            .unwrap_or_default()
+        self.text.clone()
     }
     fn path_str(&self) -> String {
         self.path.display().to_string()
@@ -682,10 +783,22 @@ fn open_settings(env: &Env<'_>, create_dir: bool) -> Result<Option<Settings>, Bo
         l.settings_path = Some(path.display().to_string());
         Box::new(l)
     })?;
+    let text = match &snapshot {
+        None => String::new(),
+        Some(sn) => String::from_utf8(sn.bytes.clone()).map_err(|_| {
+            let mut l = Line::refused(
+                t,
+                "The settings file is not valid UTF-8; refusing to edit it.",
+            );
+            l.settings_path = Some(path.display().to_string());
+            Box::new(l)
+        })?,
+    };
     Ok(Some(Settings {
         dir,
         path,
         snapshot,
+        text,
     }))
 }
 
@@ -715,16 +828,88 @@ pub enum Mode {
     Undo { dry_run: bool },
 }
 
-pub fn claude_code(env: &Env<'_>, mode: Mode) -> Line {
-    let note = recover(env);
-    let mut line = match mode {
-        Mode::Apply { dry_run } => claude_apply(env, dry_run),
-        Mode::Undo { dry_run } => claude_undo(env, dry_run),
-    };
+const BUSY: &str =
+    "Another cainary-otel-debug --trust call is working on this right now; try again in a moment.";
+#[cfg_attr(test, allow(dead_code))]
+const LOCK_WAIT: Duration = Duration::from_secs(10);
+
+fn lock_wait() -> Duration {
+    #[cfg(test)]
+    return Duration::from_millis(300);
+    #[cfg(not(test))]
+    LOCK_WAIT
+}
+
+fn status_wait() -> Duration {
+    #[cfg(test)]
+    return Duration::from_millis(100);
+    #[cfg(not(test))]
+    STATUS_WAIT
+}
+/// `--trust-status` waits this long for the lock, then only inspects.
+#[cfg_attr(test, allow(dead_code))]
+const STATUS_WAIT: Duration = Duration::from_secs(2);
+
+fn prefixed(note: Option<String>, mut line: Line) -> Line {
     if let Some(n) = note {
         line.message = format!("{n} {}", line.message);
     }
     line
+}
+
+pub fn claude_code(env: &Env<'_>, mode: Mode) -> Line {
+    let t = Target::ClaudeCode;
+    match mode {
+        // Previews never write: no lock, no recovery, only a note about a pending transaction.
+        Mode::Apply { dry_run: true } => {
+            let ca = CaDir::open_existing(&env.ca_dir).ok().flatten();
+            let note = ca.as_ref().and_then(|c| inspect_note(env, c));
+            prefixed(note, claude_apply(env, true, ca.as_ref(), None))
+        }
+        Mode::Undo { dry_run: true } => match CaDir::open_existing(&env.ca_dir) {
+            Ok(Some(ca)) => {
+                let note = inspect_note(env, &ca);
+                prefixed(note, claude_undo(env, true, &ca, None))
+            }
+            Ok(None) => nothing_changed(t),
+            Err(_) => dir_error(t, "collector certificate", &env.ca_dir),
+        },
+        Mode::Apply { dry_run: false } | Mode::Undo { dry_run: false } => {
+            let undo = matches!(mode, Mode::Undo { .. });
+            let ca = if undo {
+                match CaDir::open_existing(&env.ca_dir) {
+                    Ok(Some(c)) => c,
+                    Ok(None) => return nothing_changed(t),
+                    Err(_) => return dir_error(t, "collector certificate", &env.ca_dir),
+                }
+            } else {
+                match open_ca_dir(env, t) {
+                    Ok(c) => c,
+                    Err(l) => return *l,
+                }
+            };
+            let lock = match lock_trust(&ca, lock_wait()) {
+                Ok(Some(l)) => l,
+                Ok(None) => return Line::refused(t, BUSY),
+                Err(_) => return Line::refused(t, "The trust lock could not be taken."),
+            };
+            let note = recover(env, &ca, &lock);
+            let line = if undo {
+                claude_undo(env, false, &ca, Some(&lock))
+            } else {
+                claude_apply(env, false, Some(&ca), Some(&lock))
+            };
+            prefixed(note, line)
+        }
+    }
+}
+
+fn nothing_changed(t: Target) -> Line {
+    Line::new(
+        t,
+        Action::NothingToUndo,
+        "cAInary has not changed your Claude Code settings.",
+    )
 }
 
 fn fill_paths(l: &mut Line, s: &Settings) {
@@ -751,15 +936,12 @@ fn unchanged_since(s: &Settings, point: &str) -> bool {
     }
 }
 
-/// Writes the settings (or removes the file) and makes the directory entry durable.
-fn commit_settings(s: &Settings, new: Option<&str>) -> io::Result<()> {
-    match new {
-        Some(t) => write_atomic(&s.dir, "settings.json", t.as_bytes(), 0o600),
-        None => unlink_in(&s.dir, "settings.json"),
-    }
-}
-
-fn claude_apply(env: &Env<'_>, dry_run: bool) -> Line {
+fn claude_apply(
+    env: &Env<'_>,
+    dry_run: bool,
+    ca: Option<&CaDir>,
+    lock: Option<&TrustLock>,
+) -> Line {
     let t = Target::ClaudeCode;
     let h = env.harness;
     if managed_sets_key(h) {
@@ -772,10 +954,6 @@ fn claude_apply(env: &Env<'_>, dry_run: bool) -> Line {
         Ok(Some(s)) => s,
         // A dry run doesn't create the directory: it describes creating the file.
         Ok(None) => return preview_new_claude(env),
-        Err(l) => return *l,
-    };
-    let ca_dir = match open_ca_dir(env, t) {
-        Ok(d) => d,
         Err(l) => return *l,
     };
     let text = settings.text();
@@ -794,9 +972,11 @@ fn claude_apply(env: &Env<'_>, dry_run: bool) -> Line {
         },
         None => None,
     };
-    let ca_path = ca_dir.path().join(CA_FILE).display().to_string();
-    let bundle_path = ca_dir.path().join(CLAUDE_BUNDLE).display().to_string();
-    let state = read_state(&ca_dir);
+    // A preview with no collector directory yet reads nothing from it.
+    let ca_base = ca.map_or_else(|| env.ca_dir.clone(), |d| d.path().to_path_buf());
+    let ca_path = ca_base.join(CA_FILE).display().to_string();
+    let bundle_path = ca_base.join(CLAUDE_BUNDLE).display().to_string();
+    let state = ca.map(read_state).unwrap_or_default();
     let mut line = Line::new(t, Action::Already, "");
     fill_paths(&mut line, &settings);
     line.to = existing.clone();
@@ -819,10 +999,15 @@ fn claude_apply(env: &Env<'_>, dry_run: bool) -> Line {
     let (written, bundle_text): (String, Option<String>) = match &existing {
         None => (ca_path.clone(), None),
         Some(p) => {
-            let ca = match collector_ca(&ca_dir) {
-                Ok(c) => c,
-                Err(m) => {
+            let collector = match ca.map(collector_ca) {
+                Some(Ok(c)) => c,
+                Some(Err(m)) => {
                     let mut l = Line::refused(t, m);
+                    fill_paths(&mut l, &settings);
+                    return l;
+                }
+                None => {
+                    let mut l = Line::refused(t, COLLECTOR_MISSING);
                     fill_paths(&mut l, &settings);
                     return l;
                 }
@@ -836,7 +1021,7 @@ fn claude_apply(env: &Env<'_>, dry_run: bool) -> Line {
                 l.from = Some(p.clone());
                 return l;
             };
-            (bundle_path.clone(), Some(bundle(&certs, &ca)))
+            (bundle_path.clone(), Some(bundle(&certs, &collector)))
         }
     };
     let new_text = match &doc {
@@ -855,6 +1040,18 @@ fn claude_apply(env: &Env<'_>, dry_run: bool) -> Line {
             return l;
         }
     };
+    // What is about to be written must be something this tool would read back: within the cap.
+    let too_big = |m: &str| {
+        let mut l = Line::refused(t, m);
+        fill_paths(&mut l, &settings);
+        l
+    };
+    if new_text.len() > MAX_FILE {
+        return too_big("The edited settings file would be over 1 MiB; refusing to edit it.");
+    }
+    if bundle_text.as_ref().is_some_and(|b| b.len() > MAX_FILE) {
+        return too_big("The combined bundle would be over 1 MiB; refusing to make it.");
+    }
     let stamp_now = stamp(&now_string(h));
     let planned_backup = settings
         .snapshot
@@ -888,6 +1085,8 @@ fn claude_apply(env: &Env<'_>, dry_run: bool) -> Line {
         fill_paths(&mut l, &settings);
         l
     };
+    let ca_dir = ca.expect("a real apply has the collector directory");
+    let _held = lock.expect("a real apply holds the trust lock");
     let cs = ClaudeState {
         settings_path: settings.path_str(),
         original: existing.clone(),
@@ -906,7 +1105,7 @@ fn claude_apply(env: &Env<'_>, dry_run: bool) -> Line {
         before: cs.orig_sha.clone(),
         after: cs.new_sha.clone(),
     });
-    if save_state(&ca_dir, &pending_state).is_err() {
+    if save_state(ca_dir, &pending_state).is_err() {
         return fail("The state file could not be written; nothing was changed.");
     }
     if hook::stop("after-pending") {
@@ -917,32 +1116,46 @@ fn claude_apply(env: &Env<'_>, dry_run: bool) -> Line {
         Some(s) => match backup(&settings.dir, "settings.json", &s.bytes, &stamp_now) {
             Ok(n) => Some(n),
             Err(_) => {
-                let _ = save_state(&ca_dir, &state);
+                let _ = save_state(ca_dir, &state);
                 return fail("The settings backup could not be written; nothing was changed.");
             }
         },
         None => None,
     };
     if let Some(text) = &bundle_text
-        && write_atomic(&ca_dir, CLAUDE_BUNDLE, text.as_bytes(), 0o644).is_err()
+        && write_atomic(ca_dir, CLAUDE_BUNDLE, text.as_bytes(), 0o644).is_err()
     {
-        let _ = save_state(&ca_dir, &state);
+        let _ = save_state(ca_dir, &state);
         return fail("The combined bundle could not be written; nothing was changed.");
     }
-    // 3. Compare, then swap.
+    // 3. Stage the new file first (written and fsynced), then compare, then rename at once: the
+    //    time between the check and the swap is a few system calls, not a file write.
+    let tmp = match stage(&settings.dir, "settings.json", new_text.as_bytes(), 0o600) {
+        Ok(t) => t,
+        Err(_) => {
+            let _ = save_state(ca_dir, &state);
+            return fail("The settings file could not be written; nothing was changed.");
+        }
+    };
     if !unchanged_since(&settings, "apply") {
-        if let (Some(n), Some(_)) = (&backup_name, &settings.snapshot) {
+        discard(&settings.dir, &tmp);
+        if let Some(n) = &backup_name {
             let _ = unlink_in(&settings.dir, n);
         }
-        let _ = save_state(&ca_dir, &state);
+        let _ = save_state(ca_dir, &state);
         return fail(CHANGED);
     }
     if hook::stop("before-rename") {
         return fail("(simulated crash)");
     }
-    if commit_settings(&settings, Some(&new_text)).is_err() {
-        let _ = save_state(&ca_dir, &state);
-        return fail("The settings file could not be written; nothing was changed.");
+    match publish(&settings.dir, &tmp, "settings.json") {
+        Ok(()) => {}
+        Err(Done::No) => {
+            let _ = save_state(ca_dir, &state);
+            return fail("The settings file could not be written; nothing was changed.");
+        }
+        // The rename happened and its durability is unknown: keep the transaction, say so.
+        Err(Done::Uncertain) => return fail(UNCERTAIN),
     }
     if hook::stop("after-rename") {
         return fail("(simulated crash)");
@@ -955,7 +1168,7 @@ fn claude_apply(env: &Env<'_>, dry_run: bool) -> Line {
         backup: backup_name.clone(),
         ..cs
     });
-    if save_state(&ca_dir, &committed).is_err() {
+    if save_state(ca_dir, &committed).is_err() {
         return fail(
             "The change was made, but its record could not be saved. Run cainary-otel-debug --trust-status to finish it.",
         );
@@ -994,28 +1207,17 @@ fn preview_new_claude(env: &Env<'_>) -> Line {
     l
 }
 
-fn claude_undo(env: &Env<'_>, dry_run: bool) -> Line {
+fn claude_undo(env: &Env<'_>, dry_run: bool, ca_dir: &CaDir, lock: Option<&TrustLock>) -> Line {
     let t = Target::ClaudeCode;
     let h = env.harness;
-    let nothing = || {
-        Line::new(
-            t,
-            Action::NothingToUndo,
-            "cAInary has not changed your Claude Code settings.",
-        )
-    };
-    let ca_dir = match CaDir::open_existing(&env.ca_dir) {
-        Ok(Some(d)) => d,
-        Ok(None) => return nothing(),
-        Err(_) => return dir_error(t, "collector certificate", &env.ca_dir),
-    };
-    let state = read_state(&ca_dir);
+    let nothing = || nothing_changed(t);
+    let state = read_state(ca_dir);
     let Some(cs) = state.claude.clone() else {
         return nothing();
     };
     let settings = match open_settings(env, false) {
         Ok(Some(s)) => s,
-        Ok(None) => return stale_record(&ca_dir, state, dry_run),
+        Ok(None) => return stale_record(ca_dir, state, dry_run),
         Err(l) => return *l,
     };
     // Only the settings the record was made for.
@@ -1025,12 +1227,12 @@ fn claude_undo(env: &Env<'_>, dry_run: bool) -> Line {
         return l;
     }
     if settings.snapshot.is_none() {
-        return stale_record(&ca_dir, state, dry_run);
+        return stale_record(ca_dir, state, dry_run);
     }
     let text = settings.text();
     let doc = match parse_settings(&settings, &text) {
         Ok(Some(d)) => d,
-        Ok(None) => return stale_record(&ca_dir, state, dry_run),
+        Ok(None) => return stale_record(ca_dir, state, dry_run),
         Err(l) => return *l,
     };
     let current = doc.env_value(KEY).ok().flatten();
@@ -1116,6 +1318,10 @@ fn claude_undo(env: &Env<'_>, dry_run: bool) -> Line {
         fill_paths(&mut x, &settings);
         x
     };
+    if new_text.as_ref().is_some_and(|n| n.len() > MAX_FILE) {
+        return fail("The restored settings file would be over 1 MiB; refusing to edit it.");
+    }
+    let _held = lock.expect("a real undo holds the trust lock");
     let after = new_text.as_ref().map(|n| sha_of(n.as_bytes()));
     let mut pending_state = state.clone();
     pending_state.pending = Some(Pending {
@@ -1124,7 +1330,7 @@ fn claude_undo(env: &Env<'_>, dry_run: bool) -> Line {
         before: Some(sha_of(&snap_bytes)),
         after,
     });
-    if save_state(&ca_dir, &pending_state).is_err() {
+    if save_state(ca_dir, &pending_state).is_err() {
         return fail("The state file could not be written; nothing was changed.");
     }
     if hook::stop("after-pending") {
@@ -1138,37 +1344,73 @@ fn claude_undo(env: &Env<'_>, dry_run: bool) -> Line {
     ) {
         Ok(n) => n,
         Err(_) => {
-            let _ = save_state(&ca_dir, &state);
+            let _ = save_state(ca_dir, &state);
             return fail("The settings backup could not be written; nothing was changed.");
         }
     };
+    // Stage first, compare, then swap (or, for a file cAInary created, compare, then remove).
+    let tmp = match &new_text {
+        Some(n) => match stage(&settings.dir, "settings.json", n.as_bytes(), 0o600) {
+            Ok(t) => Some(t),
+            Err(_) => {
+                let _ = unlink_in(&settings.dir, &backup_name);
+                let _ = save_state(ca_dir, &state);
+                return fail("The settings file could not be written; nothing was undone.");
+            }
+        },
+        None => None,
+    };
     if !unchanged_since(&settings, "undo") {
+        if let Some(t) = &tmp {
+            discard(&settings.dir, t);
+        }
         let _ = unlink_in(&settings.dir, &backup_name);
-        let _ = save_state(&ca_dir, &state);
+        let _ = save_state(ca_dir, &state);
         return fail(CHANGED);
     }
-    if commit_settings(&settings, new_text.as_deref()).is_err() {
-        let _ = save_state(&ca_dir, &state);
-        return fail("The settings file could not be changed; nothing was undone.");
+    let swapped = match &tmp {
+        Some(t) => publish(&settings.dir, t, "settings.json"),
+        None => unlink_checked(&settings.dir, "settings.json"),
+    };
+    match swapped {
+        Ok(()) => {}
+        Err(Done::No) => {
+            let _ = save_state(ca_dir, &state);
+            return fail("The settings file could not be changed; nothing was undone.");
+        }
+        Err(Done::Uncertain) => return fail(UNCERTAIN),
     }
     if hook::stop("after-rename") {
         return fail("(simulated crash)");
     }
-    if let Err(m) = finish_undo(&ca_dir, &state, &cs) {
+    if let Err(m) = finish_undo(ca_dir, &state, &cs) {
         return fail(m);
     }
     l.backup_path = Some(settings.dir.path().join(backup_name).display().to_string());
-    l.message = format!("Restored your previous Claude Code setting. {RESTART}");
+    l.message = RESTORED.to_string();
     l
 }
 
-/// The original bytes from the backup, if the backup still holds exactly what was recorded.
+/// The backup name a record may name: `settings.json.cainary-<stamp>[-n].bak`, nothing else.
+fn valid_backup_name(n: &str) -> bool {
+    plain_name(n)
+        && n.starts_with("settings.json.cainary-")
+        && n.ends_with(".bak")
+        && n.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b".-_".contains(&b))
+}
+
+/// The original bytes from the backup, if the backup still holds exactly what was recorded. The
+/// name comes from a record, so it is checked before it reaches a system call.
 fn exact_original(s: &Settings, cs: &ClaudeState) -> Option<String> {
     let want = cs.orig_sha.as_deref()?;
     let name = Path::new(cs.backup.as_deref()?)
         .file_name()?
         .to_str()?
         .to_string();
+    if !valid_backup_name(&name) {
+        return None;
+    }
     let bytes = read_in(&s.dir, &name).ok().flatten()?;
     (sha_of(&bytes) == want).then(|| String::from_utf8(bytes).ok())?
 }
@@ -1177,11 +1419,7 @@ fn exact_original(s: &Settings, cs: &ClaudeState) -> Option<String> {
 /// only a preview, which changes nothing.
 fn stale_record(ca: &CaDir, mut state: State, dry_run: bool) -> Line {
     let t = Target::ClaudeCode;
-    let l = Line::new(
-        t,
-        Action::NothingToUndo,
-        "cAInary has not changed your Claude Code settings.",
-    );
+    let l = nothing_changed(t);
     if dry_run {
         return l;
     }
@@ -1195,39 +1433,51 @@ fn stale_record(ca: &CaDir, mut state: State, dry_run: bool) -> Line {
     l
 }
 
-/// The last step of an undo: drop the record and the transaction in one write, and the bundle.
-/// A failure is reported, with the transaction left for the next run to finish.
+/// The last step of an undo: the bundle goes first, then the record and the transaction in one
+/// write. A failure is reported, with the transaction left for the next run to finish.
 fn finish_undo(ca: &CaDir, state: &State, cs: &ClaudeState) -> Result<(), &'static str> {
+    const LEFT: &str = "The settings were restored, but the record of the change could not be cleared. Run cainary-otel-debug --trust-status to finish it.";
+    if cs.written == ca.path().join(CLAUDE_BUNDLE).display().to_string()
+        && unlink_in(ca, CLAUDE_BUNDLE).is_err()
+    {
+        return Err(LEFT);
+    }
     let mut done = state.clone();
     done.claude = None;
     done.pending = None;
-    if save_state(ca, &done).is_err() {
-        return Err(
-            "The settings were restored, but the record of the change could not be cleared. Run cainary-otel-debug --trust-status to finish it.",
-        );
-    }
-    if cs.written == ca.path().join(CLAUDE_BUNDLE).display().to_string() {
-        let _ = unlink_in(ca, CLAUDE_BUNDLE);
-    }
-    Ok(())
+    save_state(ca, &done).map_err(|_| LEFT)
 }
 
-/// A transaction found in the state file: finished, or cleared, according to what the settings
-/// file turns out to hold. Returns a sentence for the user when something was found.
-fn recover(env: &Env<'_>) -> Option<String> {
-    let ca = CaDir::open_existing(&env.ca_dir).ok().flatten()?;
-    let state = read_state(&ca);
-    let p = state.pending.clone()?;
+const PENDING_NOTE: &str = "An interrupted Claude Code trust change is pending; run cainary-otel-debug --trust-status to finish or clear it.";
+
+/// For previews and a status that couldn't take the lock: say a transaction is pending, change
+/// nothing.
+fn inspect_note(_env: &Env<'_>, ca: &CaDir) -> Option<String> {
+    read_state(ca).pending.map(|_| PENDING_NOTE.to_string())
+}
+
+/// What the settings file holds now, by hash, for the file a transaction was about: `None` if the
+/// directory can't be inspected, `Some(None)` if there is no file.
+fn settings_sha(p: &Pending) -> Option<Option<String>> {
     let dir_path = Path::new(&p.claude.settings_path).parent()?.to_path_buf();
-    let sha_now = match CaDir::open_shared(&dir_path, false) {
+    match CaDir::open_shared(&dir_path, false) {
         Ok(Some(d)) => match read_snapshot(&d, "settings.json") {
             Ok(s) => Some(s.map(|s| sha_of(&s.bytes))),
             Err(_) => None,
         },
         Ok(None) => Some(None),
         Err(_) => None,
-    };
-    let Some(now) = sha_now else {
+    }
+}
+
+/// A transaction found in the state file: finished, or cleared, according to what the settings
+/// file turns out to hold. Returns a sentence for the user when something was found. Needs the
+/// lock, so it can't clear a transaction another process is in the middle of.
+fn recover(env: &Env<'_>, ca: &CaDir, _lock: &TrustLock) -> Option<String> {
+    let _ = env;
+    let state = read_state(ca);
+    let p = state.pending.clone()?;
+    let Some(now) = settings_sha(&p) else {
         return Some("An interrupted Claude Code trust change was found, but the settings can't be inspected right now; run --trust-status again later.".into());
     };
     let mut next = state.clone();
@@ -1240,8 +1490,10 @@ fn recover(env: &Env<'_>) -> Option<String> {
             }
             PendingKind::Undo => {
                 next.claude = None;
-                if p.claude.written == ca.path().join(CLAUDE_BUNDLE).display().to_string() {
-                    let _ = unlink_in(&ca, CLAUDE_BUNDLE);
+                if p.claude.written == ca.path().join(CLAUDE_BUNDLE).display().to_string()
+                    && unlink_in(ca, CLAUDE_BUNDLE).is_err()
+                {
+                    return Some("An interrupted undo was found, but its bundle could not be removed; it will be tried again.".into());
                 }
                 "Finished an interrupted undo of the Claude Code trust change."
             }
@@ -1251,7 +1503,7 @@ fn recover(env: &Env<'_>) -> Option<String> {
     } else {
         "An interrupted Claude Code trust change was found, and your settings have changed since; they were left alone and the record was cleared."
     };
-    if save_state(&ca, &next).is_err() {
+    if save_state(ca, &next).is_err() {
         return Some(
             "An interrupted Claude Code trust change was found but could not be cleared.".into(),
         );
@@ -1281,6 +1533,11 @@ pub fn codex(env: &Env<'_>, undo: bool) -> Line {
             );
         }
         Err(_) => return dir_error(t, "collector certificate", &env.ca_dir),
+    };
+    let _lock = match lock_trust(&ca_dir, lock_wait()) {
+        Ok(Some(l)) => l,
+        Ok(None) => return Line::refused(t, BUSY),
+        Err(_) => return Line::refused(t, "The trust lock could not be taken."),
     };
     let path = ca_dir.path().join(CODEX_BUNDLE).display().to_string();
     let mut state = read_state(&ca_dir);
@@ -1340,12 +1597,26 @@ pub fn codex(env: &Env<'_>, undo: bool) -> Line {
 /// The `trust-status` line.
 pub fn status_json(env: &Env<'_>, ts: &str) -> String {
     let h = env.harness;
-    // An interrupted transaction is finished (or cleared) first, so the status is of the result.
-    let note = recover(env);
     let ca_path = env.ca_dir.join(CA_FILE).display().to_string();
-    let (state, claude_dir) = match CaDir::open_existing(&env.ca_dir) {
-        Ok(Some(d)) => (read_state(&d), Some(d)),
-        _ => (State::default(), None),
+    let ca_open = CaDir::open_existing(&env.ca_dir).ok().flatten();
+    // With the lock, an interrupted transaction is finished (or cleared) first, so the status is
+    // of the result. Without it (another call is working; this waits `STATUS_WAIT`) the status
+    // only inspects: it must never clear a transaction that is in progress.
+    let lock = ca_open
+        .as_ref()
+        .and_then(|c| lock_trust(c, status_wait()).ok().flatten());
+    let note = match (&ca_open, &lock) {
+        (Some(c), Some(l)) => recover(env, c, l),
+        (Some(c), None) => Some(
+            inspect_note(env, c).unwrap_or_else(|| {
+                "Another cainary-otel-debug --trust call is working; this is the state of the files right now.".to_string()
+            }),
+        ),
+        _ => None,
+    };
+    let (state, claude_dir) = match ca_open {
+        Some(d) => (read_state(&d), Some(d)),
+        None => (State::default(), None),
     };
     let ca_exists = claude_dir.as_ref().is_some_and(|d| collector_ca(d).is_ok());
     let settings_path = h
@@ -1431,6 +1702,14 @@ pub fn refresh(env: &Env<'_>) -> Vec<String> {
     let Ok(Some(ca_dir)) = CaDir::open_existing(&env.ca_dir) else {
         return warnings;
     };
+    let _lock = match lock_trust(&ca_dir, Duration::from_secs(5)) {
+        Ok(Some(l)) => l,
+        _ => {
+            return vec![
+                "another trust command is running; the trust bundles were not refreshed".into(),
+            ];
+        }
+    };
     let state = read_state(&ca_dir);
     if state.is_empty() {
         return warnings;
@@ -1495,6 +1774,12 @@ mod hook {
     }
     #[cfg(not(test))]
     pub fn before_cas(_: &str) {}
+    #[cfg(not(test))]
+    pub fn fail_sync() -> bool {
+        false
+    }
+    #[cfg(not(test))]
+    pub fn after_stat(_: &str) {}
 
     #[cfg(test)]
     pub type CasHook = Box<dyn FnMut(&str)>;
@@ -1503,7 +1788,9 @@ mod hook {
     thread_local! {
         pub static STOP: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
         pub static FAIL_SAVES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+        pub static FAIL_SYNCS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
         pub static CAS: std::cell::RefCell<Option<CasHook>> = std::cell::RefCell::new(None);
+        pub static AFTER_STAT: std::cell::RefCell<Option<CasHook>> = std::cell::RefCell::new(None);
     }
     #[cfg(test)]
     pub fn stop(at: &str) -> bool {
@@ -1518,6 +1805,24 @@ mod hook {
             }
             n > 0
         })
+    }
+    #[cfg(test)]
+    pub fn fail_sync() -> bool {
+        FAIL_SYNCS.with(|c| {
+            let n = c.get();
+            if n > 0 {
+                c.set(n - 1);
+            }
+            n > 0
+        })
+    }
+    #[cfg(test)]
+    pub fn after_stat(name: &str) {
+        AFTER_STAT.with(|c| {
+            if let Some(f) = c.borrow_mut().as_mut() {
+                f(name);
+            }
+        });
     }
     #[cfg(test)]
     pub fn before_cas(point: &str) {
@@ -2228,6 +2533,8 @@ mod tests {
     }
     fn clear_hooks() {
         hook::STOP.with(|s| s.set(None));
+        hook::FAIL_SYNCS.with(|c| c.set(0));
+        hook::AFTER_STAT.with(|c| *c.borrow_mut() = None);
         hook::FAIL_SAVES.with(|c| c.set(0));
         hook::CAS.with(|c| *c.borrow_mut() = None);
     }
@@ -2709,5 +3016,346 @@ mod tests {
         };
         let s: Value = serde_json::from_str(&status_json(&env, "T")).unwrap();
         assert_eq!(s["caExists"], false);
+    }
+
+    // ── serialization, staging, uncertainty, input hygiene ───────────────────────────────────
+
+    fn hold(fx: &Fx) -> (CaDir, TrustLock) {
+        let ca = CaDir::open_existing(&fx.ca_dir).unwrap().unwrap();
+        let lock = lock_trust(&ca, Duration::from_secs(1))
+            .unwrap()
+            .expect("free");
+        (ca, lock)
+    }
+
+    #[test]
+    fn calls_are_serialized_by_one_lock_and_a_status_cannot_clear_a_transaction_in_progress() {
+        let fx = Fx::new("lock", "");
+        fx.write_settings("{\"model\":\"opus\"}\n");
+        // Another process is mid-transaction: a pending record exists and it holds the lock.
+        stop_at("after-rename");
+        let _ = apply(&fx);
+        clear_hooks();
+        let (_ca, held) = hold(&fx);
+        let before = state_bytes(&fx);
+        assert!(String::from_utf8_lossy(before.as_ref().unwrap()).contains("pending"));
+        // Every writer is refused with the same fixed answer, and nothing moves.
+        let a = apply(&fx);
+        assert_eq!(
+            (a.action, a.message.as_str()),
+            (Action::Refused, BUSY),
+            "{a:?}"
+        );
+        let u = undo(&fx);
+        assert_eq!((u.action, u.message.as_str()), (Action::Refused, BUSY));
+        let c = codex(&fx.env(), false);
+        assert_eq!((c.action, c.message.as_str()), (Action::Refused, BUSY));
+        assert_eq!(codex(&fx.env(), true).message, BUSY);
+        assert!(
+            refresh(&fx.env())
+                .iter()
+                .any(|w| w.contains("another trust command"))
+        );
+        // A status waits briefly, then only inspects: it reports and leaves the record alone.
+        let s = status(&fx);
+        assert!(s["note"].as_str().unwrap().contains("pending"), "{s}");
+        assert_eq!(state_bytes(&fx), before, "the transaction is untouched");
+        // Previews take no lock at all and write nothing.
+        let p = preview(&fx);
+        assert_ne!(p.action, Action::Refused, "{p:?}");
+        assert_eq!(state_bytes(&fx), before);
+        drop(held);
+        // With the lock free, the next status finishes it.
+        let s = status(&fx);
+        assert!(
+            s["note"]
+                .as_str()
+                .unwrap()
+                .contains("Finished an interrupted"),
+            "{s}"
+        );
+        assert_eq!(s["claudeCode"]["state"], "applied");
+    }
+
+    #[test]
+    fn the_new_file_is_written_before_the_compare_and_the_rename_follows_at_once() {
+        let fx = Fx::new("stage-first", "");
+        fx.write_settings("{\"model\":\"opus\"}\n");
+        let dir = fx.claude_dir();
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let s2 = seen.clone();
+        on_cas(move |point| {
+            if point == "apply" {
+                let tmps: Vec<String> = fs::read_dir(&dir)
+                    .unwrap()
+                    .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                    .filter(|n| n.contains(".cainary-tmp."))
+                    .collect();
+                // The staged file is complete on disk already, before anything is compared.
+                for t in &tmps {
+                    let text = fs::read_to_string(dir.join(t)).unwrap();
+                    assert!(text.contains(KEY), "staged content is the final content");
+                }
+                *s2.borrow_mut() = tmps;
+            }
+        });
+        let a = apply(&fx);
+        clear_hooks();
+        assert_eq!(a.action, Action::Applied, "{a:?}");
+        assert_eq!(
+            seen.borrow().len(),
+            1,
+            "exactly one staged file at the compare"
+        );
+        // A compare that fails leaves no staged file behind.
+        let fx = Fx::new("stage-abort", "");
+        fx.write_settings("{}\n");
+        let p = fx.settings();
+        on_cas(move |point| {
+            if point == "apply" {
+                fs::write(&p, "{\"a\":1}\n").unwrap();
+            }
+        });
+        assert_eq!(apply(&fx).action, Action::Refused);
+        clear_hooks();
+        let leftovers: Vec<String> = fs::read_dir(fx.claude_dir())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains("tmp") || n.ends_with(".bak"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    #[test]
+    fn a_failure_after_the_rename_keeps_the_transaction_and_says_so() {
+        // Apply: the directory sync after the rename fails.
+        let fx = Fx::new("uncertain-apply", "");
+        fx.write_settings("{\"model\":\"opus\"}\n");
+        on_cas(|point| {
+            if point == "apply" {
+                hook::FAIL_SYNCS.with(|c| c.set(1));
+            }
+        });
+        let a = apply(&fx);
+        clear_hooks();
+        assert_eq!(a.action, Action::Refused, "{a:?}");
+        assert!(
+            a.message.contains("may have been changed") && a.message.contains("--trust-status"),
+            "{}",
+            a.message
+        );
+        assert!(!a.message.contains("nothing was changed"));
+        assert!(
+            fx.read_settings().contains(KEY),
+            "what happened on disk is not undone"
+        );
+        assert!(
+            String::from_utf8_lossy(&state_bytes(&fx).unwrap()).contains("pending"),
+            "the transaction stays"
+        );
+        let s = status(&fx);
+        assert_eq!(s["claudeCode"]["state"], "applied", "{s}");
+        // Undo: same, on the unlink/rename of the undo.
+        on_cas(|point| {
+            if point == "undo" {
+                hook::FAIL_SYNCS.with(|c| c.set(1));
+            }
+        });
+        let u = undo(&fx);
+        clear_hooks();
+        assert_eq!(u.action, Action::Refused, "{u:?}");
+        assert!(u.message.contains("may have been changed"));
+        assert!(!fx.read_settings().contains(KEY));
+        let s = status(&fx);
+        assert!(
+            s["note"].as_str().unwrap().contains("interrupted undo"),
+            "{s}"
+        );
+        assert_eq!(undo(&fx).action, Action::NothingToUndo);
+        // And deleting a file cAInary created.
+        let fx = Fx::new("uncertain-delete", "");
+        assert_eq!(apply(&fx).action, Action::Applied);
+        on_cas(|point| {
+            if point == "undo" {
+                hook::FAIL_SYNCS.with(|c| c.set(1));
+            }
+        });
+        let u = undo(&fx);
+        clear_hooks();
+        assert_eq!(u.action, Action::Refused);
+        assert!(!fx.settings().exists());
+        assert!(
+            status(&fx)["note"]
+                .as_str()
+                .unwrap()
+                .contains("interrupted undo")
+        );
+    }
+
+    #[test]
+    fn settings_that_are_not_utf8_are_refused_not_converted() {
+        let fx = Fx::new("utf8", "");
+        fs::create_dir_all(fx.claude_dir()).unwrap();
+        let body = b"{\"x\":\"\xff\xfe\"}\n".to_vec();
+        fs::write(fx.settings(), &body).unwrap();
+        for l in [apply(&fx), preview(&fx)] {
+            assert_eq!(l.action, Action::Refused, "{l:?}");
+            assert_eq!(
+                l.message,
+                "The settings file is not valid UTF-8; refusing to edit it."
+            );
+        }
+        assert_eq!(fs::read(fx.settings()).unwrap(), body, "bytes untouched");
+        assert!(fx.baks().is_empty() && state_bytes(&fx).is_none());
+        assert_eq!(status(&fx)["claudeCode"]["state"], "absent");
+    }
+
+    #[test]
+    fn names_from_a_record_are_checked_and_nul_never_panics() {
+        for ok in [
+            "settings.json.cainary-20260101T000000Z.bak",
+            "settings.json.cainary-20260101T000000Z-1.bak",
+        ] {
+            assert!(valid_backup_name(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            ".",
+            "..",
+            "../settings.json.cainary-1.bak",
+            "a/b.bak",
+            "settings.json",
+            "settings.json.cainary-1.bak\0",
+            "settings.json.cainary-1.txt",
+            "settings.json.cainary-a b.bak",
+            "/etc/passwd",
+        ] {
+            assert!(!valid_backup_name(bad), "{bad:?}");
+        }
+        assert!(!plain_name(&"a".repeat(256)));
+        let fx = Fx::new("names", "");
+        let ca = CaDir::open_existing(&fx.ca_dir).unwrap().unwrap();
+        assert!(matches!(read_snapshot(&ca, "a\0b"), Err(Why::Io)));
+        assert!(unlink_in(&ca, "a\0b").is_err());
+        assert!(write_atomic(&ca, "a\0b", b"x", 0o600).is_err());
+        assert!(cname("a\0b").is_err());
+        // A record that names a path outside the directory is not followed: the undo falls back to
+        // editing just the key, and prints nothing from the record.
+        let fx = Fx::new("badrecord", "");
+        fx.write_settings("{\n  \"model\": \"opus\"\n}\n");
+        assert_eq!(apply(&fx).action, Action::Applied);
+        let sp = fx.ca_dir.join(STATE_FILE);
+        let text = fs::read_to_string(&sp).unwrap();
+        let tampered = text.replace("settings.json.cainary-", "../../../tmp/evil-");
+        assert_ne!(text, tampered, "the record names the backup");
+        fs::write(&sp, tampered).unwrap();
+        let u = undo(&fx);
+        assert_eq!(u.action, Action::Undone, "{u:?}");
+        assert_eq!(fx.read_settings(), "{\n  \"model\": \"opus\"\n}\n");
+        assert!(!u.message.contains("evil"));
+    }
+
+    #[test]
+    fn a_result_over_the_read_cap_is_refused_before_anything_is_recorded() {
+        let fx = Fx::new("toobig", "");
+        // Under the cap by a little: valid, but the added member would push it over.
+        let pad = "x".repeat(MAX_FILE - 100);
+        let body = format!("{{\"pad\":\"{pad}\"}}");
+        assert!(body.len() < MAX_FILE);
+        fx.write_settings(&body);
+        for l in [apply(&fx), preview(&fx)] {
+            assert_eq!(l.action, Action::Refused, "{}", l.message);
+            assert!(l.message.contains("over 1 MiB"), "{}", l.message);
+        }
+        assert_eq!(fx.read_settings(), body);
+        assert!(fx.baks().is_empty() && state_bytes(&fx).is_none());
+        // A file over the cap itself is refused as before.
+        fx.write_settings(&format!("{{\"pad\":\"{}\"}}", "x".repeat(MAX_FILE)));
+        assert!(apply(&fx).message.contains("over 1 MiB"));
+    }
+
+    #[test]
+    fn a_file_that_grows_while_it_is_read_is_refused_not_buffered() {
+        let fx = Fx::new("grow", "");
+        fx.write_settings("{}\n");
+        let p = fx.settings();
+        hook::AFTER_STAT.with(|c| {
+            *c.borrow_mut() = Some(Box::new(move |name| {
+                if name == "settings.json" {
+                    let mut f = fs::OpenOptions::new().append(true).open(&p).unwrap();
+                    f.write_all(&vec![b' '; 3 * MAX_FILE]).unwrap();
+                }
+            }));
+        });
+        let a = apply(&fx);
+        clear_hooks();
+        assert_eq!(a.action, Action::Refused, "{a:?}");
+        assert!(a.message.contains("over 1 MiB"), "{}", a.message);
+        assert!(state_bytes(&fx).is_none());
+    }
+
+    #[test]
+    fn inspection_never_writes_state_or_deletes_bundles() {
+        let fx = Fx::new("inspect", "");
+        let mine = fx.base.join("mine.pem");
+        fs::write(&mine, ROOT_A).unwrap();
+        fx.write_settings(&format!(
+            "{{\"env\":{{\"{KEY}\":\"{}\"}}}}\n",
+            mine.display()
+        ));
+        assert_eq!(apply(&fx).action, Action::Applied);
+        let bundle = fx.ca_dir.join(CLAUDE_BUNDLE);
+        assert!(bundle.exists());
+        // An undo that stops after the swap: settings restored, bundle and transaction left.
+        stop_at("after-rename");
+        let _ = undo(&fx);
+        clear_hooks();
+        let before = state_bytes(&fx);
+        let listing = |fx: &Fx| -> Vec<String> {
+            let mut v: Vec<String> = fs::read_dir(&fx.ca_dir)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .filter(|n| n != "otel-debug-trust.lock")
+                .collect();
+            v.sort();
+            v
+        };
+        let files = listing(&fx);
+        for l in [
+            preview(&fx),
+            claude_code(&fx.env(), Mode::Undo { dry_run: true }),
+        ] {
+            // (The undo preview may say the setting is no longer the one cAInary wrote: the
+            // interrupted undo had already restored it. It still must not touch anything.)
+            assert!(l.message.contains("pending"), "{}", l.message);
+        }
+        // A status that can't take the lock only inspects.
+        let (_ca, held) = hold(&fx);
+        let s = status(&fx);
+        assert!(s["note"].as_str().unwrap().contains("pending"), "{s}");
+        drop(held);
+        assert_eq!(state_bytes(&fx), before, "no state written");
+        assert_eq!(listing(&fx), files, "no file created or deleted");
+        assert!(bundle.exists(), "the bundle is still there");
+        // The real thing finishes it, and removes the bundle then.
+        let s = status(&fx);
+        assert!(
+            s["note"].as_str().unwrap().contains("interrupted undo"),
+            "{s}"
+        );
+        assert!(!bundle.exists());
+        assert!(state_bytes(&fx).is_none());
+    }
+
+    #[test]
+    fn the_undone_message_does_not_talk_about_applying() {
+        let fx = Fx::new("undone-text", "");
+        assert_eq!(apply(&fx).action, Action::Applied);
+        let u = undo(&fx);
+        assert_eq!(
+            u.message,
+            "Restored your previous Claude Code setting. Restart Claude Code for it to take effect."
+        );
+        assert!(!u.message.contains("before applying"));
     }
 }
