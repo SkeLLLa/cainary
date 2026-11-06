@@ -102,6 +102,9 @@ fn show(scenario: &Scenario, last_view: &mut String) {
     if scenario.selection == ":collector" {
         let collector = fixtures::collector_sample();
         ui::collector(move |controller| controller.apply(&collector));
+    } else if scenario.selection == ":collector:trust-preview" {
+        let collector = fixtures::collector_trust_preview_sample();
+        ui::collector(move |controller| controller.apply(&collector));
     }
     match scenario.window {
         "popup" => ui::app(|controller| controller.popup_requested(0, 0, &QString::default())),

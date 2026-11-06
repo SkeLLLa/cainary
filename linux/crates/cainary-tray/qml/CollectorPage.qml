@@ -17,12 +17,19 @@ ColumnLayout {
                 claudeCode: value.claudeCode || [],
                 codex: value.codex || [],
                 notes: value.notes || [],
+                takeover: value.takeover || [],
+                mode: value.mode || "receiver",
+                tlsHosts: value.tlsHosts || [],
+                caPath: value.caPath || "",
+                caSha256: value.caSha256 || "",
+                stderrTail: value.stderrTail || "",
                 alerts: value.alerts || [],
                 batches: value.batches || [],
-                errors: value.errors || []
+                errors: value.errors || [],
+                trust: value.trust || ({ busy: false, message: "", status: null, preview: null, result: null, noWriteAvailable: false, noWriteCommand: "" })
             };
         } catch (error) {
-            return ({ state: "off", message: "", endpoint: "", claudeCode: [], codex: [], notes: [], alerts: [], batches: [], errors: [] });
+            return ({ state: "off", message: "", endpoint: "", claudeCode: [], codex: [], notes: [], takeover: [], mode: "receiver", tlsHosts: [], caPath: "", caSha256: "", stderrTail: "", alerts: [], batches: [], errors: [], trust: ({ busy: false, message: "", status: null, preview: null, result: null, noWriteAvailable: false, noWriteCommand: "" }) });
         }
     }
 
@@ -116,6 +123,11 @@ ColumnLayout {
             }
             SetupBlock { heading: qsTr("Claude Code"); lines: root.collectorView.claudeCode }
             SetupBlock { heading: qsTr("Codex"); lines: root.collectorView.codex }
+            SetupBlock {
+                visible: root.collectorView.takeover.length > 0
+                heading: qsTr("HTTPS takeover")
+                lines: root.collectorView.takeover
+            }
             Repeater {
                 model: root.collectorView.notes
                 delegate: Label {
@@ -126,6 +138,213 @@ ColumnLayout {
                     Layout.fillWidth: true
                 }
             }
+        }
+    }
+
+    GroupBox {
+        title: qsTr("HTTPS takeover trust")
+        Layout.fillWidth: true
+        ColumnLayout {
+            anchors.fill: parent
+            Label {
+                text: qsTr("Hosts: ") + root.collectorView.tlsHosts.join(", ")
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
+            }
+            Label {
+                visible: root.collectorView.caSha256.length > 0
+                text: qsTr("Local CA SHA-256: ") + root.collectorView.caSha256
+                font.family: "monospace"
+                wrapMode: Text.WrapAnywhere
+                Layout.fillWidth: true
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Button {
+                    text: qsTr("Let Claude Code trust the collector…")
+                    enabled: !root.collectorView.trust.busy
+                    onClicked: CollectorController.previewClaudeTrust()
+                }
+                Button {
+                    text: qsTr("Undo Claude Code trust")
+                    enabled: !root.collectorView.trust.busy
+                        && root.collectorView.trust.status
+                        && root.collectorView.trust.status.claudeCode.state === "applied"
+                    onClicked: CollectorController.undoClaudeTrust()
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Button {
+                    text: qsTr("Prepare Codex bundle")
+                    enabled: !root.collectorView.trust.busy
+                    onClicked: CollectorController.prepareCodexBundle()
+                }
+                Button {
+                    text: qsTr("Remove")
+                    enabled: !root.collectorView.trust.busy
+                        && root.collectorView.trust.status
+                        && root.collectorView.trust.status.codex.state === "ready"
+                    onClicked: CollectorController.undoCodexBundle()
+                }
+            }
+            Label {
+                visible: root.collectorView.trust.busy
+                text: qsTr("Working…")
+                color: palette.placeholderText
+            }
+            Label {
+                visible: root.collectorView.trust.message.length > 0
+                text: root.collectorView.trust.message
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
+            }
+            TextArea {
+                visible: root.collectorView.trust.status
+                    && root.collectorView.trust.status.codex.command
+                    && root.collectorView.trust.status.codex.state === "ready"
+                text: visible ? root.collectorView.trust.status.codex.command : ""
+                readOnly: true
+                selectByMouse: true
+                wrapMode: TextEdit.WrapAnywhere
+                textFormat: TextEdit.PlainText
+                font.family: "monospace"
+                Layout.fillWidth: true
+            }
+            Button {
+                visible: root.collectorView.trust.status
+                    && root.collectorView.trust.status.codex.command
+                    && root.collectorView.trust.status.codex.state === "ready"
+                text: qsTr("Copy Codex command")
+                onClicked: CollectorController.copyText(root.collectorView.trust.status.codex.command)
+            }
+            ColumnLayout {
+                visible: root.collectorView.trust.noWriteAvailable
+                Layout.fillWidth: true
+                Label {
+                    text: qsTr("No-write alternative for Claude Code")
+                    font.weight: Font.DemiBold
+                }
+                TextArea {
+                    text: root.collectorView.trust.noWriteCommand
+                    readOnly: true
+                    selectByMouse: true
+                    wrapMode: TextEdit.WrapAnywhere
+                    textFormat: TextEdit.PlainText
+                    font.family: "monospace"
+                    Layout.fillWidth: true
+                    implicitHeight: Math.max(42, contentHeight + 12)
+                }
+                Button {
+                    text: qsTr("Copy no-write command")
+                    onClicked: CollectorController.copyText(root.collectorView.trust.noWriteCommand)
+                }
+            }
+            Label {
+                visible: !root.collectorView.trust.noWriteAvailable
+                text: qsTr("Start the HTTPS takeover once to create the certificate.")
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+                color: palette.placeholderText
+                Layout.fillWidth: true
+            }
+            Text {
+                visible: root.collectorView.trust.result
+                    && root.collectorView.trust.result.target.length > 0
+                text: root.collectorView.trust.result
+                    ? root.collectorView.trust.result.target + " · " + root.collectorView.trust.result.action
+                    : ""
+                textFormat: Text.PlainText
+                color: palette.placeholderText
+                Layout.fillWidth: true
+            }
+            Label {
+                visible: root.collectorView.trust.result
+                    && root.collectorView.trust.result.message.length > 0
+                text: root.collectorView.trust.result
+                    ? root.collectorView.trust.result.message : ""
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
+            }
+        }
+    }
+
+    Dialog {
+        id: trustDialog
+        modal: true
+        width: 480
+        title: qsTr("Let Claude Code trust the local collector?")
+        property bool dismissed: false
+        visible: root.collectorView.trust.preview !== null && !dismissed
+        onAccepted: {
+            dismissed = true;
+            CollectorController.applyClaudeTrust();
+        }
+        onRejected: {
+            dismissed = true;
+            CollectorController.cancelClaudeTrustPreview();
+        }
+        footer: DialogButtonBox {
+            Button {
+                text: qsTr("Cancel")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+            Button {
+                text: qsTr("Confirm")
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+        }
+        contentItem: ColumnLayout {
+            spacing: 10
+            Label {
+                text: root.collectorView.trust.preview
+                    ? root.collectorView.trust.preview.message : ""
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
+            }
+            Label {
+                visible: !!(root.collectorView.trust.preview && root.collectorView.trust.preview.key)
+                text: root.collectorView.trust.preview
+                    ? qsTr("Change: %1\nFrom: %2\nTo: %3")
+                        .arg(root.collectorView.trust.preview.key || "")
+                        .arg(root.collectorView.trust.preview.from || qsTr("not set"))
+                        .arg(root.collectorView.trust.preview.to || "") : ""
+                textFormat: Text.PlainText
+                wrapMode: Text.WrapAnywhere
+                Layout.fillWidth: true
+            }
+            Label {
+                visible: !!(root.collectorView.trust.preview && root.collectorView.trust.preview.settingsPath)
+                text: qsTr("Settings: ") + (root.collectorView.trust.preview ? root.collectorView.trust.preview.settingsPath : "")
+                textFormat: Text.PlainText
+                wrapMode: Text.WrapAnywhere
+                Layout.fillWidth: true
+            }
+            Label {
+                visible: !!(root.collectorView.trust.preview && root.collectorView.trust.preview.backupPath)
+                text: qsTr("Backup: ") + (root.collectorView.trust.preview ? root.collectorView.trust.preview.backupPath : "")
+                textFormat: Text.PlainText
+                wrapMode: Text.WrapAnywhere
+                Layout.fillWidth: true
+            }
+            Label {
+                text: qsTr("Your org's collector receives nothing while the takeover is active.")
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
+            }
+        }
+    }
+
+    Connections {
+        target: CollectorController
+        function onViewJsonChanged() {
+            if (root.collectorView.trust.preview === null)
+                trustDialog.dismissed = false;
         }
     }
 
@@ -300,6 +519,28 @@ ColumnLayout {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    GroupBox {
+        visible: root.collectorView.stderrTail.length > 0
+        title: qsTr("Collector listen error (copyable)")
+        Layout.fillWidth: true
+        ColumnLayout {
+            anchors.fill: parent
+            TextArea {
+                text: root.collectorView.stderrTail
+                readOnly: true
+                selectByMouse: true
+                wrapMode: TextEdit.WrapAnywhere
+                textFormat: TextEdit.PlainText
+                font.family: "monospace"
+                Layout.fillWidth: true
+            }
+            Button {
+                text: qsTr("Copy error details")
+                onClicked: CollectorController.copyText(root.collectorView.stderrTail)
             }
         }
     }

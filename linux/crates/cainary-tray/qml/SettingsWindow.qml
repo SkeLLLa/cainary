@@ -12,6 +12,8 @@ ApplicationWindow {
 
     // Parsed AppController.staticJson, set by Main.qml.
     property var st: null
+    // Host names are derived from the current scan report's telemetry findings.
+    property var endpointHosts: []
 
     readonly property bool dark: palette.window.hslLightness < 0.5
     readonly property color warning: Style.warningColor(dark)
@@ -28,18 +30,22 @@ ApplicationWindow {
         { key: "daily", text: qsTr("Daily") }
     ]
     readonly property var collector: {
-        const defaults = { enabled: false, port: 4318, log_to_file: false, log_path: "", presets: [], notify: true, patterns: [], patternErrors: [], overLimit: false, logPathSuggestion: "" };
+        const defaults = { enabled: false, port: 4318, tls: false, tls_port: 8443, tls_hosts: [], log_to_file: false, log_path: "", presets: [], notify: true, patterns: [], patternErrors: [], tlsHostErrors: [], overLimit: false, logPathSuggestion: "" };
         try {
             const value = JSON.parse(SettingsController.collectorJson);
             return {
                 enabled: value.enabled === true,
                 port: value.port || 4318,
+                tls: value.tls === true,
+                tls_port: value.tls_port || 8443,
+                tls_hosts: value.tls_hosts || [],
                 log_to_file: value.log_to_file === true,
                 log_path: value.log_path || "",
                 presets: value.presets || [],
                 notify: value.notify !== false,
                 patterns: value.patterns || [],
                 patternErrors: value.patternErrors || [],
+                tlsHostErrors: value.tlsHostErrors || [],
                 overLimit: value.overLimit === true,
                 logPathSuggestion: value.logPathSuggestion || ""
             };
@@ -66,6 +72,13 @@ ApplicationWindow {
 
     function updatePattern(index, key, value) {
         changeCollector(next => { next.patterns[index][key] = value; });
+    }
+
+    function addTlsHost(host) {
+        changeCollector(next => {
+            if (next.tls_hosts.findIndex(item => item.toLowerCase() === host.toLowerCase()) < 0)
+                next.tls_hosts.push(host);
+        });
     }
 
     function present() {
@@ -159,6 +172,7 @@ ApplicationWindow {
                         onToggled: win.changeCollector(next => { next.enabled = checked; })
                     }
                     RowLayout {
+                        visible: !win.collector.tls
                         Label { text: qsTr("Port") }
                         SpinBox {
                             from: 1024
@@ -168,6 +182,98 @@ ApplicationWindow {
                             onValueModified: win.changeCollector(next => { next.port = value; })
                         }
                         Item { Layout.fillWidth: true }
+                    }
+
+                    GroupBox {
+                        title: qsTr("HTTPS takeover")
+                        Layout.fillWidth: true
+                        ColumnLayout {
+                            anchors.fill: parent
+                            Switch {
+                                text: qsTr("Use HTTPS takeover")
+                                checked: win.collector.tls
+                                onToggled: win.changeCollector(next => { next.tls = checked; })
+                            }
+                            RowLayout {
+                                enabled: win.collector.tls
+                                Label { text: qsTr("Port") }
+                                SpinBox {
+                                    from: 1
+                                    to: 65535
+                                    value: Math.max(1, win.collector.tls_port || 8443)
+                                    editable: true
+                                    onValueModified: win.changeCollector(next => { next.tls_port = value; })
+                                }
+                                Item { Layout.fillWidth: true }
+                            }
+                            Label { text: qsTr("Host names"); font.weight: Font.DemiBold }
+                            Repeater {
+                                model: win.collector.tls_hosts
+                                delegate: ColumnLayout {
+                                    required property int index
+                                    required property var modelData
+                                    enabled: win.collector.tls
+                                    Layout.fillWidth: true
+                                    RowLayout {
+                                        TextField {
+                                            text: modelData
+                                            placeholderText: qsTr("otel.example.com")
+                                            onEditingFinished: win.changeCollector(next => { next.tls_hosts[index] = text; })
+                                            Layout.fillWidth: true
+                                        }
+                                        ToolButton {
+                                            text: "−"
+                                            Accessible.name: qsTr("Remove host name")
+                                            onClicked: win.changeCollector(next => { next.tls_hosts.splice(index, 1); })
+                                        }
+                                    }
+                                    Label {
+                                        visible: index < win.collector.tlsHostErrors.length
+                                            && win.collector.tlsHostErrors[index] !== ""
+                                        text: index < win.collector.tlsHostErrors.length
+                                            ? win.collector.tlsHostErrors[index] : ""
+                                        color: win.warning
+                                        wrapMode: Text.Wrap
+                                        Layout.fillWidth: true
+                                    }
+                                }
+                            }
+                            Label {
+                                visible: win.collector.tls && win.collector.tls_hosts.length === 0
+                                text: qsTr("Add at least one DNS host name to enable the takeover.")
+                                color: win.warning
+                                wrapMode: Text.Wrap
+                                Layout.fillWidth: true
+                            }
+                            Flow {
+                                visible: win.endpointHosts.length > 0
+                                Layout.fillWidth: true
+                                spacing: 6
+                                Repeater {
+                                    model: win.endpointHosts
+                                    delegate: Button {
+                                        required property string modelData
+                                        text: qsTr("Add %1").arg(modelData)
+                                        enabled: win.collector.tls
+                                            && win.collector.tls_hosts.length < 32
+                                            && win.collector.tls_hosts.findIndex(item => item.toLowerCase() === modelData) < 0
+                                        onClicked: win.addTlsHost(modelData)
+                                    }
+                                }
+                            }
+                            Label {
+                                visible: win.endpointHosts.length > 0
+                                text: qsTr("Suggestions from Claude Code and Codex telemetry endpoints in the latest scan.")
+                                color: win.palette.placeholderText
+                                wrapMode: Text.Wrap
+                                Layout.fillWidth: true
+                            }
+                            Button {
+                                text: qsTr("Add host name")
+                                enabled: win.collector.tls && win.collector.tls_hosts.length < 32
+                                onClicked: win.changeCollector(next => { next.tls_hosts.push(""); })
+                            }
+                        }
                     }
 
                     ButtonGroup { id: logChoice }

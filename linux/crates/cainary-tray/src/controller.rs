@@ -3,6 +3,7 @@ use std::sync::{Condvar, Mutex, OnceLock};
 
 use async_channel::Sender;
 use cainary_tray_dbus::UiEvent;
+use cainary_tray_model::collector::TrustAction;
 use cainary_tray_model::runner::StreamMsg;
 use cainary_tray_model::store::StoreEvent;
 
@@ -97,6 +98,8 @@ pub enum AppCommand {
     SetCollector(String),
     ChooseCollectorLogFile,
     RetryCollector,
+    CollectorTrust(TrustAction),
+    CancelClaudeTrustPreview,
     CopyText(String),
     Quit,
 }
@@ -110,6 +113,10 @@ pub enum AppMessage {
         mailbox: std::sync::Arc<CollectorMailbox>,
     },
     CollectorLogPathChosen(Option<String>),
+    CollectorTrustFinished {
+        action: TrustAction,
+        result: Result<cainary_tray_model::runner::Output, String>,
+    },
     StopCollector(std::sync::mpsc::Sender<()>),
     Clipboard(String),
     Timer,

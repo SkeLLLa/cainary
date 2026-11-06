@@ -7,8 +7,9 @@ use std::time::{Duration, Instant};
 use async_channel::{Receiver, Sender};
 use cainary_tray_dbus::filemanager::file_uri;
 use cainary_tray_dbus::{self, Notification, Options as BusOptions, Service, TrayUpdate, UiEvent};
+use cainary_tray_model::collector::TrustAction;
 use cainary_tray_model::notify_plan::Planned;
-use cainary_tray_model::runner::{self, Client, StreamHandle, StreamMsg};
+use cainary_tray_model::runner::{self, Client, Output, StreamHandle, StreamMsg};
 use cainary_tray_model::schedule::Scheduler;
 use cainary_tray_model::settings::{CollectorSettings, Refresh, Settings};
 use cainary_tray_model::store::{Notifier, ScanState, Store, StoreEvent, Trigger};
@@ -373,6 +374,7 @@ fn spawn_controller(
                 messages.clone(),
             );
             collector_runtime.restart(lock(&settings).collector.clone());
+            collector_runtime.request_trust_action(TrustAction::Status);
             while let Ok(message) = future::block_on(receiver.recv()) {
                 match message {
                     AppMessage::Command(command) => handle_command(
@@ -407,6 +409,9 @@ fn spawn_controller(
                             notifications_available,
                             file_chooser_available,
                         );
+                    }
+                    AppMessage::CollectorTrustFinished { action, result } => {
+                        collector_runtime.finish_trust_action(action, result);
                     }
                     AppMessage::StopCollector(done) => {
                         collector_runtime.stop();
@@ -597,6 +602,14 @@ fn handle_command(
         }
         AppCommand::RetryCollector => {
             collector_runtime.restart(lock(settings).collector.clone());
+        }
+        AppCommand::CollectorTrust(action) => {
+            collector_runtime.request_trust_action(action);
+        }
+        AppCommand::CancelClaudeTrustPreview => {
+            collector_runtime.trust_preview = None;
+            collector_runtime.trust_message.clear();
+            collector_runtime.publish();
         }
         AppCommand::CopyText(text) => ui::copy_text(text),
         AppCommand::Quit => ui::quit(),
@@ -907,6 +920,21 @@ fn collector_settings_json(settings: &CollectorSettings) -> String {
             "overLimit".into(),
             serde_json::Value::Bool(settings.over_limit()),
         );
+        object.insert(
+            "tlsHostErrors".into(),
+            serde_json::Value::Array(
+                settings
+                    .tls_hosts
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| {
+                        serde_json::Value::String(
+                            settings.tls_host_problem(index).unwrap_or_default().into(),
+                        )
+                    })
+                    .collect(),
+            ),
+        );
     }
     serde_json::to_string(&value).unwrap_or_else(|_| "{}".into())
 }
@@ -951,6 +979,12 @@ struct CollectorRuntime {
     bus_commands: Option<Sender<cainary_tray_dbus::Command>>,
     settings: Arc<Mutex<Settings>>,
     messages: Sender<AppMessage>,
+    trust_busy: bool,
+    trust_message: String,
+    trust_status: Option<collector::TrustStatusLine>,
+    trust_preview: Option<collector::TrustResultLine>,
+    trust_result: Option<collector::TrustResultLine>,
+    refresh_status_after_busy: bool,
 }
 
 impl CollectorRuntime {
@@ -969,6 +1003,12 @@ impl CollectorRuntime {
             bus_commands,
             settings,
             messages,
+            trust_busy: false,
+            trust_message: String::new(),
+            trust_status: None,
+            trust_preview: None,
+            trust_result: None,
+            refresh_status_after_busy: false,
         }
     }
 
@@ -1106,6 +1146,10 @@ impl CollectorRuntime {
         }
         match message {
             StreamMsg::Line(line) => {
+                let tls_hello = matches!(
+                    collector::decode_line(&line),
+                    Ok(collector::Line::Hello(hello)) if hello.mode == "tls-receiver"
+                );
                 let (stop, alert) = self.model.accept(line);
                 if let Some(alert) = alert {
                     let notify = lock(&self.settings).collector.notify;
@@ -1127,7 +1171,11 @@ impl CollectorRuntime {
                 if stop {
                     self.stop_child();
                 }
-                self.publish();
+                if tls_hello {
+                    self.request_trust_action(TrustAction::Status);
+                } else {
+                    self.publish();
+                }
             }
             StreamMsg::Fault(reason) => {
                 self.model.failed(format!("Stopped: {reason}"));
@@ -1135,6 +1183,13 @@ impl CollectorRuntime {
                 self.publish();
             }
             StreamMsg::Exited { code, stderr_tail } => {
+                self.model.set_stderr_tail(
+                    stderr_tail
+                        .lines()
+                        .map(safe_output_line)
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                );
                 if let Some(mailbox) = self.mailbox.take() {
                     mailbox.close();
                 }
@@ -1174,10 +1229,149 @@ impl CollectorRuntime {
     }
 
     fn publish(&self) {
-        let Ok(json) = serde_json::to_string(&self.model.view()) else {
+        let view = self.model.view();
+        let ca_path = self
+            .trust_status
+            .as_ref()
+            .filter(|status| status.ca_exists)
+            .and_then(|status| status.ca_path.as_deref())
+            .filter(|path| !path.is_empty())
+            .unwrap_or_default();
+        let no_write_command = collector::claude_no_write_command(ca_path).unwrap_or_default();
+        let mut value = serde_json::to_value(view).unwrap_or_default();
+        if let Some(object) = value.as_object_mut() {
+            object.insert(
+                "trust".into(),
+                serde_json::json!({
+                    "busy": self.trust_busy,
+                    "message": self.trust_message,
+                    "status": self.trust_status,
+                    "preview": self.trust_preview,
+                    "result": self.trust_result,
+                    "noWriteAvailable": !no_write_command.is_empty(),
+                    "noWriteCommand": no_write_command,
+                }),
+            );
+        }
+        let Ok(json) = serde_json::to_string(&value) else {
             return;
         };
         ui::collector(move |controller| controller.apply(&json));
+    }
+
+    fn request_trust_action(&mut self, action: TrustAction) {
+        if self.trust_busy {
+            if action == TrustAction::Status {
+                self.refresh_status_after_busy = true;
+            }
+            return;
+        }
+        let Some(binary) = self.binary.clone() else {
+            self.trust_message = "Collector helper not found.".into();
+            self.publish();
+            return;
+        };
+        self.trust_busy = true;
+        if action != TrustAction::Status
+            || !self
+                .trust_result
+                .as_ref()
+                .is_some_and(|result| result.action == "refused")
+        {
+            self.trust_message = match action {
+                TrustAction::Status => "Checking trust status…".into(),
+                TrustAction::PreviewClaude => "Preparing Claude Code trust preview…".into(),
+                TrustAction::ApplyClaude => "Applying Claude Code trust…".into(),
+                TrustAction::UndoClaude => "Undoing Claude Code trust…".into(),
+                TrustAction::PrepareCodex => "Preparing Codex bundle…".into(),
+                TrustAction::UndoCodex => "Removing Codex bundle…".into(),
+            };
+        }
+        if action == TrustAction::PreviewClaude {
+            self.trust_preview = None;
+        }
+        self.publish();
+        let args = action
+            .args()
+            .iter()
+            .map(std::ffi::OsString::from)
+            .collect::<Vec<_>>();
+        let messages = self.messages.clone();
+        let spawned = std::thread::Builder::new()
+            .name("cainary-trust-command".into())
+            .spawn(move || {
+                let result = runner::run_one_shot(&binary, &args)
+                    .map_err(|error| format!("Trust command failed: {error:?}"));
+                let _ = messages.try_send(AppMessage::CollectorTrustFinished { action, result });
+            });
+        if let Err(error) = spawned {
+            self.trust_busy = false;
+            self.trust_message = format!("Couldn't start trust command: {error}");
+            self.publish();
+        }
+    }
+
+    fn finish_trust_action(&mut self, action: TrustAction, result: Result<Output, String>) {
+        self.trust_busy = false;
+        let refresh_after_busy = std::mem::take(&mut self.refresh_status_after_busy);
+        match result {
+            Err(error) => self.trust_message = error,
+            Ok(output) => match collector::decode_trust_output(&output.stdout) {
+                Ok(collector::TrustReply::Status(status)) if action == TrustAction::Status => {
+                    if output.status.success() {
+                        self.trust_status = Some(status);
+                        if let Some(note) = self
+                            .trust_status
+                            .as_ref()
+                            .and_then(|status| status.note.clone())
+                        {
+                            self.trust_message = note;
+                        } else if !self
+                            .trust_result
+                            .as_ref()
+                            .is_some_and(|result| result.action == "refused")
+                        {
+                            self.trust_message.clear();
+                        }
+                    } else {
+                        self.trust_message = format!(
+                            "Trust status exited with code {}.",
+                            output.status.code().unwrap_or(-1)
+                        );
+                    }
+                }
+                Ok(collector::TrustReply::Trust(trust)) if action != TrustAction::Status => {
+                    let refused = trust.action == "refused";
+                    if !output.status.success() && !refused {
+                        self.trust_message = format!(
+                            "Trust command exited with code {}.",
+                            output.status.code().unwrap_or(-1)
+                        );
+                    } else {
+                        self.trust_message = trust.message.clone();
+                        if action == TrustAction::PreviewClaude && trust.action == "preview" {
+                            self.trust_preview = Some(trust);
+                        } else {
+                            self.trust_preview = None;
+                            self.trust_result = Some(trust);
+                        }
+                    }
+                    if action != TrustAction::PreviewClaude {
+                        self.publish();
+                        self.request_trust_action(TrustAction::Status);
+                        return;
+                    }
+                }
+                Ok(_) => self.trust_message = "Collector returned the wrong trust response.".into(),
+                Err(error) => self.trust_message = error,
+            },
+        }
+        if refresh_after_busy {
+            self.publish();
+            self.request_trust_action(TrustAction::Status);
+            return;
+        }
+        self.publish();
     }
 }
 

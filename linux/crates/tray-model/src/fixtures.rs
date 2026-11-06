@@ -74,6 +74,45 @@ pub fn collector_sample() -> String {
     serde_json::to_string(&model.view()).expect("collector sample serializes")
 }
 
+/// A TLS takeover with a pending Claude Code preview, for the confirmation dialog snapshot.
+pub fn collector_trust_preview_sample() -> String {
+    let mut model = CollectorModel::default();
+    // Neutral UI-only paths: real settings and backup paths always come from helper JSON.
+    let claude_settings = "/home/demo/claude-settings.json";
+    let claude_backup = "/home/demo/claude-settings.json.cainary-20261106T161720Z.bak";
+    model.accept(
+        r#"{"v":1,"type":"hello","mode":"tls-receiver","endpoint":"https://127.0.0.1:8443","tls":{"hosts":["otel.example-corp.com"],"ca":{"path":"/home/demo/.local/state/cainary/otel-debug-ca.pem","sha256":"0123456789abcdef"}},"setup":{"takeover":["127.0.0.1 otel.example-corp.com","::1 otel.example-corp.com","NODE_EXTRA_CA_CERTS=/home/demo/.local/state/cainary/otel-debug-ca.pem"],"notes":["Your organization's collector receives nothing while the takeover is active."]}}"#.into(),
+    );
+    let mut view = serde_json::to_value(model.view()).expect("collector view serializes");
+    view["trust"] = json!({
+        "busy": false,
+        "message": "",
+        "status": {
+            "claudeCode": {"state": "absent", "settingsPath": claude_settings, "value": null},
+            "codex": {"state": "absent", "bundlePath": null, "command": null},
+            "caPath": "/home/demo/.local/state/cainary/otel-debug-ca.pem",
+            "caExists": true,
+            "note": null
+        },
+        "preview": {
+            "target": "claude-code",
+            "action": "preview",
+            "message": "Would set env.NODE_EXTRA_CA_CERTS in your Claude Code settings, after a backup.",
+            "settingsPath": claude_settings,
+            "backupPath": claude_backup,
+            "key": "NODE_EXTRA_CA_CERTS",
+            "from": null,
+            "to": "/home/demo/.local/state/cainary/otel-debug-ca.pem",
+            "bundlePath": null,
+            "command": null
+        },
+        "result": null,
+        "noWriteAvailable": true,
+        "noWriteCommand": "env NODE_EXTRA_CA_CERTS=/home/demo/.local/state/cainary/otel-debug-ca.pem claude"
+    });
+    serde_json::to_string(&view).expect("trust preview serializes")
+}
+
 fn snapshot(raw: &[u8]) -> Arc<Snapshot> {
     Arc::new(Snapshot {
         report: Report::decode(raw).expect("a golden decodes"),
@@ -92,6 +131,10 @@ pub fn scenarios() -> Vec<Scenario> {
         not_installed_expanded: true,
         ..defaults.clone()
     };
+    let mut https_takeover = defaults.clone();
+    https_takeover.collector.enabled = true;
+    https_takeover.collector.tls = true;
+    https_takeover.collector.tls_hosts = vec!["otel.example-corp.com".into()];
     let changed = with_changes(
         CLAUDE,
         vec![
@@ -149,6 +192,14 @@ pub fn scenarios() -> Vec<Scenario> {
             false,
         ),
         scenario(
+            "details-collector-trust-preview",
+            "details",
+            ":collector:trust-preview",
+            ready(CLAUDE),
+            &defaults,
+            false,
+        ),
+        scenario(
             "details-changes",
             "details",
             ":changes",
@@ -170,6 +221,14 @@ pub fn scenarios() -> Vec<Scenario> {
             "",
             ScanState::Scanning { last: None },
             &defaults,
+            false,
+        ),
+        scenario(
+            "settings-https-takeover",
+            "settings",
+            "",
+            ready(CLAUDE),
+            &https_takeover,
             false,
         ),
         scenario(

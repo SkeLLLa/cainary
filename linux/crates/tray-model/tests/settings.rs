@@ -151,6 +151,40 @@ fn collector_pattern_limit_includes_selected_presets() {
 }
 
 #[test]
+fn old_collector_tables_load_tls_takeover_defaults() {
+    let settings: Settings = toml::from_str(
+        "[collector]\nenabled = true\nport = 4318\nlog_to_file = false\nlog_path = \"\"\npresets = [\"email\"]\nnotify = true\npatterns = []\n",
+    )
+    .unwrap();
+    assert!(settings.collector.enabled);
+    assert!(!settings.collector.tls);
+    assert_eq!(settings.collector.tls_port, 8443);
+    assert!(settings.collector.tls_hosts.is_empty());
+}
+
+#[test]
+fn tls_hosts_mirror_the_helper_dns_name_rules() {
+    let mut settings = CollectorSettings {
+        tls: true,
+        tls_hosts: vec!["otel.example-corp.test".into()],
+        ..CollectorSettings::default()
+    };
+    assert!(settings.valid());
+    settings.tls_hosts.push("OTEL.EXAMPLE-CORP.TEST".into());
+    assert_eq!(
+        settings.tls_host_problem(1),
+        Some("This host is already listed.")
+    );
+    assert!(!settings.valid());
+    settings.tls_hosts = vec!["*.example.com".into()];
+    assert!(settings.tls_host_problem(0).is_some());
+    assert!(!settings.valid());
+    settings.tls_hosts = vec!["otel.example-corp.test".into()];
+    settings.tls_port = 0;
+    assert!(!settings.valid());
+}
+
+#[test]
 fn collector_notify_does_not_require_a_child_restart() {
     let current = CollectorSettings::default();
     let mut next = current.clone();
@@ -162,6 +196,13 @@ fn collector_notify_does_not_require_a_child_restart() {
     assert!(current.requires_restart(&next));
     next = current.clone();
     next.port += 1;
+    assert!(current.requires_restart(&next));
+    next = current.clone();
+    next.tls = true;
+    next.tls_hosts = vec!["otel.example.com".into()];
+    assert!(current.requires_restart(&next));
+    next = current.clone();
+    next.tls_port += 1;
     assert!(current.requires_restart(&next));
     next = current.clone();
     next.log_to_file = !next.log_to_file;

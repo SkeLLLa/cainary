@@ -3,6 +3,8 @@ use std::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::QString;
 
+use cainary_tray_model::collector::TrustAction;
+
 use crate::controller::{self, AppCommand, AppMessage};
 use crate::ui;
 
@@ -26,6 +28,30 @@ pub mod qobject {
 
         #[qinvokable]
         fn retry(self: Pin<&mut CollectorController>);
+
+        #[qinvokable]
+        #[cxx_name = "previewClaudeTrust"]
+        fn preview_claude_trust(self: Pin<&mut CollectorController>);
+
+        #[qinvokable]
+        #[cxx_name = "applyClaudeTrust"]
+        fn apply_claude_trust(self: Pin<&mut CollectorController>);
+
+        #[qinvokable]
+        #[cxx_name = "cancelClaudeTrustPreview"]
+        fn cancel_claude_trust_preview(self: Pin<&mut CollectorController>);
+
+        #[qinvokable]
+        #[cxx_name = "undoClaudeTrust"]
+        fn undo_claude_trust(self: Pin<&mut CollectorController>);
+
+        #[qinvokable]
+        #[cxx_name = "prepareCodexBundle"]
+        fn prepare_codex_bundle(self: Pin<&mut CollectorController>);
+
+        #[qinvokable]
+        #[cxx_name = "undoCodexBundle"]
+        fn undo_codex_bundle(self: Pin<&mut CollectorController>);
     }
 
     impl cxx_qt::Threading for CollectorController {}
@@ -65,5 +91,39 @@ impl qobject::CollectorController {
 
     fn retry(self: Pin<&mut Self>) {
         controller::send(AppMessage::Command(AppCommand::RetryCollector));
+    }
+
+    fn preview_claude_trust(self: Pin<&mut Self>) {
+        controller::send(AppMessage::Command(AppCommand::CollectorTrust(
+            TrustAction::PreviewClaude,
+        )));
+    }
+
+    fn apply_claude_trust(self: Pin<&mut Self>) {
+        controller::send(AppMessage::Command(AppCommand::CollectorTrust(
+            TrustAction::ApplyClaude,
+        )));
+    }
+
+    fn cancel_claude_trust_preview(self: Pin<&mut Self>) {
+        controller::send(AppMessage::Command(AppCommand::CancelClaudeTrustPreview));
+    }
+
+    fn undo_claude_trust(self: Pin<&mut Self>) {
+        controller::send(AppMessage::Command(AppCommand::CollectorTrust(
+            TrustAction::UndoClaude,
+        )));
+    }
+
+    fn prepare_codex_bundle(self: Pin<&mut Self>) {
+        controller::send(AppMessage::Command(AppCommand::CollectorTrust(
+            TrustAction::PrepareCodex,
+        )));
+    }
+
+    fn undo_codex_bundle(self: Pin<&mut Self>) {
+        controller::send(AppMessage::Command(AppCommand::CollectorTrust(
+            TrustAction::UndoCodex,
+        )));
     }
 }

@@ -39,6 +39,7 @@ QtObject {
     }
     property SettingsWindow settingsWindow: SettingsWindow {
         st: root.data.st
+        endpointHosts: root.data.view ? (root.data.view.endpointHosts || []) : []
     }
     property AboutWindow aboutWindow: AboutWindow {
         st: root.data.st

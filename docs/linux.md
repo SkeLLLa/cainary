@@ -367,6 +367,30 @@ suggested path is `$XDG_STATE_HOME/cainary/otel-debug.jsonl` (or the XDG default
 Custom red-flag patterns are sent to the child over stdin, not placed in its command-line
 arguments.
 
+### HTTPS takeover and certificate trust
+
+The collector settings include an optional **HTTPS takeover**. It listens on loopback, uses port
+8443 by default, and only handles the host names listed there. Suggestions come from Claude Code
+and Codex telemetry endpoints in the latest scan report. A privileged-port bind failure includes
+the helper's note in a copyable error box in Details.
+
+The Details page shows the takeover setup lines, local CA path and fingerprint. **Let Claude Code
+trust the collector…** first asks the helper for a dry-run preview. The confirmation dialog shows
+the exact `NODE_EXTRA_CA_CERTS` change and backup path; nothing is written until **Confirm**. Claude
+Code must be restarted. Undo restores the previous value or removes the value cAInary added. The
+tray enables Undo only while `--trust-status` reports the setting as applied.
+
+**Prepare Codex bundle** creates a separate CA bundle and displays the helper's copyable command;
+**Remove** deletes that bundle. It does not edit Codex configuration or a shell profile. Codex
+preparation can be refused until the HTTPS takeover has run once and created its CA; the helper's
+message is shown in Details. Both trust actions are one-shot child processes with bounded output and
+deadlines. The helper never changes a system trust store.
+
+For a session-only alternative, Details also offers `env NODE_EXTRA_CA_CERTS=<path> claude`. This
+does not write Claude Code settings. While the takeover is active, matching telemetry endpoints
+terminate at the local collector; the collector makes no outbound connection to the organization's
+collector.
+
 The tray looks for the collector binary in this order: `CAINARY_OTEL_DEBUG` in development mode,
 next to `cainary-tray`, then `/usr/bin/cainary-otel-debug`. It never searches `PATH`. Packaged
 Linux builds include the binary.

@@ -38,12 +38,20 @@ pub fn child_args(settings: &CollectorSettings) -> Result<Vec<String>, String> {
     if !settings.valid() {
         return Err("check the collector port and red-flag patterns".into());
     }
-    let mut args = vec![
-        "--json".to_owned(),
-        "--config-stdin".to_owned(),
-        "--port".to_owned(),
-        settings.port.to_string(),
-    ];
+    let port = if settings.tls {
+        settings.tls_port
+    } else {
+        settings.port
+    };
+    let mut args = vec!["--json".to_owned(), "--config-stdin".to_owned()];
+    if settings.tls {
+        args.push("--tls".into());
+        for host in settings.valid_tls_hosts() {
+            args.push("--tls-host".into());
+            args.push(host);
+        }
+    }
+    args.extend(["--port".into(), port.to_string()]);
     if settings.log_to_file {
         let path = if settings.log_path.trim().is_empty() {
             CollectorSettings::suggested_log_path()
@@ -148,6 +156,148 @@ pub fn decode_line(line: &str) -> Result<Line, DecodeError> {
     }
 }
 
+/// A finite set of one-shot helper calls exposed by the tray.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrustAction {
+    Status,
+    PreviewClaude,
+    ApplyClaude,
+    UndoClaude,
+    PrepareCodex,
+    UndoCodex,
+}
+
+impl TrustAction {
+    pub fn args(self) -> &'static [&'static str] {
+        match self {
+            Self::Status => &["--trust-status", "--json"],
+            Self::PreviewClaude => &["--trust", "claude-code", "--dry-run", "--json"],
+            Self::ApplyClaude => &["--trust", "claude-code", "--json"],
+            Self::UndoClaude => &["--trust", "claude-code", "--undo", "--json"],
+            Self::PrepareCodex => &["--trust", "codex", "--json"],
+            Self::UndoCodex => &["--trust", "codex", "--undo", "--json"],
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum TrustReply {
+    Status(TrustStatusLine),
+    Trust(TrustResultLine),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrustStatusLine {
+    #[serde(default)]
+    pub ts: String,
+    #[serde(default)]
+    pub claude_code: ClaudeTrustStatus,
+    #[serde(default)]
+    pub codex: CodexTrustStatus,
+    #[serde(default)]
+    pub ca_path: Option<String>,
+    #[serde(default)]
+    pub ca_exists: bool,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeTrustStatus {
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub settings_path: Option<String>,
+    #[serde(default)]
+    pub value: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexTrustStatus {
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub bundle_path: Option<String>,
+    #[serde(default)]
+    pub command: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrustResultLine {
+    #[serde(default)]
+    pub ts: String,
+    #[serde(default)]
+    pub target: String,
+    #[serde(default)]
+    pub action: String,
+    #[serde(default)]
+    pub message: String,
+    #[serde(default)]
+    pub settings_path: Option<String>,
+    #[serde(default)]
+    pub backup_path: Option<String>,
+    #[serde(default)]
+    pub key: Option<String>,
+    #[serde(default)]
+    pub from: Option<String>,
+    #[serde(default)]
+    pub to: Option<String>,
+    #[serde(default)]
+    pub bundle_path: Option<String>,
+    #[serde(default)]
+    pub command: Option<String>,
+}
+
+/// Decodes the helper's one-line v1 trust contract. Unknown fields are ignored by serde.
+pub fn decode_trust_output(stdout: &[u8]) -> Result<TrustReply, String> {
+    if stdout.len() > (64 << 10) {
+        return Err("collector trust response is too large".into());
+    }
+    let value: Value = serde_json::from_slice(stdout)
+        .map_err(|_| "collector trust response was unreadable".to_owned())?;
+    if value.get("v").and_then(Value::as_u64) != Some(1) {
+        return Err("collector trust response needs an update".into());
+    }
+    match value.get("type").and_then(Value::as_str) {
+        Some("trust-status") => serde_json::from_value(value)
+            .map(TrustReply::Status)
+            .map_err(|_| "collector trust status was incomplete".into()),
+        Some("trust") => serde_json::from_value(value)
+            .map(TrustReply::Trust)
+            .map_err(|_| "collector trust response was incomplete".into()),
+        _ => Err("collector trust response had an unknown type".into()),
+    }
+}
+
+/// Copyable, no-write command using the same fish/bash quoting as the helper's setup output.
+pub fn claude_no_write_command(ca_path: &str) -> Option<String> {
+    if ca_path.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "env NODE_EXTRA_CA_CERTS={} claude",
+        shell_quote(ca_path)
+    ))
+}
+
+fn shell_quote(word: &str) -> String {
+    let plain = !word.is_empty()
+        && word
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_@%+=:,./-".contains(&byte));
+    if plain {
+        return word.to_owned();
+    }
+    if word.chars().any(char::is_control) {
+        return "'<edit: path contains control characters>'".into();
+    }
+    format!("'{}'", word.replace('\'', "'\\''"))
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Hello {
@@ -155,6 +305,8 @@ pub struct Hello {
     pub ts: String,
     #[serde(default)]
     pub generator: String,
+    #[serde(default)]
+    pub mode: String,
     #[serde(default)]
     pub listen: Vec<String>,
     #[serde(default)]
@@ -166,7 +318,27 @@ pub struct Hello {
     #[serde(default)]
     pub red_flags: Vec<RedFlagInfo>,
     #[serde(default)]
+    pub tls: Option<TlsInfo>,
+    #[serde(default)]
     pub setup: Setup,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TlsInfo {
+    #[serde(default)]
+    pub hosts: Vec<String>,
+    #[serde(default)]
+    pub ca: TlsCaInfo,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TlsCaInfo {
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub sha256: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
@@ -191,6 +363,8 @@ pub struct Setup {
     pub codex: Vec<String>,
     #[serde(default)]
     pub notes: Vec<String>,
+    #[serde(default)]
+    pub takeover: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
@@ -359,6 +533,7 @@ pub struct Model {
     pub state: State,
     pub message: String,
     pub hello: Option<Hello>,
+    pub stderr_tail: String,
     batches: VecDeque<StoredBatch>,
     alerts: VecDeque<StoredAlert>,
     errors: VecDeque<ErrorLine>,
@@ -383,6 +558,19 @@ impl Model {
     pub fn failed(&mut self, reason: impl Into<String>) {
         self.state = State::Failed;
         self.message = reason.into();
+    }
+
+    pub fn set_stderr_tail(&mut self, tail: impl Into<String>) {
+        let mut tail = tail.into();
+        const LIMIT: usize = 8 << 10;
+        if tail.len() > LIMIT {
+            let mut start = tail.len() - LIMIT;
+            while !tail.is_char_boundary(start) {
+                start += 1;
+            }
+            tail.drain(..start);
+        }
+        self.stderr_tail = tail;
     }
 
     /// Adds one complete line. Returns true when the child must stop.
@@ -499,6 +687,7 @@ impl Model {
     pub fn view(&self) -> View {
         let hello = self.hello.as_ref();
         let endpoint = hello.map(|h| h.endpoint.clone()).unwrap_or_default();
+        let tls = hello.and_then(|hello| hello.tls.as_ref());
         let batches = self
             .batches
             .iter()
@@ -523,11 +712,19 @@ impl Model {
             .into(),
             message: self.message.clone(),
             endpoint,
+            mode: hello.map(|hello| hello.mode.clone()).unwrap_or_default(),
+            tls_hosts: tls.map(|info| info.hosts.clone()).unwrap_or_default(),
+            ca_path: tls.map(|info| info.ca.path.clone()).unwrap_or_default(),
+            ca_sha256: tls.map(|info| info.ca.sha256.clone()).unwrap_or_default(),
             claude_code: hello
                 .map(|h| h.setup.claude_code.clone())
                 .unwrap_or_default(),
             codex: hello.map(|h| h.setup.codex.clone()).unwrap_or_default(),
             notes: hello.map(|h| h.setup.notes.clone()).unwrap_or_default(),
+            takeover: hello
+                .map(|hello| hello.setup.takeover.clone())
+                .unwrap_or_default(),
+            stderr_tail: self.stderr_tail.clone(),
             batches,
             alerts,
             errors,
@@ -542,9 +739,15 @@ pub struct View {
     pub state: String,
     pub message: String,
     pub endpoint: String,
+    pub mode: String,
+    pub tls_hosts: Vec<String>,
+    pub ca_path: String,
+    pub ca_sha256: String,
     pub claude_code: Vec<String>,
     pub codex: Vec<String>,
     pub notes: Vec<String>,
+    pub takeover: Vec<String>,
+    pub stderr_tail: String,
     pub batches: Vec<BatchView>,
     pub alerts: Vec<AlertView>,
     pub errors: Vec<ErrorView>,
@@ -776,6 +979,129 @@ mod tests {
         let config: Value = serde_json::from_slice(&config).unwrap();
         assert!(config.to_string().contains("acme-private-pattern"));
         assert_eq!(config["redFlags"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn tls_hello_and_child_arguments_keep_takeover_fields() {
+        let hello = decode_line(
+            r#"{"v":1,"type":"hello","mode":"tls-receiver","tls":{"hosts":["otel.example.com"],"ca":{"path":"/state/ca.pem","sha256":"abc"}},"setup":{"takeover":["127.0.0.1 otel.example.com"]}}"#,
+        )
+        .unwrap();
+        assert!(
+            matches!(hello, Line::Hello(Hello { mode, tls: Some(TlsInfo { hosts, ca: TlsCaInfo { path, sha256 } }), setup: Setup { takeover, .. }, .. }) if mode == "tls-receiver" && hosts == ["otel.example.com"] && path == "/state/ca.pem" && sha256 == "abc" && takeover == ["127.0.0.1 otel.example.com"])
+        );
+
+        let settings = CollectorSettings {
+            tls: true,
+            tls_port: 8443,
+            tls_hosts: vec!["OTEL.Example.com".into(), "logs.example.com".into()],
+            ..CollectorSettings::default()
+        };
+        let args = child_args(&settings).unwrap();
+        assert_eq!(
+            args,
+            [
+                "--json",
+                "--config-stdin",
+                "--tls",
+                "--tls-host",
+                "otel.example.com",
+                "--tls-host",
+                "logs.example.com",
+                "--port",
+                "8443"
+            ]
+        );
+        assert!(config_stdin(&settings).unwrap().starts_with(b"{\"v\":1"));
+    }
+
+    #[test]
+    fn trust_output_decodes_the_helper_fixtures_and_nullable_fields() {
+        let fixtures: &[(&str, i32)] = &[
+            (
+                r#"{"v":1,"type":"trust-status","ts":"2026-11-06T16:29:49Z","claudeCode":{"state":"absent","settingsPath":"<HOME>/.claude/settings.json","value":null},"codex":{"state":"absent","bundlePath":null,"command":null},"caPath":"<HOME>/.local/state/cainary/otel-debug-ca.pem","caExists":false,"note":null}"#,
+                0,
+            ),
+            (
+                r#"{"v":1,"type":"trust","ts":"2026-11-06T16:29:49Z","target":"claude-code","action":"preview","message":"Would set env.NODE_EXTRA_CA_CERTS in your Claude Code settings, after a backup. Close Claude Code before applying this, and restart it afterwards. While the HTTPS takeover is active, your organization's collector receives nothing.","settingsPath":"<HOME>/.claude/settings.json","backupPath":"<HOME>/.claude/settings.json.cainary-20261106T162949Z.bak","key":"NODE_EXTRA_CA_CERTS","from":null,"to":"<HOME>/.local/state/cainary/otel-debug-ca.pem","bundlePath":null,"command":null}"#,
+                0,
+            ),
+            (
+                r#"{"v":1,"type":"trust","ts":"2026-11-06T16:29:49Z","target":"claude-code","action":"applied","message":"Claude Code will trust the collector certificate once it is restarted.","settingsPath":"<HOME>/.claude/settings.json","backupPath":"<HOME>/.claude/settings.json.cainary-20261106T162949Z.bak","key":"NODE_EXTRA_CA_CERTS","from":null,"to":"<HOME>/.local/state/cainary/otel-debug-ca.pem","bundlePath":null,"command":null}"#,
+                0,
+            ),
+            (
+                r#"{"v":1,"type":"trust","ts":"2026-11-06T16:17:20Z","target":"claude-code","action":"already","message":"Claude Code already trusts the collector certificate.","settingsPath":"<HOME>/.claude/settings.json","backupPath":null,"key":"NODE_EXTRA_CA_CERTS","from":"<HOME>/.local/state/cainary/otel-debug-ca.pem","to":"<HOME>/.local/state/cainary/otel-debug-ca.pem","bundlePath":null,"command":null}"#,
+                0,
+            ),
+            (
+                r#"{"v":1,"type":"trust-status","ts":"2026-11-06T16:29:49Z","claudeCode":{"state":"applied","settingsPath":"<HOME>/.claude/settings.json","value":"<HOME>/.local/state/cainary/otel-debug-ca.pem"},"codex":{"state":"absent","bundlePath":null,"command":null},"caPath":"<HOME>/.local/state/cainary/otel-debug-ca.pem","caExists":false,"note":null}"#,
+                0,
+            ),
+            (
+                r#"{"v":1,"type":"trust","ts":"2026-11-06T16:29:49Z","target":"codex","action":"refused","message":"Start the takeover once (cainary-otel-debug --tls …) so the collector certificate exists, then try again.","settingsPath":null,"backupPath":null,"key":null,"from":null,"to":null,"bundlePath":null,"command":null}"#,
+                1,
+            ),
+            (
+                r#"{"v":1,"type":"trust","ts":"2026-11-06T16:29:49Z","target":"claude-code","action":"undone","message":"Restored your previous Claude Code setting. Close Claude Code before applying this, and restart it afterwards.","settingsPath":"<HOME>/.claude/settings.json","backupPath":"<HOME>/.claude/settings.json.cainary-20261106T162949Z-1.bak","key":"NODE_EXTRA_CA_CERTS","from":"<HOME>/.local/state/cainary/otel-debug-ca.pem","to":null,"bundlePath":null,"command":null}"#,
+                0,
+            ),
+            (
+                r#"{"v":1,"type":"trust","ts":"2026-11-06T16:17:20Z","target":"claude-code","action":"nothing-to-undo","message":"cAInary has not changed your Claude Code settings.","settingsPath":null,"backupPath":null,"key":null,"from":null,"to":null,"bundlePath":null,"command":null}"#,
+                0,
+            ),
+            (
+                r#"{"v":1,"type":"trust","ts":"2026-11-06T16:17:20Z","target":"codex","action":"nothing-to-undo","message":"No Codex certificate bundle was prepared.","settingsPath":null,"backupPath":null,"key":null,"from":null,"to":null,"bundlePath":null,"command":null}"#,
+                0,
+            ),
+        ];
+        for (line, exit_code) in fixtures {
+            let reply = decode_trust_output(line.as_bytes()).unwrap();
+            if *exit_code == 1 {
+                assert!(
+                    matches!(reply, TrustReply::Trust(TrustResultLine { action, command: None, .. }) if action == "refused")
+                );
+            } else {
+                assert!(
+                    !matches!(reply, TrustReply::Trust(TrustResultLine { action, .. }) if action == "refused")
+                );
+            }
+        }
+
+        let TrustReply::Status(status) = decode_trust_output(fixtures[0].0.as_bytes()).unwrap()
+        else {
+            panic!("expected status response");
+        };
+        assert!(!status.ca_exists);
+        assert_eq!(status.note, None);
+
+        let TrustReply::Trust(preview) = decode_trust_output(fixtures[1].0.as_bytes()).unwrap()
+        else {
+            panic!("expected preview response");
+        };
+        assert_eq!(preview.key.as_deref(), Some("NODE_EXTRA_CA_CERTS"));
+        assert_eq!(preview.from, None);
+        assert_eq!(
+            preview.backup_path.as_deref(),
+            Some("<HOME>/.claude/settings.json.cainary-20261106T162949Z.bak")
+        );
+        assert!(
+            preview
+                .message
+                .contains("Close Claude Code before applying this")
+        );
+    }
+
+    #[test]
+    fn no_write_command_quotes_paths_for_fish_and_bash() {
+        assert_eq!(
+            claude_no_write_command("/home/u/ca.pem").as_deref(),
+            Some("env NODE_EXTRA_CA_CERTS=/home/u/ca.pem claude")
+        );
+        assert_eq!(
+            claude_no_write_command("/home/a b/ca's.pem").as_deref(),
+            Some("env NODE_EXTRA_CA_CERTS='/home/a b/ca'\\''s.pem' claude")
+        );
     }
 
     #[test]

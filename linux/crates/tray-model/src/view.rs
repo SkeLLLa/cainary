@@ -33,6 +33,8 @@ pub struct View {
     pub entries: serde_json::Map<String, serde_json::Value>,
     pub default_selection: String,
     pub sources: Vec<SourceGroup>,
+    /// DNS hosts found only in Claude Code and Codex telemetry endpoint findings.
+    pub endpoint_hosts: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -368,6 +370,7 @@ pub fn build_view(
         });
     let sources = report.map(sources_view).unwrap_or_default();
     let trusted = report.is_some_and(summary::is_trusted);
+    let endpoint_hosts = report.map(telemetry_endpoint_hosts).unwrap_or_default();
 
     View {
         has_report: report.is_some(),
@@ -383,7 +386,58 @@ pub fn build_view(
         entries,
         default_selection,
         sources,
+        endpoint_hosts,
     }
+}
+
+fn telemetry_endpoint_hosts(report: &Report) -> Vec<String> {
+    let mut hosts = Vec::new();
+    for finding in report.entries().flat_map(|entry| &entry.findings) {
+        if !finding.title.starts_with("Claude Code sends ")
+            && !finding.title.starts_with("Codex sends ")
+        {
+            continue;
+        }
+        let mut candidates = finding.config.evidence.iter().filter_map(|line| {
+            line.split_once(" = ")
+                .map(|(_, value)| value.trim())
+                .and_then(endpoint_host)
+        });
+        if let Some(host) = candidates.next() {
+            if !hosts.contains(&host) {
+                hosts.push(host);
+            }
+            continue;
+        }
+        if let Some((_, host)) = finding.title.rsplit_once(" to ")
+            && let Some(host) = endpoint_host(host)
+            && !hosts.contains(&host)
+        {
+            hosts.push(host);
+        }
+    }
+    hosts.truncate(crate::settings::COLLECTOR_MAX_TLS_HOSTS);
+    hosts
+}
+
+fn endpoint_host(value: &str) -> Option<String> {
+    let value = value
+        .trim()
+        .trim_matches(|ch: char| matches!(ch, '"' | '\'' | '`' | '<' | '>' | ',' | ';'));
+    let authority = value
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(value)
+        .split(['/', '?', '#', ' ', '\t'])
+        .next()?;
+    let authority = authority.rsplit('@').next()?;
+    let host = if authority.starts_with('[') {
+        return None;
+    } else {
+        authority.split(':').next()?
+    };
+    let host = host.to_ascii_lowercase();
+    crate::settings::valid_tls_host(&host).then_some(host)
 }
 
 fn row(entry: &Entry) -> MenuRow {
@@ -398,6 +452,43 @@ fn row(entry: &Entry) -> MenuRow {
         label,
         summary: entry.status.summary.clone(),
         installed: entry.installed,
+    }
+}
+
+#[cfg(test)]
+mod endpoint_host_tests {
+    use super::{endpoint_host, telemetry_endpoint_hosts};
+    use crate::report::Report;
+
+    #[test]
+    fn suggestions_come_from_claude_code_and_codex_telemetry_findings() {
+        let claude = Report::decode(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../crates/cainary-core/tests/golden/claude-code-linux.json"
+        )))
+        .unwrap();
+        assert_eq!(telemetry_endpoint_hosts(&claude), ["otel.example-corp.com"]);
+
+        let codex = Report::decode(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../crates/cainary-core/tests/golden/codex-linux.json"
+        )))
+        .unwrap();
+        assert_eq!(
+            telemetry_endpoint_hosts(&codex),
+            ["traces.example-corp.com", "metrics.example-corp.com"]
+        );
+    }
+
+    #[test]
+    fn host_suggestions_reject_non_dns_and_takeovers_are_case_normalized() {
+        assert_eq!(
+            endpoint_host("https://OTEL.Example.com:4318/v1/logs"),
+            Some("otel.example.com".into())
+        );
+        assert_eq!(endpoint_host("https://127.0.0.1:4318"), None);
+        assert_eq!(endpoint_host("https://*.example.com"), None);
+        assert_eq!(endpoint_host("localhost:4318"), None);
     }
 }
 

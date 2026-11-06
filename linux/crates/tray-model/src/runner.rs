@@ -512,6 +512,22 @@ pub fn run(
     )
 }
 
+/// Runs one bounded trust/status command from the collector helper. Call this on a worker thread:
+/// its child is tied to that spawning thread by PDEATHSIG and is always reaped before return.
+pub fn run_one_shot(program: &std::path::Path, args: &[OsString]) -> Result<Output, RunError> {
+    run(
+        program,
+        args,
+        None,
+        &Limits {
+            deadline: Duration::from_secs(10),
+            stdout: 64 << 10,
+            stderr: 16 << 10,
+            term_grace: Duration::from_secs(1),
+        },
+    )
+}
+
 /// [`run`], recording the child's pid (= its process group) in `running` while it lives, and
 /// ending it the way a deadline does once `cancelled` is set.
 pub fn run_cancellable(

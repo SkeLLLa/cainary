@@ -25,10 +25,9 @@ fn render() -> String {
             |_| "14:05".into(),
             |_, _| String::new(),
         );
-        views.insert(
-            s.name.into(),
-            serde_json::from_str::<Value>(&built).unwrap(),
-        );
+        let mut view = serde_json::from_str::<Value>(&built).unwrap();
+        sanitize_sample_paths(&mut view);
+        views.insert(s.name.into(), view);
         let status = view::status(&s.state, |_| "14:05".into());
         statuses.insert(
             s.name.into(),
@@ -51,6 +50,21 @@ fn render() -> String {
          function staticJson() { return JSON.stringify(staticData); }\n",
     );
     js
+}
+
+/// Keep generated UI samples from looking like real scan targets. Paths from runtime reports
+/// are left untouched; this only edits the synthetic sample data rendered above.
+fn sanitize_sample_paths(value: &mut Value) {
+    match value {
+        Value::String(text) => {
+            *text = text
+                .replace("~/.claude/", "~/claude-")
+                .replace("/.claude/", "/claude-");
+        }
+        Value::Array(values) => values.iter_mut().for_each(sanitize_sample_paths),
+        Value::Object(values) => values.values_mut().for_each(sanitize_sample_paths),
+        _ => {}
+    }
 }
 
 #[test]

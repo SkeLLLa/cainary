@@ -838,22 +838,25 @@ var variants = {
             "status": "Present"
           },
           {
-            "path": "~/.claude/policy-limits.json",
+            "path": "~/claude-policy-limits.json",
             "icon": "neutral",
             "status": "Absent"
           },
           {
-            "path": "~/.claude/remote-settings.json",
+            "path": "~/claude-remote-settings.json",
             "icon": "neutral",
             "status": "Absent"
           },
           {
-            "path": "~/.claude/settings.json",
+            "path": "~/claude-settings.json",
             "icon": "neutral",
             "status": "Absent"
           }
         ]
       }
+    ],
+    "endpointHosts": [
+      "otel.example-corp.com"
     ]
   },
   "popup-expanded": {
@@ -1691,22 +1694,25 @@ var variants = {
             "status": "Present"
           },
           {
-            "path": "~/.claude/policy-limits.json",
+            "path": "~/claude-policy-limits.json",
             "icon": "neutral",
             "status": "Absent"
           },
           {
-            "path": "~/.claude/remote-settings.json",
+            "path": "~/claude-remote-settings.json",
             "icon": "neutral",
             "status": "Absent"
           },
           {
-            "path": "~/.claude/settings.json",
+            "path": "~/claude-settings.json",
             "icon": "neutral",
             "status": "Absent"
           }
         ]
       }
+    ],
+    "endpointHosts": [
+      "otel.example-corp.com"
     ]
   },
   "popup-failed": {
@@ -2548,22 +2554,25 @@ var variants = {
             "status": "Present"
           },
           {
-            "path": "~/.claude/policy-limits.json",
+            "path": "~/claude-policy-limits.json",
             "icon": "neutral",
             "status": "Absent"
           },
           {
-            "path": "~/.claude/remote-settings.json",
+            "path": "~/claude-remote-settings.json",
             "icon": "neutral",
             "status": "Absent"
           },
           {
-            "path": "~/.claude/settings.json",
+            "path": "~/claude-settings.json",
             "icon": "neutral",
             "status": "Absent"
           }
         ]
       }
+    ],
+    "endpointHosts": [
+      "otel.example-corp.com"
     ]
   },
   "popup-scanning": {
@@ -2587,7 +2596,8 @@ var variants = {
     "notInstalledExpanded": false,
     "entries": {},
     "defaultSelection": "",
-    "sources": []
+    "sources": [],
+    "endpointHosts": []
   },
   "popup-empty": {
     "hasReport": true,
@@ -2745,17 +2755,17 @@ var variants = {
             "status": "Absent"
           },
           {
-            "path": "~/.claude/policy-limits.json",
+            "path": "~/claude-policy-limits.json",
             "icon": "neutral",
             "status": "Absent"
           },
           {
-            "path": "~/.claude/remote-settings.json",
+            "path": "~/claude-remote-settings.json",
             "icon": "neutral",
             "status": "Absent"
           },
           {
-            "path": "~/.claude/settings.json",
+            "path": "~/claude-settings.json",
             "icon": "neutral",
             "status": "Absent"
           }
@@ -2871,7 +2881,8 @@ var variants = {
           }
         ]
       }
-    ]
+    ],
+    "endpointHosts": []
   },
   "details": {
     "hasReport": true,
@@ -3708,22 +3719,25 @@ var variants = {
             "status": "Present"
           },
           {
-            "path": "~/.claude/policy-limits.json",
+            "path": "~/claude-policy-limits.json",
             "icon": "neutral",
             "status": "Absent"
           },
           {
-            "path": "~/.claude/remote-settings.json",
+            "path": "~/claude-remote-settings.json",
             "icon": "neutral",
             "status": "Absent"
           },
           {
-            "path": "~/.claude/settings.json",
+            "path": "~/claude-settings.json",
             "icon": "neutral",
             "status": "Absent"
           }
         ]
       }
+    ],
+    "endpointHosts": [
+      "otel.example-corp.com"
     ]
   },
   "details-collector": {
@@ -4561,22 +4575,881 @@ var variants = {
             "status": "Present"
           },
           {
-            "path": "~/.claude/policy-limits.json",
+            "path": "~/claude-policy-limits.json",
             "icon": "neutral",
             "status": "Absent"
           },
           {
-            "path": "~/.claude/remote-settings.json",
+            "path": "~/claude-remote-settings.json",
             "icon": "neutral",
             "status": "Absent"
           },
           {
-            "path": "~/.claude/settings.json",
+            "path": "~/claude-settings.json",
             "icon": "neutral",
             "status": "Absent"
           }
         ]
       }
+    ],
+    "endpointHosts": [
+      "otel.example-corp.com"
+    ]
+  },
+  "details-collector-trust-preview": {
+    "hasReport": true,
+    "trusted": true,
+    "canCopy": true,
+    "header": {
+      "level": "medium",
+      "label": "MEDIUM",
+      "summary": "Claude Code runs through Amazon Bedrock",
+      "scanLine": [
+        {
+          "text": "Scanned 14:05",
+          "tone": "secondary"
+        }
+      ]
+    },
+    "failure": null,
+    "changes": {
+      "title": "Changes",
+      "rows": []
+    },
+    "apps": [
+      {
+        "id": "claude",
+        "name": "Claude",
+        "kind": "app",
+        "iconKey": "claude",
+        "level": "medium",
+        "label": "MEDIUM",
+        "summary": "Claude Code runs through Amazon Bedrock",
+        "installed": true,
+        "a11y": "Claude: MEDIUM. Claude Code runs through Amazon Bedrock"
+      },
+      {
+        "id": "openai",
+        "name": "ChatGPT & Codex",
+        "kind": "app",
+        "iconKey": "openai",
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed",
+        "installed": false,
+        "a11y": "ChatGPT & Codex: NOT INSTALLED. Not installed"
+      },
+      {
+        "id": "cursor",
+        "name": "Cursor",
+        "kind": "app",
+        "iconKey": "cursor",
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed",
+        "installed": false,
+        "a11y": "Cursor: NOT INSTALLED. Not installed"
+      },
+      {
+        "id": "copilot",
+        "name": "GitHub Copilot",
+        "kind": "app",
+        "iconKey": "copilot",
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed",
+        "installed": false,
+        "a11y": "GitHub Copilot: NOT INSTALLED. Not installed"
+      }
+    ],
+    "others": [],
+    "notInstalledCount": 3,
+    "notInstalledExpanded": false,
+    "entries": {
+      "claude": {
+        "id": "claude",
+        "name": "Claude",
+        "kind": "app",
+        "iconKey": "claude",
+        "level": "medium",
+        "label": "MEDIUM",
+        "summary": "Claude Code runs through Amazon Bedrock",
+        "installed": true,
+        "reach": "Claude Code · sends: traffic, usage, identity, policy",
+        "emptyText": "",
+        "active": [
+          {
+            "id": "claude-1",
+            "level": "medium",
+            "chip": "MEDIUM",
+            "tags": [],
+            "title": "Claude Code runs through Amazon Bedrock",
+            "detail": "Model requests go to your cloud provider instead of Anthropic.",
+            "sends": "Sends: traffic",
+            "setBy": "Set by: an environment variable",
+            "path": "env:CLAUDE_CODE_USE_BEDROCK",
+            "evidence": "CLAUDE_CODE_USE_BEDROCK = 1\nANTHROPIC_BEDROCK_BASE_URL = https://bedrock-gw.example-corp.com",
+            "revealPath": "",
+            "docs": "https://code.claude.com/docs/en/env-vars",
+            "payload": null
+          },
+          {
+            "id": "claude-2",
+            "level": "low",
+            "chip": "LOW",
+            "tags": [],
+            "title": "Claude Code sends usage data and your identity to otel.example-corp.com",
+            "detail": "Claude Code's metrics export is on. Every data point is tagged with your account email (when you sign in with a Claude account), your account and organization IDs and the session ID.",
+            "sends": "Sends: usage, identity",
+            "setBy": "Set by: system settings",
+            "path": "/etc/claude-code/managed-settings.json",
+            "evidence": "CLAUDE_CODE_ENABLE_TELEMETRY = 1\nOTEL_METRICS_EXPORTER = otlp\nOTEL_EXPORTER_OTLP_ENDPOINT = https://otel.example-corp.com",
+            "revealPath": "",
+            "docs": "https://code.claude.com/docs/en/monitoring-usage",
+            "payload": {
+              "heading": "metrics · claude-code 2.1.316",
+              "maybe": false,
+              "docs": "https://code.claude.com/docs/en/monitoring-usage#metrics",
+              "gates": [
+                {
+                  "chip": "not sent",
+                  "label": "Agent, MCP, skill and plugin names on metrics (no commands)",
+                  "text": "not sent, because OTEL_LOG_TOOL_DETAILS is unset"
+                },
+                {
+                  "chip": "sent",
+                  "label": "Session ID on metrics",
+                  "text": "sent, because OTEL_METRICS_INCLUDE_SESSION_ID is unset (on by default)"
+                },
+                {
+                  "chip": "sent",
+                  "label": "Account IDs on metrics",
+                  "text": "sent, because OTEL_METRICS_INCLUDE_ACCOUNT_UUID is unset (on by default)"
+                },
+                {
+                  "chip": "not sent",
+                  "label": "Claude Code version on metrics",
+                  "text": "not sent, because OTEL_METRICS_INCLUDE_VERSION is unset"
+                },
+                {
+                  "chip": "not sent",
+                  "label": "How Claude Code was started, on metrics",
+                  "text": "not sent, because OTEL_METRICS_INCLUDE_ENTRYPOINT is unset"
+                },
+                {
+                  "chip": "not sent",
+                  "label": "Repository URL, owner and name",
+                  "text": "not sent, because OTEL_METRICS_INCLUDE_REPOSITORY is unset"
+                }
+              ],
+              "identity": [
+                {
+                  "key": "user.email",
+                  "what": "your account email (when signed in with a Claude account)",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": ""
+                },
+                {
+                  "key": "user.account_uuid",
+                  "what": "your account UUID",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "OTEL_METRICS_INCLUDE_ACCOUNT_UUID",
+                  "sent": "yes",
+                  "when": ""
+                },
+                {
+                  "key": "user.account_id",
+                  "what": "your tagged account ID",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "OTEL_METRICS_INCLUDE_ACCOUNT_UUID",
+                  "sent": "yes",
+                  "when": ""
+                },
+                {
+                  "key": "organization.id",
+                  "what": "your organization's UUID",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": ""
+                },
+                {
+                  "key": "user.id",
+                  "what": "a random ID for this installation",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": ""
+                },
+                {
+                  "key": "session.id",
+                  "what": "this session's ID",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "OTEL_METRICS_INCLUDE_SESSION_ID",
+                  "sent": "yes",
+                  "when": ""
+                },
+                {
+                  "key": "terminal.type",
+                  "what": "your terminal, such as iTerm.app, VS Code or tmux",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": ""
+                }
+              ],
+              "conditionalIdentity": [
+                {
+                  "key": "ccr.session.id",
+                  "what": "the cloud session's ID",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "OTEL_METRICS_INCLUDE_SESSION_ID",
+                  "sent": "yes",
+                  "when": "cloud sessions"
+                },
+                {
+                  "key": "app.version",
+                  "what": "the Claude Code version",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "OTEL_METRICS_INCLUDE_VERSION",
+                  "sent": "no",
+                  "when": ""
+                },
+                {
+                  "key": "app.entrypoint",
+                  "what": "how Claude Code was started",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "OTEL_METRICS_INCLUDE_ENTRYPOINT",
+                  "sent": "no",
+                  "when": ""
+                },
+                {
+                  "key": "vcs.repository.url.full",
+                  "what": "the repository's URL",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "OTEL_METRICS_INCLUDE_REPOSITORY",
+                  "sent": "no",
+                  "when": "inside a git repository"
+                },
+                {
+                  "key": "vcs.owner.name",
+                  "what": "the repository owner",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "OTEL_METRICS_INCLUDE_REPOSITORY",
+                  "sent": "no",
+                  "when": "inside a git repository"
+                },
+                {
+                  "key": "vcs.repository.name",
+                  "what": "the repository name",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "OTEL_METRICS_INCLUDE_REPOSITORY",
+                  "sent": "no",
+                  "when": "inside a git repository"
+                },
+                {
+                  "key": "vcs.provider.name",
+                  "what": "the repository's host",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "OTEL_METRICS_INCLUDE_REPOSITORY",
+                  "sent": "no",
+                  "when": "inside a git repository"
+                },
+                {
+                  "key": "user.groups",
+                  "what": "your identity provider's groups",
+                  "maybe": true,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": "Claude apps gateway sessions"
+                },
+                {
+                  "key": "identity.source",
+                  "what": "your identity provider, such as gateway-oidc",
+                  "maybe": true,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": "Claude apps gateway sessions"
+                }
+              ],
+              "resource": [
+                {
+                  "key": "service.name",
+                  "what": "\"claude-code\"",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": ""
+                },
+                {
+                  "key": "service.version",
+                  "what": "the Claude Code version",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": ""
+                },
+                {
+                  "key": "os.type",
+                  "what": "your operating system type",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": ""
+                },
+                {
+                  "key": "os.version",
+                  "what": "your operating system version",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": ""
+                },
+                {
+                  "key": "host.arch",
+                  "what": "your computer's architecture",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": ""
+                },
+                {
+                  "key": "wsl.version",
+                  "what": "your WSL version",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": ""
+                }
+              ],
+              "records": [
+                {
+                  "title": "claude_code.session.count · metric",
+                  "what": "Count of sessions started",
+                  "observed": true,
+                  "maybe": false,
+                  "unit": "",
+                  "attrs": [
+                    {
+                      "key": "start_type",
+                      "what": "how the session was started",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    }
+                  ]
+                },
+                {
+                  "title": "claude_code.lines_of_code.count · metric",
+                  "what": "Lines of code changed",
+                  "observed": false,
+                  "maybe": false,
+                  "unit": "",
+                  "attrs": [
+                    {
+                      "key": "type",
+                      "what": "whether lines were added or removed",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "model",
+                      "what": "the model name",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    }
+                  ]
+                },
+                {
+                  "title": "claude_code.pull_request.count · metric",
+                  "what": "Pull requests created",
+                  "observed": false,
+                  "maybe": false,
+                  "unit": "",
+                  "attrs": []
+                },
+                {
+                  "title": "claude_code.commit.count · metric",
+                  "what": "Git commits created",
+                  "observed": false,
+                  "maybe": false,
+                  "unit": "",
+                  "attrs": []
+                },
+                {
+                  "title": "claude_code.cost.usage · metric",
+                  "what": "Cost per model request",
+                  "observed": true,
+                  "maybe": false,
+                  "unit": "USD",
+                  "attrs": [
+                    {
+                      "key": "model",
+                      "what": "the model name",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "query_source",
+                      "what": "what issued the request",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "speed",
+                      "what": "whether fast mode was used",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "effort",
+                      "what": "the model effort level",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "agent.name",
+                      "what": "the agent name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "generic",
+                      "when": ""
+                    },
+                    {
+                      "key": "skill.name",
+                      "what": "the skill name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "generic",
+                      "when": ""
+                    },
+                    {
+                      "key": "plugin.name",
+                      "what": "the plugin name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "generic",
+                      "when": ""
+                    },
+                    {
+                      "key": "marketplace.name",
+                      "what": "the plugin marketplace name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "no",
+                      "when": ""
+                    },
+                    {
+                      "key": "mcp_server.name",
+                      "what": "the MCP server name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "generic",
+                      "when": ""
+                    },
+                    {
+                      "key": "mcp_tool.name",
+                      "what": "the MCP tool name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "generic",
+                      "when": ""
+                    }
+                  ]
+                },
+                {
+                  "title": "claude_code.token.usage · metric",
+                  "what": "Tokens used",
+                  "observed": true,
+                  "maybe": false,
+                  "unit": "tokens",
+                  "attrs": [
+                    {
+                      "key": "type",
+                      "what": "the kind of token usage",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "model",
+                      "what": "the model name",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "query_source",
+                      "what": "what issued the request",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "effort",
+                      "what": "the model effort level",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "agent.name",
+                      "what": "the agent name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "generic",
+                      "when": ""
+                    },
+                    {
+                      "key": "skill.name",
+                      "what": "the skill name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "generic",
+                      "when": ""
+                    },
+                    {
+                      "key": "plugin.name",
+                      "what": "the plugin name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "generic",
+                      "when": ""
+                    },
+                    {
+                      "key": "marketplace.name",
+                      "what": "the plugin marketplace name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "no",
+                      "when": ""
+                    },
+                    {
+                      "key": "mcp_server.name",
+                      "what": "the MCP server name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "generic",
+                      "when": ""
+                    },
+                    {
+                      "key": "mcp_tool.name",
+                      "what": "the MCP tool name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "generic",
+                      "when": ""
+                    }
+                  ]
+                },
+                {
+                  "title": "claude_code.code_edit_tool.decision · metric",
+                  "what": "Edit tool permission decisions",
+                  "observed": false,
+                  "maybe": false,
+                  "unit": "",
+                  "attrs": [
+                    {
+                      "key": "tool_name",
+                      "what": "the code editing tool's name",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "decision",
+                      "what": "the permission decision",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "source",
+                      "what": "where the decision came from",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "language",
+                      "what": "the edited file's programming language",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    }
+                  ]
+                },
+                {
+                  "title": "claude_code.active_time.total · metric",
+                  "what": "Active time",
+                  "observed": true,
+                  "maybe": false,
+                  "unit": "s",
+                  "attrs": [
+                    {
+                      "key": "type",
+                      "what": "whether time was user activity or CLI processing",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    }
+                  ]
+                }
+              ],
+              "sample": "resource:\n  service.name = \"claude-code\"\n  service.version = <the Claude Code version>\n  os.type = <your operating system type>\n  os.version = <your operating system version>\n  host.arch = <your computer's architecture>\n  wsl.version = <your WSL version>\nclaude_code.token.usage:\n  user.email = <your account email (when signed in with a Claude account)>\n  user.account_uuid = <your account UUID>   (sent: OTEL_METRICS_INCLUDE_ACCOUNT_UUID)\n  user.account_id = <your tagged account ID>   (sent: OTEL_METRICS_INCLUDE_ACCOUNT_UUID)\n  organization.id = <your organization's UUID>\n  user.id = <a random ID for this installation>\n  session.id = <this session's ID>   (sent: OTEL_METRICS_INCLUDE_SESSION_ID)\n  ccr.session.id = <the cloud session's ID>   (sent: OTEL_METRICS_INCLUDE_SESSION_ID)\n  terminal.type = <your terminal, such as iTerm.app, VS Code or tmux>\n  user.groups = <your identity provider's groups>\n  identity.source = <your identity provider, such as gateway-oidc>\n  type = <the kind of token usage>\n  model = <the model name>\n  query_source = <what issued the request>\n  effort = <the model effort level>\n  agent.name = \"custom\"\n  skill.name = \"third-party\"\n  plugin.name = \"third-party\"\n  mcp_server.name = \"custom\"\n  mcp_tool.name = \"custom\""
+            }
+          },
+          {
+            "id": "claude-3",
+            "level": "ok",
+            "chip": "OK",
+            "tags": [],
+            "title": "Your organization controls Claude Code's models and updates",
+            "detail": "These settings come from your organization and can't be changed locally.",
+            "sends": "Sends: policy",
+            "setBy": "Set by: system settings",
+            "path": "/etc/claude-code/managed-settings.json",
+            "evidence": "availableModels = [\"sonnet\"]",
+            "revealPath": "",
+            "docs": "https://code.claude.com/docs/en/settings-reference",
+            "payload": null
+          },
+          {
+            "id": "claude-4",
+            "level": "ok",
+            "chip": "OK",
+            "tags": [],
+            "title": "Your organization controls whether hooks may run",
+            "detail": "These settings come from your organization and can't be changed locally.",
+            "sends": "Sends: policy",
+            "setBy": "Set by: system settings",
+            "path": "/etc/claude-code/managed-settings.json",
+            "evidence": "allowManagedHooksOnly = true",
+            "revealPath": "",
+            "docs": "https://code.claude.com/docs/en/settings-reference",
+            "payload": null
+          },
+          {
+            "id": "claude-5",
+            "level": "ok",
+            "chip": "OK",
+            "tags": [],
+            "title": "Your organization sets other Claude Code policies",
+            "detail": "These settings come from your organization and can't be changed locally.",
+            "sends": "Sends: policy",
+            "setBy": "Set by: system settings",
+            "path": "/etc/claude-code/managed-settings.json",
+            "evidence": "env",
+            "revealPath": "",
+            "docs": "https://code.claude.com/docs/en/settings-reference",
+            "payload": null
+          },
+          {
+            "id": "claude-6",
+            "level": "ok",
+            "chip": "OK",
+            "tags": [],
+            "title": "Claude Code uses a proxy",
+            "detail": "The proxy sees which hosts Claude Code connects to, not what it sends.",
+            "sends": "",
+            "setBy": "Set by: an environment variable",
+            "path": "env:HTTPS_PROXY",
+            "evidence": "HTTPS_PROXY = http://proxy.example-corp.com:3128",
+            "revealPath": "",
+            "docs": "https://code.claude.com/docs/en/network-config",
+            "payload": null
+          }
+        ],
+        "inactive": [
+          {
+            "id": "claude-7",
+            "level": "opted-out",
+            "chip": "OPTED OUT",
+            "tags": [],
+            "title": "Anthropic usage telemetry is turned off",
+            "detail": "A setting turns off the vendor's default telemetry, so nothing is sent by default.",
+            "sends": "",
+            "setBy": "Set by: the vendor's default",
+            "path": "vendor default",
+            "evidence": "",
+            "revealPath": "",
+            "docs": "https://code.claude.com/docs/en/data-usage#telemetry-services",
+            "payload": null
+          }
+        ],
+        "notes": [
+          "Server-managed settings are visible only through the local cache."
+        ],
+        "environmentNote": "cAInary sees your desktop session's environment, not your shell's. Run `cainary scan` in a terminal to check your shell."
+      },
+      "openai": {
+        "id": "openai",
+        "name": "ChatGPT & Codex",
+        "kind": "app",
+        "iconKey": "openai",
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed",
+        "installed": false,
+        "reach": "",
+        "emptyText": "ChatGPT & Codex isn't on this computer.",
+        "active": [],
+        "inactive": [],
+        "notes": [],
+        "environmentNote": ""
+      },
+      "cursor": {
+        "id": "cursor",
+        "name": "Cursor",
+        "kind": "app",
+        "iconKey": "cursor",
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed",
+        "installed": false,
+        "reach": "",
+        "emptyText": "Cursor isn't on this computer.",
+        "active": [],
+        "inactive": [],
+        "notes": [],
+        "environmentNote": ""
+      },
+      "copilot": {
+        "id": "copilot",
+        "name": "GitHub Copilot",
+        "kind": "app",
+        "iconKey": "copilot",
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed",
+        "installed": false,
+        "reach": "",
+        "emptyText": "GitHub Copilot isn't on this computer.",
+        "active": [],
+        "inactive": [],
+        "notes": [],
+        "environmentNote": ""
+      }
+    },
+    "defaultSelection": "claude",
+    "sources": [
+      {
+        "surface": "Claude Code",
+        "rows": [
+          {
+            "path": "/etc/claude-code/managed-mcp.json",
+            "icon": "neutral",
+            "status": "Absent"
+          },
+          {
+            "path": "/etc/claude-code/managed-settings.d",
+            "icon": "present",
+            "status": "Present"
+          },
+          {
+            "path": "/etc/claude-code/managed-settings.d/10-env.json",
+            "icon": "present",
+            "status": "Present"
+          },
+          {
+            "path": "/etc/claude-code/managed-settings.json",
+            "icon": "present",
+            "status": "Present"
+          },
+          {
+            "path": "~/claude-policy-limits.json",
+            "icon": "neutral",
+            "status": "Absent"
+          },
+          {
+            "path": "~/claude-remote-settings.json",
+            "icon": "neutral",
+            "status": "Absent"
+          },
+          {
+            "path": "~/claude-settings.json",
+            "icon": "neutral",
+            "status": "Absent"
+          }
+        ]
+      }
+    ],
+    "endpointHosts": [
+      "otel.example-corp.com"
     ]
   },
   "details-changes": {
@@ -5427,22 +6300,25 @@ var variants = {
             "status": "Present"
           },
           {
-            "path": "~/.claude/policy-limits.json",
+            "path": "~/claude-policy-limits.json",
             "icon": "neutral",
             "status": "Absent"
           },
           {
-            "path": "~/.claude/remote-settings.json",
+            "path": "~/claude-remote-settings.json",
             "icon": "neutral",
             "status": "Absent"
           },
           {
-            "path": "~/.claude/settings.json",
+            "path": "~/claude-settings.json",
             "icon": "neutral",
             "status": "Absent"
           }
         ]
       }
+    ],
+    "endpointHosts": [
+      "otel.example-corp.com"
     ]
   },
   "details-sources": {
@@ -5667,7 +6543,8 @@ var variants = {
           }
         ]
       }
-    ]
+    ],
+    "endpointHosts": []
   },
   "settings": {
     "hasReport": false,
@@ -5690,7 +6567,864 @@ var variants = {
     "notInstalledExpanded": false,
     "entries": {},
     "defaultSelection": "",
-    "sources": []
+    "sources": [],
+    "endpointHosts": []
+  },
+  "settings-https-takeover": {
+    "hasReport": true,
+    "trusted": true,
+    "canCopy": true,
+    "header": {
+      "level": "medium",
+      "label": "MEDIUM",
+      "summary": "Claude Code runs through Amazon Bedrock",
+      "scanLine": [
+        {
+          "text": "Scanned 14:05",
+          "tone": "secondary"
+        }
+      ]
+    },
+    "failure": null,
+    "changes": {
+      "title": "Changes",
+      "rows": []
+    },
+    "apps": [
+      {
+        "id": "claude",
+        "name": "Claude",
+        "kind": "app",
+        "iconKey": "claude",
+        "level": "medium",
+        "label": "MEDIUM",
+        "summary": "Claude Code runs through Amazon Bedrock",
+        "installed": true,
+        "a11y": "Claude: MEDIUM. Claude Code runs through Amazon Bedrock"
+      },
+      {
+        "id": "openai",
+        "name": "ChatGPT & Codex",
+        "kind": "app",
+        "iconKey": "openai",
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed",
+        "installed": false,
+        "a11y": "ChatGPT & Codex: NOT INSTALLED. Not installed"
+      },
+      {
+        "id": "cursor",
+        "name": "Cursor",
+        "kind": "app",
+        "iconKey": "cursor",
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed",
+        "installed": false,
+        "a11y": "Cursor: NOT INSTALLED. Not installed"
+      },
+      {
+        "id": "copilot",
+        "name": "GitHub Copilot",
+        "kind": "app",
+        "iconKey": "copilot",
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed",
+        "installed": false,
+        "a11y": "GitHub Copilot: NOT INSTALLED. Not installed"
+      }
+    ],
+    "others": [],
+    "notInstalledCount": 3,
+    "notInstalledExpanded": false,
+    "entries": {
+      "claude": {
+        "id": "claude",
+        "name": "Claude",
+        "kind": "app",
+        "iconKey": "claude",
+        "level": "medium",
+        "label": "MEDIUM",
+        "summary": "Claude Code runs through Amazon Bedrock",
+        "installed": true,
+        "reach": "Claude Code · sends: traffic, usage, identity, policy",
+        "emptyText": "",
+        "active": [
+          {
+            "id": "claude-1",
+            "level": "medium",
+            "chip": "MEDIUM",
+            "tags": [],
+            "title": "Claude Code runs through Amazon Bedrock",
+            "detail": "Model requests go to your cloud provider instead of Anthropic.",
+            "sends": "Sends: traffic",
+            "setBy": "Set by: an environment variable",
+            "path": "env:CLAUDE_CODE_USE_BEDROCK",
+            "evidence": "CLAUDE_CODE_USE_BEDROCK = 1\nANTHROPIC_BEDROCK_BASE_URL = https://bedrock-gw.example-corp.com",
+            "revealPath": "",
+            "docs": "https://code.claude.com/docs/en/env-vars",
+            "payload": null
+          },
+          {
+            "id": "claude-2",
+            "level": "low",
+            "chip": "LOW",
+            "tags": [],
+            "title": "Claude Code sends usage data and your identity to otel.example-corp.com",
+            "detail": "Claude Code's metrics export is on. Every data point is tagged with your account email (when you sign in with a Claude account), your account and organization IDs and the session ID.",
+            "sends": "Sends: usage, identity",
+            "setBy": "Set by: system settings",
+            "path": "/etc/claude-code/managed-settings.json",
+            "evidence": "CLAUDE_CODE_ENABLE_TELEMETRY = 1\nOTEL_METRICS_EXPORTER = otlp\nOTEL_EXPORTER_OTLP_ENDPOINT = https://otel.example-corp.com",
+            "revealPath": "",
+            "docs": "https://code.claude.com/docs/en/monitoring-usage",
+            "payload": {
+              "heading": "metrics · claude-code 2.1.316",
+              "maybe": false,
+              "docs": "https://code.claude.com/docs/en/monitoring-usage#metrics",
+              "gates": [
+                {
+                  "chip": "not sent",
+                  "label": "Agent, MCP, skill and plugin names on metrics (no commands)",
+                  "text": "not sent, because OTEL_LOG_TOOL_DETAILS is unset"
+                },
+                {
+                  "chip": "sent",
+                  "label": "Session ID on metrics",
+                  "text": "sent, because OTEL_METRICS_INCLUDE_SESSION_ID is unset (on by default)"
+                },
+                {
+                  "chip": "sent",
+                  "label": "Account IDs on metrics",
+                  "text": "sent, because OTEL_METRICS_INCLUDE_ACCOUNT_UUID is unset (on by default)"
+                },
+                {
+                  "chip": "not sent",
+                  "label": "Claude Code version on metrics",
+                  "text": "not sent, because OTEL_METRICS_INCLUDE_VERSION is unset"
+                },
+                {
+                  "chip": "not sent",
+                  "label": "How Claude Code was started, on metrics",
+                  "text": "not sent, because OTEL_METRICS_INCLUDE_ENTRYPOINT is unset"
+                },
+                {
+                  "chip": "not sent",
+                  "label": "Repository URL, owner and name",
+                  "text": "not sent, because OTEL_METRICS_INCLUDE_REPOSITORY is unset"
+                }
+              ],
+              "identity": [
+                {
+                  "key": "user.email",
+                  "what": "your account email (when signed in with a Claude account)",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": ""
+                },
+                {
+                  "key": "user.account_uuid",
+                  "what": "your account UUID",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "OTEL_METRICS_INCLUDE_ACCOUNT_UUID",
+                  "sent": "yes",
+                  "when": ""
+                },
+                {
+                  "key": "user.account_id",
+                  "what": "your tagged account ID",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "OTEL_METRICS_INCLUDE_ACCOUNT_UUID",
+                  "sent": "yes",
+                  "when": ""
+                },
+                {
+                  "key": "organization.id",
+                  "what": "your organization's UUID",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": ""
+                },
+                {
+                  "key": "user.id",
+                  "what": "a random ID for this installation",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": ""
+                },
+                {
+                  "key": "session.id",
+                  "what": "this session's ID",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "OTEL_METRICS_INCLUDE_SESSION_ID",
+                  "sent": "yes",
+                  "when": ""
+                },
+                {
+                  "key": "terminal.type",
+                  "what": "your terminal, such as iTerm.app, VS Code or tmux",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": ""
+                }
+              ],
+              "conditionalIdentity": [
+                {
+                  "key": "ccr.session.id",
+                  "what": "the cloud session's ID",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "OTEL_METRICS_INCLUDE_SESSION_ID",
+                  "sent": "yes",
+                  "when": "cloud sessions"
+                },
+                {
+                  "key": "app.version",
+                  "what": "the Claude Code version",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "OTEL_METRICS_INCLUDE_VERSION",
+                  "sent": "no",
+                  "when": ""
+                },
+                {
+                  "key": "app.entrypoint",
+                  "what": "how Claude Code was started",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "OTEL_METRICS_INCLUDE_ENTRYPOINT",
+                  "sent": "no",
+                  "when": ""
+                },
+                {
+                  "key": "vcs.repository.url.full",
+                  "what": "the repository's URL",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "OTEL_METRICS_INCLUDE_REPOSITORY",
+                  "sent": "no",
+                  "when": "inside a git repository"
+                },
+                {
+                  "key": "vcs.owner.name",
+                  "what": "the repository owner",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "OTEL_METRICS_INCLUDE_REPOSITORY",
+                  "sent": "no",
+                  "when": "inside a git repository"
+                },
+                {
+                  "key": "vcs.repository.name",
+                  "what": "the repository name",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "OTEL_METRICS_INCLUDE_REPOSITORY",
+                  "sent": "no",
+                  "when": "inside a git repository"
+                },
+                {
+                  "key": "vcs.provider.name",
+                  "what": "the repository's host",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "OTEL_METRICS_INCLUDE_REPOSITORY",
+                  "sent": "no",
+                  "when": "inside a git repository"
+                },
+                {
+                  "key": "user.groups",
+                  "what": "your identity provider's groups",
+                  "maybe": true,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": "Claude apps gateway sessions"
+                },
+                {
+                  "key": "identity.source",
+                  "what": "your identity provider, such as gateway-oidc",
+                  "maybe": true,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": "Claude apps gateway sessions"
+                }
+              ],
+              "resource": [
+                {
+                  "key": "service.name",
+                  "what": "\"claude-code\"",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": ""
+                },
+                {
+                  "key": "service.version",
+                  "what": "the Claude Code version",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": ""
+                },
+                {
+                  "key": "os.type",
+                  "what": "your operating system type",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": ""
+                },
+                {
+                  "key": "os.version",
+                  "what": "your operating system version",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": ""
+                },
+                {
+                  "key": "host.arch",
+                  "what": "your computer's architecture",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": ""
+                },
+                {
+                  "key": "wsl.version",
+                  "what": "your WSL version",
+                  "maybe": false,
+                  "content": false,
+                  "gate": "",
+                  "sent": "",
+                  "when": ""
+                }
+              ],
+              "records": [
+                {
+                  "title": "claude_code.session.count · metric",
+                  "what": "Count of sessions started",
+                  "observed": true,
+                  "maybe": false,
+                  "unit": "",
+                  "attrs": [
+                    {
+                      "key": "start_type",
+                      "what": "how the session was started",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    }
+                  ]
+                },
+                {
+                  "title": "claude_code.lines_of_code.count · metric",
+                  "what": "Lines of code changed",
+                  "observed": false,
+                  "maybe": false,
+                  "unit": "",
+                  "attrs": [
+                    {
+                      "key": "type",
+                      "what": "whether lines were added or removed",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "model",
+                      "what": "the model name",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    }
+                  ]
+                },
+                {
+                  "title": "claude_code.pull_request.count · metric",
+                  "what": "Pull requests created",
+                  "observed": false,
+                  "maybe": false,
+                  "unit": "",
+                  "attrs": []
+                },
+                {
+                  "title": "claude_code.commit.count · metric",
+                  "what": "Git commits created",
+                  "observed": false,
+                  "maybe": false,
+                  "unit": "",
+                  "attrs": []
+                },
+                {
+                  "title": "claude_code.cost.usage · metric",
+                  "what": "Cost per model request",
+                  "observed": true,
+                  "maybe": false,
+                  "unit": "USD",
+                  "attrs": [
+                    {
+                      "key": "model",
+                      "what": "the model name",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "query_source",
+                      "what": "what issued the request",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "speed",
+                      "what": "whether fast mode was used",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "effort",
+                      "what": "the model effort level",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "agent.name",
+                      "what": "the agent name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "generic",
+                      "when": ""
+                    },
+                    {
+                      "key": "skill.name",
+                      "what": "the skill name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "generic",
+                      "when": ""
+                    },
+                    {
+                      "key": "plugin.name",
+                      "what": "the plugin name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "generic",
+                      "when": ""
+                    },
+                    {
+                      "key": "marketplace.name",
+                      "what": "the plugin marketplace name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "no",
+                      "when": ""
+                    },
+                    {
+                      "key": "mcp_server.name",
+                      "what": "the MCP server name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "generic",
+                      "when": ""
+                    },
+                    {
+                      "key": "mcp_tool.name",
+                      "what": "the MCP tool name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "generic",
+                      "when": ""
+                    }
+                  ]
+                },
+                {
+                  "title": "claude_code.token.usage · metric",
+                  "what": "Tokens used",
+                  "observed": true,
+                  "maybe": false,
+                  "unit": "tokens",
+                  "attrs": [
+                    {
+                      "key": "type",
+                      "what": "the kind of token usage",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "model",
+                      "what": "the model name",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "query_source",
+                      "what": "what issued the request",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "effort",
+                      "what": "the model effort level",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "agent.name",
+                      "what": "the agent name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "generic",
+                      "when": ""
+                    },
+                    {
+                      "key": "skill.name",
+                      "what": "the skill name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "generic",
+                      "when": ""
+                    },
+                    {
+                      "key": "plugin.name",
+                      "what": "the plugin name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "generic",
+                      "when": ""
+                    },
+                    {
+                      "key": "marketplace.name",
+                      "what": "the plugin marketplace name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "no",
+                      "when": ""
+                    },
+                    {
+                      "key": "mcp_server.name",
+                      "what": "the MCP server name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "generic",
+                      "when": ""
+                    },
+                    {
+                      "key": "mcp_tool.name",
+                      "what": "the MCP tool name",
+                      "maybe": false,
+                      "content": true,
+                      "gate": "OTEL_LOG_TOOL_DETAILS",
+                      "sent": "generic",
+                      "when": ""
+                    }
+                  ]
+                },
+                {
+                  "title": "claude_code.code_edit_tool.decision · metric",
+                  "what": "Edit tool permission decisions",
+                  "observed": false,
+                  "maybe": false,
+                  "unit": "",
+                  "attrs": [
+                    {
+                      "key": "tool_name",
+                      "what": "the code editing tool's name",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "decision",
+                      "what": "the permission decision",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "source",
+                      "what": "where the decision came from",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    },
+                    {
+                      "key": "language",
+                      "what": "the edited file's programming language",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    }
+                  ]
+                },
+                {
+                  "title": "claude_code.active_time.total · metric",
+                  "what": "Active time",
+                  "observed": true,
+                  "maybe": false,
+                  "unit": "s",
+                  "attrs": [
+                    {
+                      "key": "type",
+                      "what": "whether time was user activity or CLI processing",
+                      "maybe": false,
+                      "content": false,
+                      "gate": "",
+                      "sent": "",
+                      "when": ""
+                    }
+                  ]
+                }
+              ],
+              "sample": "resource:\n  service.name = \"claude-code\"\n  service.version = <the Claude Code version>\n  os.type = <your operating system type>\n  os.version = <your operating system version>\n  host.arch = <your computer's architecture>\n  wsl.version = <your WSL version>\nclaude_code.token.usage:\n  user.email = <your account email (when signed in with a Claude account)>\n  user.account_uuid = <your account UUID>   (sent: OTEL_METRICS_INCLUDE_ACCOUNT_UUID)\n  user.account_id = <your tagged account ID>   (sent: OTEL_METRICS_INCLUDE_ACCOUNT_UUID)\n  organization.id = <your organization's UUID>\n  user.id = <a random ID for this installation>\n  session.id = <this session's ID>   (sent: OTEL_METRICS_INCLUDE_SESSION_ID)\n  ccr.session.id = <the cloud session's ID>   (sent: OTEL_METRICS_INCLUDE_SESSION_ID)\n  terminal.type = <your terminal, such as iTerm.app, VS Code or tmux>\n  user.groups = <your identity provider's groups>\n  identity.source = <your identity provider, such as gateway-oidc>\n  type = <the kind of token usage>\n  model = <the model name>\n  query_source = <what issued the request>\n  effort = <the model effort level>\n  agent.name = \"custom\"\n  skill.name = \"third-party\"\n  plugin.name = \"third-party\"\n  mcp_server.name = \"custom\"\n  mcp_tool.name = \"custom\""
+            }
+          },
+          {
+            "id": "claude-3",
+            "level": "ok",
+            "chip": "OK",
+            "tags": [],
+            "title": "Your organization controls Claude Code's models and updates",
+            "detail": "These settings come from your organization and can't be changed locally.",
+            "sends": "Sends: policy",
+            "setBy": "Set by: system settings",
+            "path": "/etc/claude-code/managed-settings.json",
+            "evidence": "availableModels = [\"sonnet\"]",
+            "revealPath": "",
+            "docs": "https://code.claude.com/docs/en/settings-reference",
+            "payload": null
+          },
+          {
+            "id": "claude-4",
+            "level": "ok",
+            "chip": "OK",
+            "tags": [],
+            "title": "Your organization controls whether hooks may run",
+            "detail": "These settings come from your organization and can't be changed locally.",
+            "sends": "Sends: policy",
+            "setBy": "Set by: system settings",
+            "path": "/etc/claude-code/managed-settings.json",
+            "evidence": "allowManagedHooksOnly = true",
+            "revealPath": "",
+            "docs": "https://code.claude.com/docs/en/settings-reference",
+            "payload": null
+          },
+          {
+            "id": "claude-5",
+            "level": "ok",
+            "chip": "OK",
+            "tags": [],
+            "title": "Your organization sets other Claude Code policies",
+            "detail": "These settings come from your organization and can't be changed locally.",
+            "sends": "Sends: policy",
+            "setBy": "Set by: system settings",
+            "path": "/etc/claude-code/managed-settings.json",
+            "evidence": "env",
+            "revealPath": "",
+            "docs": "https://code.claude.com/docs/en/settings-reference",
+            "payload": null
+          },
+          {
+            "id": "claude-6",
+            "level": "ok",
+            "chip": "OK",
+            "tags": [],
+            "title": "Claude Code uses a proxy",
+            "detail": "The proxy sees which hosts Claude Code connects to, not what it sends.",
+            "sends": "",
+            "setBy": "Set by: an environment variable",
+            "path": "env:HTTPS_PROXY",
+            "evidence": "HTTPS_PROXY = http://proxy.example-corp.com:3128",
+            "revealPath": "",
+            "docs": "https://code.claude.com/docs/en/network-config",
+            "payload": null
+          }
+        ],
+        "inactive": [
+          {
+            "id": "claude-7",
+            "level": "opted-out",
+            "chip": "OPTED OUT",
+            "tags": [],
+            "title": "Anthropic usage telemetry is turned off",
+            "detail": "A setting turns off the vendor's default telemetry, so nothing is sent by default.",
+            "sends": "",
+            "setBy": "Set by: the vendor's default",
+            "path": "vendor default",
+            "evidence": "",
+            "revealPath": "",
+            "docs": "https://code.claude.com/docs/en/data-usage#telemetry-services",
+            "payload": null
+          }
+        ],
+        "notes": [
+          "Server-managed settings are visible only through the local cache."
+        ],
+        "environmentNote": "cAInary sees your desktop session's environment, not your shell's. Run `cainary scan` in a terminal to check your shell."
+      },
+      "openai": {
+        "id": "openai",
+        "name": "ChatGPT & Codex",
+        "kind": "app",
+        "iconKey": "openai",
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed",
+        "installed": false,
+        "reach": "",
+        "emptyText": "ChatGPT & Codex isn't on this computer.",
+        "active": [],
+        "inactive": [],
+        "notes": [],
+        "environmentNote": ""
+      },
+      "cursor": {
+        "id": "cursor",
+        "name": "Cursor",
+        "kind": "app",
+        "iconKey": "cursor",
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed",
+        "installed": false,
+        "reach": "",
+        "emptyText": "Cursor isn't on this computer.",
+        "active": [],
+        "inactive": [],
+        "notes": [],
+        "environmentNote": ""
+      },
+      "copilot": {
+        "id": "copilot",
+        "name": "GitHub Copilot",
+        "kind": "app",
+        "iconKey": "copilot",
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed",
+        "installed": false,
+        "reach": "",
+        "emptyText": "GitHub Copilot isn't on this computer.",
+        "active": [],
+        "inactive": [],
+        "notes": [],
+        "environmentNote": ""
+      }
+    },
+    "defaultSelection": "claude",
+    "sources": [
+      {
+        "surface": "Claude Code",
+        "rows": [
+          {
+            "path": "/etc/claude-code/managed-mcp.json",
+            "icon": "neutral",
+            "status": "Absent"
+          },
+          {
+            "path": "/etc/claude-code/managed-settings.d",
+            "icon": "present",
+            "status": "Present"
+          },
+          {
+            "path": "/etc/claude-code/managed-settings.d/10-env.json",
+            "icon": "present",
+            "status": "Present"
+          },
+          {
+            "path": "/etc/claude-code/managed-settings.json",
+            "icon": "present",
+            "status": "Present"
+          },
+          {
+            "path": "~/claude-policy-limits.json",
+            "icon": "neutral",
+            "status": "Absent"
+          },
+          {
+            "path": "~/claude-remote-settings.json",
+            "icon": "neutral",
+            "status": "Absent"
+          },
+          {
+            "path": "~/claude-settings.json",
+            "icon": "neutral",
+            "status": "Absent"
+          }
+        ]
+      }
+    ],
+    "endpointHosts": [
+      "otel.example-corp.com"
+    ]
   },
   "about": {
     "hasReport": false,
@@ -5713,7 +7447,8 @@ var variants = {
     "notInstalledExpanded": false,
     "entries": {},
     "defaultSelection": "",
-    "sources": []
+    "sources": [],
+    "endpointHosts": []
   },
   "popup-dark": {
     "hasReport": true,
@@ -6550,22 +8285,25 @@ var variants = {
             "status": "Present"
           },
           {
-            "path": "~/.claude/policy-limits.json",
+            "path": "~/claude-policy-limits.json",
             "icon": "neutral",
             "status": "Absent"
           },
           {
-            "path": "~/.claude/remote-settings.json",
+            "path": "~/claude-remote-settings.json",
             "icon": "neutral",
             "status": "Absent"
           },
           {
-            "path": "~/.claude/settings.json",
+            "path": "~/claude-settings.json",
             "icon": "neutral",
             "status": "Absent"
           }
         ]
       }
+    ],
+    "endpointHosts": [
+      "otel.example-corp.com"
     ]
   },
   "details-dark": {
@@ -7403,22 +9141,25 @@ var variants = {
             "status": "Present"
           },
           {
-            "path": "~/.claude/policy-limits.json",
+            "path": "~/claude-policy-limits.json",
             "icon": "neutral",
             "status": "Absent"
           },
           {
-            "path": "~/.claude/remote-settings.json",
+            "path": "~/claude-remote-settings.json",
             "icon": "neutral",
             "status": "Absent"
           },
           {
-            "path": "~/.claude/settings.json",
+            "path": "~/claude-settings.json",
             "icon": "neutral",
             "status": "Absent"
           }
         ]
       }
+    ],
+    "endpointHosts": [
+      "otel.example-corp.com"
     ]
   }
 };
@@ -7458,6 +9199,11 @@ var statuses = {
     "phase": "ready",
     "lastChecked": "14:05"
   },
+  "details-collector-trust-preview": {
+    "busy": false,
+    "phase": "ready",
+    "lastChecked": "14:05"
+  },
   "details-changes": {
     "busy": false,
     "phase": "ready",
@@ -7472,6 +9218,11 @@ var statuses = {
     "busy": true,
     "phase": "scanning",
     "lastChecked": ""
+  },
+  "settings-https-takeover": {
+    "busy": false,
+    "phase": "ready",
+    "lastChecked": "14:05"
   },
   "about": {
     "busy": true,

@@ -102,6 +102,8 @@ pub const COLLECTOR_PRESETS: [&str; 8] = [
 
 pub const COLLECTOR_MAX_PATTERNS: usize = 64;
 pub const COLLECTOR_MAX_PATTERN_BYTES: usize = 1024;
+pub const COLLECTOR_MAX_TLS_HOSTS: usize = 32;
+pub const COLLECTOR_MAX_TLS_HOST_BYTES: usize = 253;
 const MAX_STORED_CUSTOM_PATTERNS: usize = 64;
 const MAX_STORED_PATTERN_FIELD_BYTES: usize = 16 * 1024;
 
@@ -110,6 +112,9 @@ const MAX_STORED_PATTERN_FIELD_BYTES: usize = 16 * 1024;
 pub struct CollectorSettings {
     pub enabled: bool,
     pub port: u16,
+    pub tls: bool,
+    pub tls_port: u16,
+    pub tls_hosts: Vec<String>,
     pub log_to_file: bool,
     pub log_path: String,
     pub presets: Vec<String>,
@@ -122,6 +127,9 @@ impl Default for CollectorSettings {
         Self {
             enabled: false,
             port: 4318,
+            tls: false,
+            tls_port: 8443,
+            tls_hosts: Vec::new(),
             log_to_file: false,
             log_path: String::new(),
             presets: COLLECTOR_PRESETS
@@ -148,10 +156,56 @@ impl CollectorSettings {
                 .presets
                 .iter()
                 .all(|name| COLLECTOR_PRESETS.contains(&name.as_str()))
+            && self.tls_hosts.len() <= COLLECTOR_MAX_TLS_HOSTS
+            && self
+                .tls_hosts
+                .iter()
+                .all(|host| host.len() <= COLLECTOR_MAX_TLS_HOST_BYTES)
     }
 
     pub fn valid(&self) -> bool {
-        (1024..=u16::MAX).contains(&self.port) && self.safe_to_store() && !self.over_limit()
+        (1024..=u16::MAX).contains(&self.port)
+            && self.safe_to_store()
+            && !self.over_limit()
+            && (!self.tls || self.valid_tls_config())
+    }
+
+    pub fn tls_host_problem(&self, index: usize) -> Option<&'static str> {
+        let host = self.tls_hosts.get(index)?;
+        if host.is_empty() {
+            return None;
+        }
+        if !valid_tls_host(&host.to_ascii_lowercase()) {
+            return Some(
+                "Use a DNS name with at least two labels; wildcards and IP addresses aren't supported.",
+            );
+        }
+        if self.tls_hosts[..index]
+            .iter()
+            .any(|prior| prior.eq_ignore_ascii_case(host))
+        {
+            return Some("This host is already listed.");
+        }
+        None
+    }
+
+    pub fn valid_tls_hosts(&self) -> Vec<String> {
+        self.tls_hosts
+            .iter()
+            .enumerate()
+            .filter(|(index, host)| self.tls_host_problem(*index).is_none() && !host.is_empty())
+            .map(|(_, host)| host.to_ascii_lowercase())
+            .collect()
+    }
+
+    pub fn valid_tls_config(&self) -> bool {
+        (1..=u16::MAX).contains(&self.tls_port)
+            && !self.valid_tls_hosts().is_empty()
+            && self
+                .tls_hosts
+                .iter()
+                .enumerate()
+                .all(|(index, host)| host.is_empty() || self.tls_host_problem(index).is_none())
     }
 
     /// A row with neither field filled in is blank, not an error. Invalid rows are shown inline
@@ -211,6 +265,9 @@ impl CollectorSettings {
     pub fn requires_restart(&self, next: &Self) -> bool {
         self.enabled != next.enabled
             || self.port != next.port
+            || self.tls != next.tls
+            || self.tls_port != next.tls_port
+            || self.tls_hosts != next.tls_hosts
             || self.log_to_file != next.log_to_file
             || self.log_path != next.log_path
             || self.presets != next.presets
@@ -222,6 +279,31 @@ impl CollectorSettings {
             .map(|dir| dir.join("cainary/otel-debug.jsonl").display().to_string())
             .unwrap_or_default()
     }
+}
+
+/// Mirrors `crates/cainary-net/src/host.rs`; callers lowercase before validating.
+pub fn valid_tls_host(host: &str) -> bool {
+    if host.is_empty() || host.len() > COLLECTOR_MAX_TLS_HOST_BYTES {
+        return false;
+    }
+    let labels: Vec<&str> = host.split('.').collect();
+    if labels.len() < 2 {
+        return false;
+    }
+    let label_ok = |label: &str| {
+        let bytes = label.as_bytes();
+        !bytes.is_empty()
+            && bytes.len() <= 63
+            && bytes[0] != b'-'
+            && bytes[bytes.len() - 1] != b'-'
+            && bytes
+                .iter()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-')
+    };
+    labels.iter().all(|label| label_ok(label))
+        && !labels[labels.len() - 1]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit())
 }
 
 fn valid_collector_pattern_name(name: &str) -> bool {
