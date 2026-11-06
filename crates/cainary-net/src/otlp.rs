@@ -859,6 +859,11 @@ pub fn process_with(
         }).collect::<Vec<_>>(),
     });
 
+    // The host is attacker-influenced metadata like any name: the §14.2 policy applies, after the
+    // rest has been scanned so an exhausted budget labels it instead of passing it through.
+    let host_label = meta
+        .host
+        .map(|h| p.scan_name(h, Label::Name, false, "name", None, None));
     let mut alerts = Vec::new();
     for g in &p.groups {
         let pat = &p.scanner.patterns()[g.pattern];
@@ -899,7 +904,7 @@ pub fn process_with(
     let mut m = Map::new();
     m.insert("signal".into(), json!(signal.name()));
     m.insert("path".into(), json!(meta.path.unwrap_or(signal.path())));
-    if let Some(h) = meta.host {
+    if let Some(h) = &host_label {
         m.insert("host".into(), json!(h));
     }
     m.insert("bytes".into(), json!(bytes));
@@ -1496,5 +1501,61 @@ mod tests {
             serde_json::from_str(&process(Signal::Logs, 1, &doc, &c).unwrap().batch.tail).unwrap();
         assert!(plain.get("host").is_none());
         assert_eq!(plain["path"], "/v1/logs");
+    }
+
+    #[test]
+    fn batch_host_follows_the_name_policy() {
+        let doc = logs(vec![], json!({"name": "s"}), vec![json!({})]);
+        let meta = Meta {
+            path: Some("<custom path>"),
+            host: Some("secret.example.test"),
+        };
+        // A red flag that matches the host: labelled, and alerted without the name.
+        let c = secret_like_ctx("secret");
+        let p = process_with(Signal::Logs, 1, &doc, &c, &meta).unwrap();
+        let all = format!(
+            "{}{}",
+            p.batch.tail,
+            p.batch
+                .alerts
+                .iter()
+                .map(|a| a.tail.clone())
+                .collect::<String>()
+        );
+        assert!(!all.contains("secret.example.test"), "{all}");
+        assert!(p.batch.tail.contains("\"host\":\"<unknown-name-1>\""));
+        assert_eq!(p.batch.alerts.len(), 1);
+        // No match: verbatim.
+        let c = ctx(false);
+        let p = process_with(Signal::Logs, 1, &doc, &c, &meta).unwrap();
+        assert!(p.batch.tail.contains("\"host\":\"secret.example.test\""));
+        // An exhausted budget: the host can't be shown as clean.
+        let c = secret_like_ctx("zzz-never");
+        let pad = "p".repeat(crate::redflag::MAX_LEAF_BYTES);
+        let attrs: Vec<Value> = (0..20)
+            .map(|i| attr(&format!("pad{i}"), sv(&pad)))
+            .collect();
+        let doc = logs(attrs, json!({"name": "s"}), vec![json!({})]);
+        let p = process_with(Signal::Logs, 1, &doc, &c, &meta).unwrap();
+        assert!(p.batch.tail.contains("scanIncomplete"));
+        assert!(
+            !p.batch.tail.contains("secret.example.test"),
+            "{}",
+            p.batch.tail.len()
+        );
+    }
+
+    fn secret_like_ctx(text: &str) -> Ctx {
+        let p = Pattern {
+            name: "hidden".into(),
+            kind: Kind::Text,
+            pattern: text.into(),
+            case_sensitive: false,
+            preset: false,
+        };
+        Ctx {
+            matcher: Arc::new(Matcher::new(vec![p]).unwrap()),
+            show_values: false,
+        }
     }
 }
