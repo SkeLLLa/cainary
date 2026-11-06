@@ -383,6 +383,12 @@ private struct TakeoverSettingsSection: View {
                 failureBox
             }
             trustButtons
+            if let note = trust.status?.note {
+                Text(note.plainText)
+                    .font(.callout)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let line = trust.claudeCodeLine {
                 Text(line).font(.caption).foregroundStyle(.secondary)
             }

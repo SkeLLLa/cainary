@@ -38,6 +38,8 @@ struct TrustStatus: Codable, Equatable, Sendable {
     var caPath: String?
     /// Whether the CA file exists yet. Absent (an older helper) counts as existing.
     var caExists: Bool?
+    /// A sentence about a just-finished or cleared interrupted change, or nil.
+    var note: String?
 }
 
 enum TrustOutcome: Equatable, Sendable {

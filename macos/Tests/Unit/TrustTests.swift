@@ -20,6 +20,7 @@ func trustTests() async {
     await flowChecks()
     listenNoteChecks()
     realOutputChecks()
+    realOutputV2Checks()
     await codexRefusalCheck()
 }
 
@@ -244,4 +245,27 @@ private func codexRefusalCheck() async {
     await store.prepareCodex()
     check("trust codex: refusal is shown", store.failed && store.message?.hasPrefix("Start the takeover once") == true)
     check("trust codex: no command offered", store.codexCommand == nil)
+}
+
+/// The fixed helper output: `caExists` and `note` are present, null notes decode.
+@MainActor
+private func realOutputV2Checks() {
+    var statuses: [TrustStatus] = []
+    var reports: [TrustReport] = []
+    for (i, sample) in TrustSamples.v2.enumerated() {
+        let result = OneShotResult(status: sample.exit, stdout: Data((sample.line + "\n").utf8), stderr: "")
+        switch TrustClient.outcome(result) {
+        case .report(let r): reports.append(r)
+        case .status(let s): statuses.append(s)
+        case .failed(let why): check("trust v2: line \(i) decodes (\(why))", false)
+        }
+    }
+    check("trust v2: statuses carry caExists and a null note", statuses.count == 2 && statuses.allSatisfy { $0.caExists == false && $0.note == nil })
+    check("trust v2: actions", reports.map(\.action) == ["preview", "applied", "undone", "refused"])
+    check("trust v2: preview message kept verbatim", reports.first?.message?.contains("Close Claude Code before applying this, and restart it afterwards.") == true)
+    if case .status(let s) = TrustClient.outcome(OneShotResult(status: 0, stdout: Data(TrustSamples.statusWithNote.utf8), stderr: "")) {
+        check("trust v2: a note decodes", s.note == "A previous change was interrupted; it has been cleared." && s.caExists == true)
+    } else {
+        check("trust v2: a note decodes", false)
+    }
 }
