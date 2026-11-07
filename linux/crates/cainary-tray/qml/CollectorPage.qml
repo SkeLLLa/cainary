@@ -89,15 +89,7 @@ ColumnLayout {
         onCurrentIndexChanged: root.tab = ["feed", "flags", "setup"][currentIndex]
 
         TabButton { text: qsTr("Feed") }
-        TabButton {
-            contentItem: RowLayout {
-                spacing: 6
-                Item { Layout.fillWidth: true }
-                Label { text: qsTr("Red flags"); color: palette.buttonText }
-                CountBadge { count: root.collector.flagCount; alert: true }
-                Item { Layout.fillWidth: true }
-            }
-        }
+        BadgeTabButton { text: qsTr("Red flags"); count: root.collector.flagCount; alert: true }
         TabButton { text: qsTr("Setup") }
     }
 

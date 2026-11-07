@@ -51,6 +51,7 @@ fn main() {
             "qml/AboutWindow.qml",
             "qml/components/AppMenu.qml",
             "qml/components/AppRow.qml",
+            "qml/components/BadgeTabButton.qml",
             "qml/components/CollectorData.qml",
             "qml/components/CollectorSettingsModel.qml",
             "qml/components/CountBadge.qml",
