@@ -8,8 +8,16 @@ use serde_json::{Value, json};
 
 use crate::strings::safe_line;
 
-pub const MAX_ENTRIES: usize = 2_000;
-pub const MAX_BYTES: usize = 2 * 1024 * 1024;
+/// Default number of kept entries.
+pub const DEFAULT_MAX_ENTRIES: usize = 2_000;
+/// Lowest configurable entry cap.
+pub const MIN_MAX_ENTRIES: usize = 100;
+/// Highest configurable entry cap.
+pub const MAX_MAX_ENTRIES: usize = 50_000;
+/// Byte budget per allowed entry; the total is clamped to `MIN_BYTES..=MAX_BYTES`.
+const BYTES_PER_ENTRY: usize = 1024;
+pub const MIN_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_MESSAGE_CHARS: usize = 300;
 pub const MAX_DETAIL_BYTES: usize = 16 * 1024;
 const DETAIL_MARKER: &str = "\n… [truncated]";
@@ -87,6 +95,20 @@ impl Default for Filter {
     }
 }
 
+/// Clamps a user-configured line count to `100..=50_000`. The wiring milestone calls this on the
+/// `[logs] max_lines` setting (default 2,000) before building or resizing a [`Logbook`].
+pub fn clamp_max_entries(n: u32) -> usize {
+    (n as usize).clamp(MIN_MAX_ENTRIES, MAX_MAX_ENTRIES)
+}
+
+/// Total bytes (message plus detail) kept for a given entry cap, so memory stays bounded
+/// whatever the line setting: `max_entries` KiB, between 2 MiB and 32 MiB.
+pub fn byte_cap(max_entries: usize) -> usize {
+    max_entries
+        .saturating_mul(BYTES_PER_ENTRY)
+        .clamp(MIN_BYTES, MAX_BYTES)
+}
+
 #[derive(Debug)]
 pub struct Logbook {
     entries: VecDeque<Entry>,
@@ -94,7 +116,6 @@ pub struct Logbook {
     next_seq: u64,
     dropped: u64,
     max_entries: usize,
-    max_bytes: usize,
 }
 
 impl Default for Logbook {
@@ -105,17 +126,40 @@ impl Default for Logbook {
 
 impl Logbook {
     pub fn new() -> Self {
-        Self::with_limits(MAX_ENTRIES, MAX_BYTES)
+        Self::with_limits(DEFAULT_MAX_ENTRIES)
     }
 
-    pub fn with_limits(max_entries: usize, max_bytes: usize) -> Self {
+    /// A logbook keeping at most `max_entries` entries (clamped to 100..=50,000).
+    pub fn with_limits(max_entries: usize) -> Self {
         Logbook {
             entries: VecDeque::new(),
             bytes: 0,
             next_seq: 1,
             dropped: 0,
-            max_entries: max_entries.max(1),
-            max_bytes,
+            max_entries: max_entries.clamp(MIN_MAX_ENTRIES, MAX_MAX_ENTRIES),
+        }
+    }
+
+    pub fn max_entries(&self) -> usize {
+        self.max_entries
+    }
+
+    /// Changes the entry cap (clamped to 100..=50,000), evicting oldest entries at once if it
+    /// was lowered; evicted entries count as dropped.
+    pub fn set_max_entries(&mut self, n: usize) {
+        self.max_entries = n.clamp(MIN_MAX_ENTRIES, MAX_MAX_ENTRIES);
+        self.evict();
+    }
+
+    fn evict(&mut self) {
+        let max_bytes = byte_cap(self.max_entries);
+        while self.entries.len() > self.max_entries
+            || (self.bytes > max_bytes && self.entries.len() > 1)
+        {
+            if let Some(old) = self.entries.pop_front() {
+                self.bytes -= old.bytes();
+                self.dropped += 1;
+            }
         }
     }
 
@@ -155,14 +199,7 @@ impl Logbook {
         };
         self.bytes += entry.bytes();
         self.entries.push_back(entry);
-        while self.entries.len() > self.max_entries
-            || (self.bytes > self.max_bytes && self.entries.len() > 1)
-        {
-            if let Some(old) = self.entries.pop_front() {
-                self.bytes -= old.bytes();
-                self.dropped += 1;
-            }
-        }
+        self.evict();
         seq
     }
 

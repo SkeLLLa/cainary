@@ -1,6 +1,6 @@
 use std::time::{Duration, UNIX_EPOCH};
 
-use cainary_tray_model::logbook::{Filter, Level, Logbook, Source};
+use cainary_tray_model::logbook::{Filter, Level, Logbook, Source, byte_cap, clamp_max_entries};
 
 fn small(book: &mut Logbook, n: usize) {
     for i in 0..n {
@@ -34,8 +34,8 @@ fn caps_by_bytes() {
 
 #[test]
 fn dropped_counted_and_reported() {
-    let mut book = Logbook::with_limits(3, usize::MAX);
-    small(&mut book, 5);
+    let mut book = Logbook::with_limits(100);
+    small(&mut book, 102);
     assert_eq!(book.dropped(), 2);
     let all: Vec<_> = book.entries().collect();
     assert!(
@@ -169,4 +169,48 @@ fn view_json_shape() {
     let last = book.view_json(&Filter::default(), 1);
     assert_eq!(last["entries"][0]["message"], "x");
     assert!(last["entries"][0]["detail"].is_null());
+}
+
+#[test]
+fn set_max_entries_evicts_and_counts() {
+    let mut book = Logbook::new();
+    small(&mut book, 300);
+    book.set_max_entries(100);
+    assert_eq!(book.len(), 100);
+    assert_eq!(book.dropped(), 200);
+    assert_eq!(book.entries().next().unwrap().message, "m200");
+    book.set_max_entries(5_000);
+    assert_eq!(book.len(), 100);
+    assert_eq!(book.max_entries(), 5_000);
+}
+
+#[test]
+fn max_entries_clamped() {
+    assert_eq!(clamp_max_entries(0), 100);
+    assert_eq!(clamp_max_entries(2_000), 2_000);
+    assert_eq!(clamp_max_entries(u32::MAX), 50_000);
+    assert_eq!(Logbook::with_limits(1).max_entries(), 100);
+    let mut book = Logbook::new();
+    book.set_max_entries(usize::MAX);
+    assert_eq!(book.max_entries(), 50_000);
+}
+
+#[test]
+fn byte_cap_scales_and_is_bounded() {
+    assert_eq!(byte_cap(100), 2 * 1024 * 1024);
+    assert_eq!(byte_cap(2_000), 2 * 1024 * 1024);
+    assert_eq!(byte_cap(10_000), 10_000 * 1024);
+    assert_eq!(byte_cap(50_000), 32 * 1024 * 1024);
+    assert_eq!(byte_cap(usize::MAX), 32 * 1024 * 1024);
+    let mut book = Logbook::with_limits(50_000);
+    let detail = "x".repeat(16 * 1024);
+    for _ in 0..4_000 {
+        book.push(Level::Info, Source::Scan, "big", Some(&detail));
+    }
+    let bytes: usize = book
+        .entries()
+        .map(|e| e.message.len() + e.detail.as_ref().map_or(0, String::len))
+        .sum();
+    assert!(bytes <= 32 * 1024 * 1024);
+    assert!(book.len() < 4_000);
 }

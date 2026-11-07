@@ -403,7 +403,8 @@ Linux builds include the binary.
 ## 11. Logs
 
 The tray keeps an in-memory activity log (`tray-model/src/logbook.rs`) for the Logs view. It is
-never written to disk. The newest 2,000 entries and 2 MiB (message plus detail bytes) are kept;
+never written to disk. The newest entries are kept: 2,000 by default, configurable from 100 to 50,000 lines, and never
+more than a byte budget of 1 KiB per allowed line (2 MiB to 32 MiB; message plus detail bytes);
 older ones are evicted and counted, and "Copy all" starts with "N older entries dropped".
 
 An entry has:
