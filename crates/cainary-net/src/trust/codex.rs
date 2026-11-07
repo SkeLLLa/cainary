@@ -3,7 +3,7 @@
 
 use super::bundle::{bundle, collector_ca, mode_cas, system_roots};
 use super::claude::{modes_with, rebuild_modes, recover};
-use super::files::{Replace, lock_trust, read_in, unlink_unchanged};
+use super::files::{Replace, TrustLock, lock_trust, read_in, unlink_unchanged};
 use super::state::{
     CodexState, Owned, Rec, Refused, check_owned, publish_bundle_modes, read_state, save_state,
 };
@@ -56,11 +56,23 @@ pub(super) fn codex_mode(env: &Env<'_>, mode: &str, undo: bool) -> Line {
         Ok(None) => return Line::refused(t, BUSY),
         Err(_) => return Line::refused(t, "The trust lock could not be taken."),
     };
+    codex_mode_locked(env, &ca_dir, &lock, mode, undo)
+}
+
+/// `codex_mode` with the trust lock already held (`--delete-ca` keeps it across every target).
+pub(super) fn codex_mode_locked(
+    env: &Env<'_>,
+    ca_dir: &CaDir,
+    lock: &TrustLock,
+    mode: &str,
+    undo: bool,
+) -> Line {
+    let t = Target::Codex;
     let path = ca_dir.path().join(CODEX_BUNDLE).display().to_string();
     // Whatever an earlier run left unfinished (the Claude Code settings transaction first, then
     // bundle replacements) is settled before anything is checked or written.
-    let _ = recover(env, &ca_dir, &lock);
-    let mut state = read_state(&ca_dir);
+    let _ = recover(env, ca_dir, lock);
+    let mut state = read_state(ca_dir);
     if state.newer {
         return Line::refused(t, NEWER);
     }
@@ -84,7 +96,7 @@ pub(super) fn codex_mode(env: &Env<'_>, mode: &str, undo: bool) -> Line {
     // Changing the mode set of a bundle cAInary already owns is a rebuild, not a first apply.
     if cur.is_some() && (undo && !new_modes.is_empty() || !undo && !has) {
         let mut l = Line::new(t, Action::Applied, "");
-        if let Err(r) = rebuild_modes(env, &ca_dir, &mut state, t, &new_modes) {
+        if let Err(r) = rebuild_modes(env, ca_dir, &mut state, t, &new_modes) {
             return *r;
         }
         l.bundle_path = Some(path.clone());
@@ -101,7 +113,7 @@ pub(super) fn codex_mode(env: &Env<'_>, mode: &str, undo: bool) -> Line {
         return l;
     }
     if undo {
-        let c = check_owned(&ca_dir, CODEX_BUNDLE, &rec);
+        let c = check_owned(ca_dir, CODEX_BUNDLE, &rec);
         match c.owned {
             Owned::Missing if state.codex.is_none() => {
                 return Line::new(
@@ -122,7 +134,7 @@ pub(super) fn codex_mode(env: &Env<'_>, mode: &str, undo: bool) -> Line {
             }
             _ => {}
         }
-        match unlink_unchanged(&ca_dir, CODEX_BUNDLE, &c.snap) {
+        match unlink_unchanged(ca_dir, CODEX_BUNDLE, &c.snap) {
             Ok(()) => {}
             Err(Replace::Changed) => {
                 let mut l = Line::refused(t, FOREIGN_BUNDLE);
@@ -132,15 +144,15 @@ pub(super) fn codex_mode(env: &Env<'_>, mode: &str, undo: bool) -> Line {
             Err(_) => return Line::refused(t, "The Codex bundle could not be removed."),
         }
         state.codex = None;
-        let _ = save_state(&ca_dir, &state);
+        let _ = save_state(ca_dir, &state);
         let mut l = Line::new(t, Action::Undone, "Removed the Codex certificate bundle.");
         l.bundle_path = Some(path);
         return l;
     }
     let cas = if new_modes == [TAKEOVER] {
-        collector_ca(&ca_dir).map(|c| vec![c])
+        collector_ca(ca_dir).map(|c| vec![c])
     } else {
-        mode_cas(&ca_dir, &new_modes)
+        mode_cas(ca_dir, &new_modes)
             .map_err(|_| "The certificate of a trust mode is missing, so a bundle can't be made.")
     };
     let cas = match cas {
@@ -154,9 +166,9 @@ pub(super) fn codex_mode(env: &Env<'_>, mode: &str, undo: bool) -> Line {
         );
     };
     let text = bundle(&roots, &cas);
-    let same = matches!(read_in(&ca_dir, CODEX_BUNDLE), Ok(Some(b)) if b == text.as_bytes());
+    let same = matches!(read_in(ca_dir, CODEX_BUNDLE), Ok(Some(b)) if b == text.as_bytes());
     let sha = match publish_bundle_modes(
-        &ca_dir,
+        ca_dir,
         &mut state,
         Target::Codex,
         CODEX_BUNDLE,
@@ -196,7 +208,7 @@ pub(super) fn codex_mode(env: &Env<'_>, mode: &str, undo: bool) -> Line {
         modes: new_modes,
     });
     state.clear_journal(CODEX_BUNDLE);
-    if save_state(&ca_dir, &state).is_err() {
+    if save_state(ca_dir, &state).is_err() {
         return Line::refused(t, "The state file could not be written.");
     }
     let mut l = Line::new(

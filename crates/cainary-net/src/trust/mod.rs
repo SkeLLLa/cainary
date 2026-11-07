@@ -559,27 +559,57 @@ pub(crate) fn undo_mode(env: &Env<'_>, target: Target, mode: &str) -> Line {
     }
 }
 
+/// The trust lock, kept by `--delete-ca` from the undo of every target to the unlink of the CA.
+pub struct Held(#[allow(dead_code)] files::TrustLock);
+
+/// What `undo_mode_everywhere_held` found: its lines, and (only when the CA may now be deleted)
+/// the lock to hold until it is.
+pub struct Cleared {
+    pub lines: Vec<Line>,
+    pub held: Option<Held>,
+    pub ok: bool,
+}
+
 /// `--delete-ca`'s first step, called with the run lock held: removes `mode` from every target
 /// that has it (the trust lock is taken here, after the run lock, never the other way round).
 /// A target without the mode is left alone, so with no trust recorded there are no lines.
 pub fn undo_mode_everywhere(env: &Env<'_>, mode: &str) -> Vec<Line> {
-    let Ok(Some(ca)) = CaDir::open_existing(&env.ca_dir) else {
-        return Vec::new();
+    undo_mode_everywhere_held(env, mode).lines
+}
+
+/// Like `undo_mode_everywhere`, but the trust lock is held from recovery through every undo and a
+/// final check that nothing still holds the takeover certificate, and handed back so the caller
+/// unlinks the CA before anything else can apply. `ok` is false when the CA must stay.
+pub fn undo_mode_everywhere_held(env: &Env<'_>, mode: &str) -> Cleared {
+    let refuse = |lines: Vec<Line>| Cleared {
+        lines,
+        held: None,
+        ok: false,
     };
+    let Ok(Some(ca)) = CaDir::open_existing(&env.ca_dir) else {
+        return Cleared {
+            lines: Vec::new(),
+            held: None,
+            ok: true,
+        };
+    };
+    let t = Target::ClaudeCode;
     let lock = match lock_trust(&ca, lock_wait()) {
         Ok(Some(l)) => l,
-        Ok(None) => return vec![Line::refused(Target::ClaudeCode, BUSY)],
+        Ok(None) => return refuse(vec![Line::refused(t, BUSY)]),
         Err(_) => {
-            return vec![Line::refused(
-                Target::ClaudeCode,
-                "The trust lock could not be taken.",
-            )];
+            return refuse(vec![Line::refused(t, "The trust lock could not be taken.")]);
         }
     };
-    let _ = recover(env, &ca, &lock);
+    if let claude::Recovery::Pending(why) = claude::recover_outcome(env, &ca, &lock) {
+        return refuse(vec![Line::refused(
+            t,
+            format!("A trust change is still being recovered, so the certificate was kept: {why}"),
+        )]);
+    }
     let state = read_state(&ca);
     if state.newer {
-        return vec![Line::refused(Target::ClaudeCode, NEWER)];
+        return refuse(vec![Line::refused(t, NEWER)]);
     }
     let has = |modes: &[String]| modes.iter().any(|m| m == mode);
     let mut targets = Vec::new();
@@ -589,13 +619,65 @@ pub fn undo_mode_everywhere(env: &Env<'_>, mode: &str) -> Vec<Line> {
     if state.codex.as_ref().is_some_and(|c| has(&c.modes)) {
         targets.push(Target::Codex);
     }
-    // `undo_mode` takes the trust lock itself; this one is released first.
-    drop(lock);
-    drop(ca);
-    targets
+    let mut lines: Vec<Line> = targets
         .into_iter()
-        .map(|t| undo_mode(env, t, mode))
-        .collect()
+        .map(|t| match t {
+            Target::ClaudeCode => claude::claude_mode_locked(env, &ca, &lock, mode, true),
+            Target::Codex => codex::codex_mode_locked(env, &ca, &lock, mode, true),
+        })
+        .collect();
+    if lines.iter().any(|l| l.code() != 0) {
+        return refuse(lines);
+    }
+    if let Some(m) = still_holds(&ca, mode) {
+        lines.push(Line::refused(t, m));
+        return refuse(lines);
+    }
+    Cleared {
+        lines,
+        held: Some(Held(lock)),
+        ok: true,
+    }
+}
+
+/// Why the CA of `mode` must stay: a record still enables it, or a bundle still contains it.
+fn still_holds(ca: &CaDir, mode: &str) -> Option<String> {
+    let state = read_state(ca);
+    if state.pending.is_some() || !state.journal.is_empty() || state.newer {
+        return Some(
+            "A trust change is still being recovered, so the certificate was kept.".into(),
+        );
+    }
+    let on = |modes: &[String]| modes.iter().any(|m| m == mode);
+    let direct = ca.path().join(CA_FILE).display().to_string();
+    if state
+        .claude
+        .as_ref()
+        .is_some_and(|c| on(&c.modes) || c.written == direct)
+        || state.codex.as_ref().is_some_and(|c| on(&c.modes))
+    {
+        return Some("A trust record still enables the certificate, so it was kept.".into());
+    }
+    let file = MODES.iter().find(|(m, _)| *m == mode)?.1;
+    let fp = bundle::cert_fingerprint(
+        &pem_certs(&String::from_utf8_lossy(&read_in(ca, file).ok().flatten()?))
+            .into_iter()
+            .next()?,
+    );
+    for name in [CLAUDE_BUNDLE, CODEX_BUNDLE] {
+        let Ok(Some(b)) = read_in(ca, name) else {
+            continue;
+        };
+        if pem_certs(&String::from_utf8_lossy(&b))
+            .iter()
+            .any(|c| bundle::cert_fingerprint(c) == fp)
+        {
+            return Some(format!(
+                "A certificate bundle still contains the certificate, so it was kept: {name}."
+            ));
+        }
+    }
+    None
 }
 
 /// For the tests and the CLI: the time stamp used in backup names.

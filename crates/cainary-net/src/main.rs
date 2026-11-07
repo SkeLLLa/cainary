@@ -254,10 +254,12 @@ fn delete_ca() -> u8 {
     };
     let mut refused = false;
     let mut lines = Vec::new();
-    let result = ca_file::delete(&dir, |_| {
-        lines = trust::undo_mode_everywhere(&env, trust::TAKEOVER);
-        refused = lines.iter().any(|l| l.code() != 0);
-        !refused
+    let result = ca_file::delete_holding(&dir, |_| {
+        let c = trust::undo_mode_everywhere_held(&env, trust::TAKEOVER);
+        lines = c.lines;
+        refused = !c.ok;
+        // `Some` even with nothing to hold: the CA may go, and what is held stays until it has.
+        c.ok.then_some(c.held)
     });
     for l in &lines {
         print!("{}", l.text());

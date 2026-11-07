@@ -445,20 +445,29 @@ pub fn publish(dir: &Path, pem: &str) -> Result<Published, CaFileError> {
 
 /// `--delete-ca`: removes the certificate file. Refuses while a run holds the lock. `before` runs
 /// with the run lock held (so no `--tls` start can publish meanwhile) and the file is unlinked only
-/// if it returns true. Lock order is always the run lock, then the trust lock.
-pub fn delete(dir: &Path, before: impl FnOnce(&CaDir) -> bool) -> Result<bool, CaFileError> {
+/// if it returns `Some`; what it returns (the trust lock) is held until after the unlink. Lock
+/// order is always the run lock, then the trust lock.
+pub fn delete_holding<G>(
+    dir: &Path,
+    before: impl FnOnce(&CaDir) -> Option<G>,
+) -> Result<bool, CaFileError> {
     let Some(d) = CaDir::walk(dir, false)? else {
         return Ok(false);
     };
     let _lock = d.lock()?;
     let existed = d.exists(CA_FILE);
-    if !before(&d) {
+    let Some(_held) = before(&d) else {
         return Ok(existed);
-    }
+    };
     if !d.unlink(CA_FILE) {
         return failed("can't delete the certificate file");
     }
     Ok(existed)
+}
+
+/// `delete_holding` for a check with nothing to hold.
+pub fn delete(dir: &Path, before: impl FnOnce(&CaDir) -> bool) -> Result<bool, CaFileError> {
+    delete_holding(dir, |d| before(d).then_some(()))
 }
 
 #[cfg(test)]

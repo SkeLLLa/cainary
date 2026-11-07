@@ -271,11 +271,23 @@ pub(super) fn claude_mode(env: &Env<'_>, mode: &str, undo: bool) -> Line {
         Ok(None) => return Line::refused(t, BUSY),
         Err(_) => return Line::refused(t, "The trust lock could not be taken."),
     };
-    if read_state(&ca).newer {
+    claude_mode_locked(env, &ca, &lock, mode, undo)
+}
+
+/// `claude_mode` with the trust lock already held (`--delete-ca` keeps it across every target).
+pub(super) fn claude_mode_locked(
+    env: &Env<'_>,
+    ca: &CaDir,
+    lock: &TrustLock,
+    mode: &str,
+    undo: bool,
+) -> Line {
+    let t = Target::ClaudeCode;
+    if read_state(ca).newer {
         return Line::refused(t, NEWER);
     }
-    let note = recover(env, &ca, &lock);
-    let mut state = read_state(&ca);
+    let note = recover(env, ca, lock);
+    let mut state = read_state(ca);
     let bundle_here = ca.path().join(CLAUDE_BUNDLE).display().to_string();
     let line = match state.claude.clone().filter(|c| c.written == bundle_here) {
         // The settings already point at the owned bundle: a mode change is a bundle rebuild.
@@ -289,14 +301,14 @@ pub(super) fn claude_mode(env: &Env<'_>, mode: &str, undo: bool) -> Line {
             if undo && !has {
                 nothing_changed(t)
             } else if undo && new_modes.is_empty() {
-                claude_undo(env, false, &ca, Some(&lock))
+                claude_undo(env, false, ca, Some(lock))
             } else if !undo && has && mode == TAKEOVER {
-                claude_apply(env, false, Some(&ca), Some(&lock))
+                claude_apply(env, false, Some(ca), Some(lock))
             } else if !undo && has {
                 l.message = format!("Claude Code already trusts the {mode} certificate.");
                 l
             } else {
-                match rebuild_modes(env, &ca, &mut state, t, &new_modes) {
+                match rebuild_modes(env, ca, &mut state, t, &new_modes) {
                     Ok(()) if undo => {
                         l.action = Action::Undone;
                         l.message = format!(
@@ -316,14 +328,14 @@ pub(super) fn claude_mode(env: &Env<'_>, mode: &str, undo: bool) -> Line {
             }
         }
         // No record, or a direct-path one (always `[takeover]`).
-        None if mode == TAKEOVER && undo => claude_undo(env, false, &ca, Some(&lock)),
-        None if mode == TAKEOVER => claude_apply(env, false, Some(&ca), Some(&lock)),
+        None if mode == TAKEOVER && undo => claude_undo(env, false, ca, Some(lock)),
+        None if mode == TAKEOVER => claude_apply(env, false, Some(ca), Some(lock)),
         None if undo => nothing_changed(t),
         // A direct-path record gets the owned bundle only now that a second mode needs one.
         None => match state
             .claude
             .clone()
-            .filter(|c| c.written == ca_path_here(&ca))
+            .filter(|c| c.written == ca_path_here(ca))
         {
             Some(cs) => {
                 let new_modes = modes_with(&cs.modes, mode, false);
@@ -332,7 +344,7 @@ pub(super) fn claude_mode(env: &Env<'_>, mode: &str, undo: bool) -> Line {
                     l.message = format!("Claude Code already trusts the {mode} certificate.");
                     l
                 } else {
-                    claude_migrate(env, &ca, &lock, &state, cs, &new_modes)
+                    claude_migrate(env, ca, &lock, &state, cs, &new_modes)
                 }
             }
             None => Line::refused(t, NOT_YET),
@@ -1226,19 +1238,38 @@ fn settings_sha(p: &Pending) -> Option<Option<String>> {
 /// A transaction found in the state file: finished, or cleared, according to what the settings
 /// file turns out to hold. Returns a sentence for the user when something was found. Needs the
 /// lock, so it can't clear a transaction another process is in the middle of.
-pub(super) fn recover(env: &Env<'_>, ca: &CaDir, _lock: &TrustLock) -> Option<String> {
+pub(super) fn recover(env: &Env<'_>, ca: &CaDir, lock: &TrustLock) -> Option<String> {
+    match recover_outcome(env, ca, lock) {
+        Recovery::Resolved(note) => note,
+        Recovery::Pending(why) => Some(why),
+    }
+}
+
+/// What `recover` left behind: everything settled, or something still waiting (a transaction or
+/// a bundle journal that could not be resolved now).
+pub(super) enum Recovery {
+    Resolved(Option<String>),
+    Pending(String),
+}
+
+pub(super) fn recover_outcome(env: &Env<'_>, ca: &CaDir, _lock: &TrustLock) -> Recovery {
     let state = read_state(ca);
     if state.newer {
-        return (state.pending.is_some() || !state.journal.is_empty()).then(|| NEWER.to_string());
+        return if state.pending.is_some() || !state.journal.is_empty() {
+            Recovery::Pending(NEWER.to_string())
+        } else {
+            Recovery::Resolved(None)
+        };
     }
     if state.pending.is_none() && state.journal.is_empty() {
-        return None;
+        return Recovery::Resolved(None);
     }
     let mut next = state.clone();
     let mut note: Option<&str> = None;
+    let mut deferred = false;
     if let Some(p) = state.pending.clone() {
         let Some(now) = settings_sha(&p) else {
-            return Some("An interrupted Claude Code trust change was found, but the settings can't be inspected right now; run --trust-status again later.".into());
+            return Recovery::Pending("An interrupted Claude Code trust change was found, but the settings can't be inspected right now; run --trust-status again later.".into());
         };
         next.pending = None;
         note = Some(if now == p.after {
@@ -1253,7 +1284,7 @@ pub(super) fn recover(env: &Env<'_>, ca: &CaDir, _lock: &TrustLock) -> Option<St
                         && delete_owned(ca, CLAUDE_BUNDLE, &Rec::of(p.claude.bundle_sha.as_deref()))
                             .is_err()
                     {
-                        return Some("An interrupted undo was found, but its bundle could not be removed; it will be tried again.".into());
+                        return Recovery::Pending("An interrupted undo was found, but its bundle could not be removed; it will be tried again.".into());
                     }
                     "Finished an interrupted undo of the Claude Code trust change."
                 }
@@ -1284,6 +1315,7 @@ pub(super) fn recover(env: &Env<'_>, ca: &CaDir, _lock: &TrustLock) -> Option<St
         if r.ignored {
             note = Some("A bundle update record that named an unexpected file was ignored.");
         } else if r.deferred {
+            deferred = true;
             note = Some(
                 "A certificate bundle update was left pending: your Claude Code settings couldn't be checked, so the bundle was kept.",
             );
@@ -1292,11 +1324,14 @@ pub(super) fn recover(env: &Env<'_>, ca: &CaDir, _lock: &TrustLock) -> Option<St
         }
     }
     if save_state(ca, &next).is_err() {
-        return Some(
+        return Recovery::Pending(
             "An interrupted Claude Code trust change was found but could not be cleared.".into(),
         );
     }
-    note.map(str::to_string)
+    match (deferred, note) {
+        (true, Some(n)) => Recovery::Pending(n.to_string()),
+        (_, n) => Recovery::Resolved(n.map(str::to_string)),
+    }
 }
 
 #[cfg(test)]
@@ -2762,5 +2797,84 @@ mod tests {
             a.message
                 .contains("rel/mine.pem is relative; set an absolute path to keep it")
         );
+    }
+
+    fn delete_ca(fx: &mut Fx) -> (bool, bool) {
+        fx._lock = None;
+        let env = fx.env();
+        let mut ok = false;
+        let r = crate::tls::ca_file::delete_holding(&fx.ca_dir, |_| {
+            let c = undo_mode_everywhere_held(&env, TAKEOVER);
+            ok = c.ok;
+            c.ok.then_some(c.held)
+        })
+        .unwrap();
+        (ok, r)
+    }
+
+    #[test]
+    fn delete_ca_holds_trust_lock_until_unlink() {
+        let mut fx = Fx::new("delete-holds", "");
+        fx.roots();
+        fx.write_settings(OPUS);
+        assert_eq!(apply(&fx).action, Action::Applied);
+        assert_eq!(codex(&fx.env(), false).action, Action::Applied);
+        fx._lock = None;
+        let env = fx.env();
+        let ca_file = fx.ca_dir.join(CA_FILE);
+        let r = crate::tls::ca_file::delete_holding(&fx.ca_dir, |_| {
+            let c = undo_mode_everywhere_held(&env, TAKEOVER);
+            assert!(c.ok && c.held.is_some(), "{:?}", c.lines);
+            // An apply racing the delete is refused while the lock is held, and nothing
+            // contains the CA by now.
+            for t in [Target::ClaudeCode, Target::Codex] {
+                let a = apply_mode(&env, t, TAKEOVER);
+                assert_eq!((a.action, a.message.as_str()), (Action::Refused, BUSY));
+            }
+            assert!(ca_file.exists());
+            assert!(!fx.ca_dir.join(CLAUDE_BUNDLE).exists());
+            assert!(!fx.ca_dir.join(CODEX_BUNDLE).exists());
+            c.held
+        })
+        .unwrap();
+        assert!(r && !ca_file.exists());
+        assert_eq!(fx.read_settings(), OPUS);
+    }
+
+    #[test]
+    fn delete_ca_kept_while_a_bundle_still_holds_it() {
+        let mut fx = Fx::new("delete-verify", "");
+        fx.roots();
+        assert_eq!(codex(&fx.env(), false).action, Action::Applied);
+        // The record loses the takeover mode, but the bundle still contains the CA.
+        let ca = CaDir::open_existing(&fx.ca_dir).unwrap().unwrap();
+        let mut st = read_state(&ca);
+        st.codex.as_mut().unwrap().modes = vec![PROXY.to_string()];
+        save_state(&ca, &st).unwrap();
+        let (ok, _) = delete_ca(&mut fx);
+        assert!(!ok);
+        assert!(fx.ca_dir.join(CA_FILE).exists(), "the CA is kept");
+    }
+
+    #[test]
+    fn delete_ca_refused_while_recovery_pending() {
+        let mut fx = Fx::new("delete-pending", "");
+        fx.write_settings(OPUS);
+        stop_at("after-rename");
+        let a = apply(&fx);
+        clear_hooks();
+        assert_eq!(a.action, Action::Refused, "{a:?}");
+        // The settings can't be inspected now, so the transaction can't be settled.
+        let aside = fx.base.join("settings.aside");
+        fs::rename(fx.settings(), &aside).unwrap();
+        symlink(&aside, fx.settings()).unwrap();
+        fx._lock = None;
+        let env = fx.env();
+        let c = undo_mode_everywhere_held(&env, TAKEOVER);
+        assert!(!c.ok && c.held.is_none(), "{:?}", c.lines);
+        assert!(c.lines[0].message.contains("recovered"), "{:?}", c.lines);
+        let (ok, _) = delete_ca(&mut fx);
+        assert!(!ok);
+        assert!(fx.ca_dir.join(CA_FILE).exists(), "the CA is kept");
     }
 }
