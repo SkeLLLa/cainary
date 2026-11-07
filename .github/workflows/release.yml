@@ -483,8 +483,11 @@ jobs:
             file "${BIN}" | grep -q static
             test "$("${BIN}" --version)" = "${NAME} ${VERSION}"
           done
+          HELPER="target/${{ matrix.arch }}-unknown-linux-musl/release/cainary-bind-helper"
+          file "${HELPER}" | grep -q static
+          test "$("${HELPER}" --version)" = "cainary-bind-helper ${VERSION} protocol 1"
 
-      - name: Keep the CLI and the debug collector
+      - name: Keep the CLI, the debug collector and the bind helper
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-cli-${{ matrix.arch }}
@@ -493,6 +496,7 @@ jobs:
           path: |
             target/${{ matrix.arch }}-unknown-linux-musl/release/cainary
             target/${{ matrix.arch }}-unknown-linux-musl/release/cainary-otel-debug
+            target/${{ matrix.arch }}-unknown-linux-musl/release/cainary-bind-helper
 
   # The tray app links the distro's Qt, so each format is built in its distro: the tarball and
   # .deb on Debian trixie, the .rpm on the oldest supported Fedora.
@@ -569,9 +573,9 @@ jobs:
         run: |
           set -eu
           # Artifacts drop the executable bit.
-          chmod 755 cli/cainary cli/cainary-otel-debug
+          chmod 755 cli/cainary cli/cainary-otel-debug cli/cainary-bind-helper
           packaging/linux.sh --version "${VERSION}" --arch "${ARCH}" --cli cli/cainary \
-            --otel-debug cli/cainary-otel-debug \
+            --otel-debug cli/cainary-otel-debug --bind-helper cli/cainary-bind-helper \
             --tray linux/target/release/cainary-tray --formats "${FORMATS}" --out dist
 
       - name: Inspect the artifacts

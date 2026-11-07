@@ -14,6 +14,7 @@ url="https://github.com/SkeLLLa/cainary"
 license=('GPL-3.0-or-later')
 depends=('glibc' 'gcc-libs' 'qt6-base' 'qt6-declarative' 'qt6-svg' 'qt6-wayland' 'layer-shell-qt')
 optdepends=('qqc2-desktop-style: native Plasma look'
+            'polkit: open collector ports below 1024'
             'gnome-shell-extension-appindicator: tray on GNOME')
 provides=('cainary')
 conflicts=('cainary')

@@ -49,7 +49,7 @@ copyright = "2026, SkeLLLa"
 section = "utils"
 priority = "optional"
 depends = "$auto, qml6-module-qtquick, qml6-module-qtquick-controls, qml6-module-qtquick-layouts, qml6-module-qtquick-window, qml6-module-qtquick-templates, qml6-module-qtqml-workerscript, qt6-wayland, qt6-svg-plugins"
-recommends = "qml6-module-org-kde-desktop"
+recommends = "qml6-module-org-kde-desktop, pkexec | policykit-1"
 suggests = "gnome-shell-extension-appindicator"
 extended-description = """\
 The cAInary Linux tray app shows what AI tools and device monitoring
@@ -59,6 +59,7 @@ assets = [
   ["target/release/bin/cainary", "usr/bin/cainary", "755"],
   ["target/release/bin/cainary-otel-debug", "usr/bin/cainary-otel-debug", "755"],
   ["target/release/bin/cainary-tray", "usr/bin/cainary-tray", "755"],
+  ["target/release/libexec/cainary/cainary-bind-helper", "usr/libexec/cainary/cainary-bind-helper", "755"],
   ["target/release/share/applications/ua.SkeLLLa.cAInary.desktop", "usr/share/applications/ua.SkeLLLa.cAInary.desktop", "644"],
   ["target/release/share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml", "usr/share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml", "644"],
   ["target/release/share/icons/hicolor/scalable/apps/ua.SkeLLLa.cAInary.svg", "usr/share/icons/hicolor/scalable/apps/ua.SkeLLLa.cAInary.svg", "644"],
@@ -71,6 +72,7 @@ assets = [
   ["target/release/share/icons/hicolor/64x64/apps/ua.SkeLLLa.cAInary.png", "usr/share/icons/hicolor/64x64/apps/ua.SkeLLLa.cAInary.png", "644"],
   ["target/release/share/icons/hicolor/128x128/apps/ua.SkeLLLa.cAInary.png", "usr/share/icons/hicolor/128x128/apps/ua.SkeLLLa.cAInary.png", "644"],
   ["target/release/share/icons/hicolor/256x256/apps/ua.SkeLLLa.cAInary.png", "usr/share/icons/hicolor/256x256/apps/ua.SkeLLLa.cAInary.png", "644"],
+  ["target/release/share/polkit-1/actions/ua.SkeLLLa.cAInary.policy", "usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.policy", "644"],
   ["target/release/README.md", "usr/share/doc/cainary/README.md", "644"],
   ["target/release/LICENSE", "usr/share/licenses/cainary/LICENSE", "644"],
 ]
@@ -83,6 +85,7 @@ assets = [
   { source = "target/release/bin/cainary", dest = "/usr/bin/cainary", mode = "755" },
   { source = "target/release/bin/cainary-otel-debug", dest = "/usr/bin/cainary-otel-debug", mode = "755" },
   { source = "target/release/bin/cainary-tray", dest = "/usr/bin/cainary-tray", mode = "755" },
+  { source = "target/release/libexec/cainary/cainary-bind-helper", dest = "/usr/libexec/cainary/cainary-bind-helper", mode = "755" },
   { source = "target/release/share/applications/ua.SkeLLLa.cAInary.desktop", dest = "/usr/share/applications/ua.SkeLLLa.cAInary.desktop", mode = "644" },
   { source = "target/release/share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml", dest = "/usr/share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml", mode = "644" },
   { source = "target/release/share/icons/hicolor/scalable/apps/ua.SkeLLLa.cAInary.svg", dest = "/usr/share/icons/hicolor/scalable/apps/ua.SkeLLLa.cAInary.svg", mode = "644" },
@@ -95,6 +98,7 @@ assets = [
   { source = "target/release/share/icons/hicolor/64x64/apps/ua.SkeLLLa.cAInary.png", dest = "/usr/share/icons/hicolor/64x64/apps/ua.SkeLLLa.cAInary.png", mode = "644" },
   { source = "target/release/share/icons/hicolor/128x128/apps/ua.SkeLLLa.cAInary.png", dest = "/usr/share/icons/hicolor/128x128/apps/ua.SkeLLLa.cAInary.png", mode = "644" },
   { source = "target/release/share/icons/hicolor/256x256/apps/ua.SkeLLLa.cAInary.png", dest = "/usr/share/icons/hicolor/256x256/apps/ua.SkeLLLa.cAInary.png", mode = "644" },
+  { source = "target/release/share/polkit-1/actions/ua.SkeLLLa.cAInary.policy", dest = "/usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.policy", mode = "644" },
   { source = "target/release/README.md", dest = "/usr/share/doc/cainary/README.md", mode = "644", doc = true },
   { source = "target/release/LICENSE", dest = "/usr/share/licenses/cainary/LICENSE", mode = "644", doc = true },
 ]
@@ -108,6 +112,7 @@ layer-shell-qt = "*"
 
 [package.metadata.generate-rpm.recommends]
 kf6-qqc2-desktop-style = "*"
+polkit = "*"
 
 [package.metadata.generate-rpm.suggests]
 gnome-shell-extension-appindicator = "*"

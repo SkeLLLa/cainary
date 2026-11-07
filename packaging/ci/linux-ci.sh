@@ -125,6 +125,8 @@ deps_package() {
 SHIPPED="bin/cainary
 bin/cainary-otel-debug
 bin/cainary-tray
+libexec/cainary/cainary-bind-helper
+share/polkit-1/actions/ua.SkeLLLa.cAInary.policy
 share/applications/ua.SkeLLLa.cAInary.desktop
 share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml
 share/icons/hicolor/scalable/apps/ua.SkeLLLa.cAInary.svg
@@ -175,6 +177,11 @@ inspect() {
         [ "$("$x/$top/bin/cainary-otel-debug" --version)" = "cainary-otel-debug $version" ] ||
             die "tarball cainary-otel-debug version"
         file "$x/$top/bin/cainary-otel-debug" | grep -q 'static' || die "tarball cainary-otel-debug is not static"
+        [ "$("$x/$top/libexec/cainary/cainary-bind-helper" --version)" = "cainary-bind-helper $version protocol 1" ] ||
+            die "tarball cainary-bind-helper version"
+        file "$x/$top/libexec/cainary/cainary-bind-helper" | grep -q 'static' || die "tarball cainary-bind-helper is not static"
+        [ -u "$x/$top/libexec/cainary/cainary-bind-helper" ] && die "tarball cainary-bind-helper is setuid"
+        grep -q 'ua.SkeLLLa.cAInary.local' "$x/$top/share/polkit-1/actions/ua.SkeLLLa.cAInary.policy" && die "tarball ships the .local policy"
         rm -rf "$x"
     fi
 
@@ -191,6 +198,10 @@ inspect() {
         dpkg-deb -c "$deb" | awk '{ print $NF }' | sed 's|^\./||' | sort > "$list"
         expect_files "$list" "usr/"
         if grep -q 'etc/xdg/autostart' "$list"; then die "the deb installs system-wide autostart"; fi
+        if grep -q 'polkit-1/actions/.*local' "$list"; then die "the deb ships the .local policy"; fi
+        dpkg-deb -c "$deb" | grep -q '^-rwxr-xr-x root/root .* ./usr/libexec/cainary/cainary-bind-helper$' ||
+            die "deb cainary-bind-helper is not 0755 root:root"
+        dpkg-deb -f "$deb" Recommends | grep -q 'pkexec | policykit-1' || die "deb Recommends has no pkexec | policykit-1"
     fi
 
     rpm="$dir/cainary-$version-1.$arch.rpm"
@@ -206,6 +217,10 @@ inspect() {
         rpm -qlp "$rpm" | sort > "$list"
         expect_files "$list" "/usr/"
         if grep -q 'etc/xdg/autostart' "$list"; then die "the rpm installs system-wide autostart"; fi
+        if grep -q 'polkit-1/actions/.*local' "$list"; then die "the rpm ships the .local policy"; fi
+        rpm -qlpv "$rpm" | grep -q '^-rwxr-xr-x.* root .* root .*/usr/libexec/cainary/cainary-bind-helper$' ||
+            die "rpm cainary-bind-helper is not 0755 root:root"
+        rpm -qp --recommends "$rpm" | grep -qx 'polkit' || die "rpm Recommends has no polkit"
     fi
 
     rm -f "$list" "$list.req"
@@ -262,6 +277,9 @@ smoke() {
     [ "$(cainary-otel-debug --version)" = "cainary-otel-debug $version" ]
     cainary-otel-debug --list-presets
     [ "$(cainary-tray --version)" = "cainary-tray $version" ]
+    if [ "$kind" != tar ]; then
+        [ "$(/usr/libexec/cainary/cainary-bind-helper --version)" = "cainary-bind-helper $version protocol 1" ]
+    fi
     CAINARY_UI_SNAPSHOTS="$(mktemp -d)" QT_QPA_PLATFORM=offscreen cainary-tray --self-test
     set +x
     if [ "$kind" = tar ]; then

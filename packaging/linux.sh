@@ -3,11 +3,13 @@
 # `make linux`, which builds both first.
 #
 # Usage:
-#   packaging/linux.sh --version V --arch x86_64|aarch64 --cli PATH --otel-debug PATH --tray PATH \
+#   packaging/linux.sh --version V --arch x86_64|aarch64 --cli PATH --otel-debug PATH --bind-helper PATH --tray PATH \
 #       [--formats tar,deb,rpm] [--out dist/]
 #
 #   --cli    the static musl `cainary` (target/<arch>-unknown-linux-musl/release/cainary)
 #   --otel-debug  the static musl `cainary-otel-debug` (same directory as the CLI)
+#   --bind-helper  the static musl `cainary-bind-helper` (same directory as the CLI); a root-owned
+#            system file in the deb and rpm, never setuid, no file capabilities
 #   --tray   `cainary-tray` (linux/target/release/cainary-tray)
 #
 # Artifacts (docs/distribution.md):
@@ -28,7 +30,7 @@ set -eu
 cd "$(dirname "$0")/.."
 
 usage() {
-    echo "usage: $0 --version V --arch x86_64|aarch64 --cli PATH --otel-debug PATH --tray PATH [--formats tar,deb,rpm] [--out DIR]" >&2
+    echo "usage: $0 --version V --arch x86_64|aarch64 --cli PATH --otel-debug PATH --bind-helper PATH --tray PATH [--formats tar,deb,rpm] [--out DIR]" >&2
     exit 2
 }
 
@@ -36,6 +38,7 @@ VERSION=""
 ARCH=""
 CLI=""
 OTEL_DEBUG=""
+BIND_HELPER=""
 TRAY=""
 FORMATS="tar,deb,rpm"
 OUT="dist"
@@ -46,6 +49,7 @@ while [ "$#" -gt 0 ]; do
         --arch) ARCH="$2" ;;
         --cli) CLI="$2" ;;
         --otel-debug) OTEL_DEBUG="$2" ;;
+        --bind-helper) BIND_HELPER="$2" ;;
         --tray) TRAY="$2" ;;
         --formats) FORMATS="$2" ;;
         --out) OUT="$2" ;;
@@ -63,7 +67,7 @@ case "$ARCH" in
     aarch64) DEB_ARCH=arm64 ;;
     *) echo "error: --arch must be x86_64 or aarch64, got '$ARCH'" >&2; usage ;;
 esac
-if [ -z "$CLI" ] || [ -z "$OTEL_DEBUG" ] || [ -z "$TRAY" ]; then usage; fi
+if [ -z "$CLI" ] || [ -z "$OTEL_DEBUG" ] || [ -z "$BIND_HELPER" ] || [ -z "$TRAY" ]; then usage; fi
 
 DO_TAR=0
 DO_DEB=0
@@ -82,7 +86,7 @@ LINUX="$(cd "${CAINARY_LINUX:-linux}" && pwd)"
 DATA="$LINUX/data"
 
 # --- 1. Versions: all binaries must report V; a stale build must not slip through ----------
-for f in "$CLI" "$OTEL_DEBUG" "$TRAY"; do
+for f in "$CLI" "$OTEL_DEBUG" "$BIND_HELPER" "$TRAY"; do
     if [ ! -f "$f" ] || [ ! -x "$f" ]; then
         echo "error: $f is missing or not executable" >&2
         exit 1
@@ -98,6 +102,12 @@ check_version() {
 check_version "$CLI" cainary
 check_version "$OTEL_DEBUG" cainary-otel-debug
 check_version "$TRAY" cainary-tray
+# The helper refuses to run as root and prints `NAME V protocol N`; this build runs unprivileged.
+got="$("$BIND_HELPER" --version)" || { echo "error: '$BIND_HELPER --version' failed" >&2; exit 1; }
+case "$got" in
+    "cainary-bind-helper $VERSION protocol "[0-9]*) ;;
+    *) echo "error: $BIND_HELPER reports '$got', expected 'cainary-bind-helper $VERSION protocol N' (stale build?)" >&2; exit 1 ;;
+esac
 
 if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
     SOURCE_DATE_EPOCH="$(git log -1 --format=%ct 2> /dev/null || date +%s)"
@@ -134,6 +144,8 @@ while read -r mode path _dest; do
         bin/cainary) from="$CLI" ;;
         bin/cainary-otel-debug) from="$OTEL_DEBUG" ;;
         bin/cainary-tray) from="$TRAY" ;;
+        libexec/cainary/cainary-bind-helper) from="$BIND_HELPER" ;;
+        share/polkit-1/actions/*) from="packaging/linux/polkit/${path##*/}" ;;
         share/icons/*) from="$DATA/icons/${path#share/icons/}" ;;
         share/*/*) from="$DATA/${path##*/}" ;;
         LICENSE) from=COPYING ;;

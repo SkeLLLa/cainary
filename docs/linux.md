@@ -252,12 +252,19 @@ That doesn't make the running process GTK-free:
 **Packages.** Install the .deb with `sudo apt install ./cainary_<version>_<amd64|arm64>.deb`, the
 .rpm with `sudo dnf install ./cainary-<version>-1.<x86_64|aarch64>.rpm`, and the AUR package with
 an AUR helper (`yay -S cainary-bin`). They put `cainary` and `cainary-tray` in `/usr/bin` and the
-desktop entry, AppStream data and icons under `/usr/share`.
+desktop entry, AppStream data and icons under `/usr/share`. They also install the low-port helper
+`/usr/libexec/cainary/cainary-bind-helper` (0755 root:root; no setuid, no file capabilities, no `setcap`)
+and its polkit policy `/usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.policy` (action
+`ua.SkeLLLa.cAInary.bind-loopback-port`); the helper runs only through `pkexec` on an explicit click
+(see [Privileged ports](#privileged-ports-root-helper)). Polkit is a recommended dependency (.deb
+`pkexec | policykit-1`, .rpm `polkit`) or optional (AUR `polkit`).
 
 **Tarball.** Unpack `cainary-<version>-linux-<x86_64|aarch64>.tar.gz`, then run
 `./install-user.sh` from the directory. It installs to `~/.local/bin` and `~/.local/share`, with no
 root, and `./install-user.sh --uninstall` removes it. Put `~/.local/bin` on `PATH` to use the CLI
-from a shell. `PREFIX` changes the prefix.
+from a shell. `PREFIX` changes the prefix. The installer cannot add root files, so it skips the helper
+and the polkit policy and prints the `sudo install` commands an administrator runs for them
+(`/usr/libexec/cainary/` and `/usr/share/polkit-1/actions/`, from the unpacked directory).
 
 Start the tray from the application menu (cAInary) or run `cainary-tray`. Verify the download as
 described in [distribution.md](distribution.md).
@@ -423,7 +430,7 @@ Tokens: `bad-args`, `not-pkexec`, `bad-channel`, `port-in-use` (also when only `
 `cainary-bind-helper --version` prints `cainary-bind-helper <version> protocol 1` and needs no
 privilege.
 
-Packages install the helper in `/usr/libexec/cainary/` with the polkit policy
+Packages (and the tarball, for an administrator) install the helper in `/usr/libexec/cainary/` with the polkit policy
 `packaging/linux/polkit/ua.SkeLLLa.cAInary.policy` (action
 `ua.SkeLLLa.cAInary.bind-loopback-port`, `auth_admin` for active sessions only). For a local
 build, `mise run linux:helper` builds the static helper and prints these commands (it never runs

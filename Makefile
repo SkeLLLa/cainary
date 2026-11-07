@@ -64,7 +64,7 @@ help:
 	@echo "  app             build the SwiftUI app (macos/Sources)"
 	@echo "  bundle          assemble dist/cAInary.app and zip it"
 	@echo "  linux           Linux release artifacts in dist/ (LINUX_FORMATS=tar,deb,rpm; default tar)"
-	@echo "  linux-cli       static musl cainary and cainary-otel-debug for LINUX_ARCH (default: this machine)"
+	@echo "  linux-cli       static musl cainary, cainary-otel-debug and cainary-bind-helper for LINUX_ARCH (default: this machine)"
 	@echo "  linux-helper    static musl cainary-bind-helper; prints the admin install and uninstall commands"
 	@echo "  linux-build     debug build of the Qt tray app (linux/)"
 	@echo "  linux-test      tray tests under dbus-run-session, QT_QPA_PLATFORM=offscreen"
@@ -273,6 +273,7 @@ linux: linux-cli
 	packaging/linux.sh --version "$(CAINARY_VERSION)" --arch $(LINUX_ARCH) \
 		--cli target/$(LINUX_CLI_TARGET)/release/cainary \
 		--otel-debug target/$(LINUX_CLI_TARGET)/release/cainary-otel-debug \
+		--bind-helper target/$(LINUX_CLI_TARGET)/release/cainary-bind-helper \
 		--tray linux/target/release/cainary-tray \
 		--formats $(LINUX_FORMATS) --out dist
 

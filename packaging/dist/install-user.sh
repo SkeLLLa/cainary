@@ -48,6 +48,14 @@ install_desktop_entry() {
     mv "$target.tmp" "$target"
 }
 
+# Root-owned system files (the low-port helper and its polkit policy): a user install skips them.
+system_file() {
+    case "$1" in
+        usr/libexec/* | usr/share/polkit-1/*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # Where the list's destination `usr/bin/...` or `usr/share/...` goes for this user.
 user_path() {
     case "$1" in
@@ -71,6 +79,7 @@ refresh_caches() {
 if [ "$ACTION" = uninstall ]; then
     while read -r mode path dest; do
         case "$mode" in "" | "#"*) continue ;; esac
+        if system_file "$dest"; then continue; fi
         rm -f "$(user_path "$dest")"
     done < "$ROOT_DIR/linux-assets.txt"
     # Icons that earlier releases installed.
@@ -84,6 +93,7 @@ fi
 
 while read -r mode path dest; do
     case "$mode" in "" | "#"*) continue ;; esac
+    if system_file "$dest"; then continue; fi
     target="$(user_path "$dest")"
     case "$path" in
         "share/applications/$APP_ID.desktop") install_desktop_entry ;;
@@ -97,4 +107,14 @@ Installed cAInary under $HOME_DIR/.local.
 
 Add $BIN_DIR to PATH to use cainary, cainary-otel-debug and cainary-tray from a terminal.
 The tray app can be configured to start at login from its Settings page.
+
+Ports below 1024 (443 for HTTPS) need the root helper, which a user install cannot add. It runs
+only through pkexec, on an explicit click in the tray. An administrator installs it from this
+directory (these commands are only printed, not run; they work in sh and fish):
+  sudo install -d -m 0755 -o root -g root /usr/libexec/cainary
+  sudo install -m 0755 -o root -g root "$ROOT_DIR/libexec/cainary/cainary-bind-helper" /usr/libexec/cainary/cainary-bind-helper
+  sudo install -m 0644 -o root -g root "$ROOT_DIR/share/polkit-1/actions/ua.SkeLLLa.cAInary.policy" /usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.policy
+Remove:
+  sudo rm /usr/libexec/cainary/cainary-bind-helper /usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.policy
+  sudo rmdir /usr/libexec/cainary
 EOF

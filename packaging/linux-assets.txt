@@ -10,9 +10,14 @@
 # and the tarball carries it as linux-assets.txt. cargo-deb and cargo-generate-rpm read only the
 # manifest, so linux/crates/cainary-tray/Cargo.toml repeats it by hand; tests/packaging.rs fails
 # when the tables and this file differ.
+#
+# The helper and the polkit policy are root-owned system files: the packages install them,
+# install-user.sh skips them (usr/libexec/ and usr/share/polkit-1/) and prints the admin commands.
+# No setuid, no file capabilities, and never the .local.policy.
 755 bin/cainary usr/bin/cainary
 755 bin/cainary-otel-debug usr/bin/cainary-otel-debug
 755 bin/cainary-tray usr/bin/cainary-tray
+755 libexec/cainary/cainary-bind-helper usr/libexec/cainary/cainary-bind-helper
 644 share/applications/ua.SkeLLLa.cAInary.desktop usr/share/applications/ua.SkeLLLa.cAInary.desktop
 644 share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml usr/share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml
 644 share/icons/hicolor/scalable/apps/ua.SkeLLLa.cAInary.svg usr/share/icons/hicolor/scalable/apps/ua.SkeLLLa.cAInary.svg
@@ -25,5 +30,6 @@
 644 share/icons/hicolor/64x64/apps/ua.SkeLLLa.cAInary.png usr/share/icons/hicolor/64x64/apps/ua.SkeLLLa.cAInary.png
 644 share/icons/hicolor/128x128/apps/ua.SkeLLLa.cAInary.png usr/share/icons/hicolor/128x128/apps/ua.SkeLLLa.cAInary.png
 644 share/icons/hicolor/256x256/apps/ua.SkeLLLa.cAInary.png usr/share/icons/hicolor/256x256/apps/ua.SkeLLLa.cAInary.png
+644 share/polkit-1/actions/ua.SkeLLLa.cAInary.policy usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.policy
 644 README.md usr/share/doc/cainary/README.md
 644 LICENSE usr/share/licenses/cainary/LICENSE
