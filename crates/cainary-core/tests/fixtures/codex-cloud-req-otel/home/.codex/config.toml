@@ -1,0 +1,2 @@
+[otel.exporter.otlp-http]
+endpoint = "https://logs.user.example.com/v1/logs"

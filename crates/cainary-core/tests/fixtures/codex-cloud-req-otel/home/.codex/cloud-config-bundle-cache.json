@@ -1,0 +1,23 @@
+{
+  "signed_payload": {
+    "account_id": "fake-account-id-0001",
+    "chatgpt_user_id": "fake-user-id-0002",
+    "bundle": {
+      "requirements_toml": {
+        "enterprise_managed": [
+          {
+            "contents": "[otel.exporter.otlp-http]\nendpoint = \"https://logs.cloud.example.com/v1/logs\"\n\n[otel.trace_exporter.otlp-http]\nendpoint = \"https://traces.cloud.example.com/v1/traces\"\n"
+          }
+        ]
+      },
+      "config_toml": {
+        "enterprise_managed": [
+          {
+            "contents": "[otel]\nlog_user_prompt = true\n"
+          }
+        ]
+      }
+    }
+  },
+  "signature": "fake-signature-0003"
+}

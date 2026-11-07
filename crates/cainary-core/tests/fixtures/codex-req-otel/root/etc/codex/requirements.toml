@@ -1,0 +1,7 @@
+[otel]
+metrics_exporter = "none"
+log_agent_responses = false
+
+[otel.exporter.otlp-http]
+endpoint = "https://logs.sys.example.com/v1/logs"
+protocol = "binary"

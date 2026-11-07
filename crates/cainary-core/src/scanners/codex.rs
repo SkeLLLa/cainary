@@ -77,6 +77,15 @@ pub const CX_KEYS: &[&str] = &[
     "profiles",
 ];
 
+const CX_OTEL_KEYS: &[&str] = &[
+    "otel.exporter",
+    "otel.trace_exporter",
+    "otel.metrics_exporter",
+    "otel.log_user_prompt",
+    "otel.log_agent_responses",
+    "otel.log_guardian_assessments",
+];
+
 #[derive(Debug, Clone, Default)]
 pub struct CxConfig {
     /// Every present layer, requirements and config.
@@ -89,6 +98,11 @@ pub struct CxConfig {
     /// Effective config for `CX_KEYS`, plus every other top-level key that a managed config
     /// layer (MDM, managed file, cloud) sets: the scan lists those as "organization defaults".
     pub cfg: BTreeMap<String, CxSetting>,
+    /// Effective OTel settings: requirements win per dotted key, otherwise config precedence
+    /// applies. These are kept apart from `cfg` so the general config resolver remains unchanged.
+    pub otel: BTreeMap<String, CxSetting>,
+    /// Config layers that set an OTel key overridden by requirements, in config precedence order.
+    pub otel_shadowed: BTreeMap<String, Vec<CxLayerId>>,
     /// `<home>/hooks.json`.
     pub hooks_file: Option<(Loc, Value)>,
     /// Config MCP servers after per-name merging; each entry retains its setting layer.
@@ -302,7 +316,9 @@ pub fn resolve(ctx: &mut ScanCtx) -> CxConfig {
         .flat_map(Map::keys)
         .collect();
     for key in req_keys {
-        if let Some(s) = settle(&raws, &req_order, key, true) {
+        // Keep the top-level OTel table for policy evidence, but don't compose its values here.
+        // The six telemetry keys are resolved independently below with whole-value precedence.
+        if let Some(s) = settle(&raws, &req_order, key, key != "otel") {
             req.insert(key.clone(), s);
         }
     }
@@ -335,6 +351,26 @@ pub fn resolve(ctx: &mut ScanCtx) -> CxConfig {
     for key in org_keys {
         if let Some(s) = settle(&raws, &org_cfg_order, key, false) {
             cfg.insert(key.clone(), s);
+        }
+    }
+
+    let mut otel = BTreeMap::new();
+    let mut otel_shadowed = BTreeMap::new();
+    for key in CX_OTEL_KEYS {
+        if let Some(setting) = settle(&raws, &req_order, key, false) {
+            let config_setters: Vec<CxLayerId> = cfg_order
+                .iter()
+                .filter_map(|id| {
+                    let raw = raws.iter().find(|r| r.id == *id)?;
+                    value::get(&raw.value, key).map(|_| *id)
+                })
+                .collect();
+            if !config_setters.is_empty() {
+                otel_shadowed.insert(key.to_string(), config_setters);
+            }
+            otel.insert(key.to_string(), setting);
+        } else if let Some(setting) = cfg.get(*key) {
+            otel.insert(key.to_string(), setting.clone());
         }
     }
 
@@ -384,6 +420,8 @@ pub fn resolve(ctx: &mut ScanCtx) -> CxConfig {
         req,
         req_hooks,
         cfg,
+        otel,
+        otel_shadowed,
         hooks_file,
         config_mcp_servers,
         plugin_hooks,
@@ -612,16 +650,18 @@ fn req_group(key: &str) -> &'static str {
         | "allowed_sandbox_modes" => "approvals/sandbox",
         "allowed_login_methods" | "allowed_chatgpt_workspaces" => "login",
         "features" => "features",
+        "otel" => "telemetry",
         "allow_managed_hooks_only" | "hooks" => "hooks",
         k if k.contains("mcp") => "mcp",
         _ => "other",
     }
 }
 
-const REQ_GROUPS: [&str; 6] = [
+const REQ_GROUPS: [&str; 7] = [
     "approvals/sandbox",
     "login",
     "features",
+    "telemetry",
     "mcp",
     "hooks",
     "other",

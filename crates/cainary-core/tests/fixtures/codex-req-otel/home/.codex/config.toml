@@ -1,0 +1,10 @@
+[otel]
+log_user_prompt = false
+log_agent_responses = true
+metrics_exporter = { otlp-http = { endpoint = "https://metrics.user.example.com/v1/metrics" } }
+
+[otel.exporter.otlp-http]
+endpoint = "https://logs.user.example.com/v1/logs"
+
+[otel.trace_exporter.otlp-http]
+endpoint = "https://traces.user.example.com/v1/traces"

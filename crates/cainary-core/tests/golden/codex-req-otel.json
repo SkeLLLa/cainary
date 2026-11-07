@@ -1,0 +1,1240 @@
+{
+  "schema": 3,
+  "generator": "cainary <version>",
+  "scannedAt": "2026-01-01T00:00:00Z",
+  "os": "macos",
+  "envKind": "shell",
+  "alert": "org-unknown",
+  "complete": true,
+  "status": {
+    "level": "high",
+    "label": "HIGH",
+    "summary": "Codex sends your prompts, your commands, their output and your account email to logs.mdm.example.com"
+  },
+  "apps": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "openai",
+      "name": "ChatGPT & Codex",
+      "kind": "app",
+      "installed": true,
+      "status": {
+        "level": "high",
+        "label": "HIGH",
+        "summary": "Codex sends your prompts, your commands, their output and your account email to logs.mdm.example.com"
+      },
+      "sends": [
+        "prompts",
+        "tool-details",
+        "file-contents",
+        "usage",
+        "identity",
+        "policy"
+      ],
+      "surfaces": [
+        "codex"
+      ],
+      "findings": [
+        {
+          "id": "openai-1",
+          "key": "6032f78a791696a1",
+          "level": "high",
+          "title": "Codex sends your prompts, your commands, their output and your account email to logs.mdm.example.com",
+          "detail": "Codex's log export is on. Each tool result carries the command's arguments and up to 2 KiB of its output (`otel.tool_result.max_bytes`), and events carry your account email and the conversation ID. Your organization enforces this; Codex CLI before 0.166.0 ignores it and uses your config instead.",
+          "surface": "codex",
+          "sends": [
+            "prompts",
+            "tool-details",
+            "file-contents",
+            "usage",
+            "identity"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/alice/com.openai.codex.plist",
+            "kind": "file",
+            "evidence": [
+              "endpoint = https://logs.mdm.example.com/v1/logs",
+              "header Authorization = <redacted>"
+            ]
+          },
+          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference",
+          "payload": {
+            "export": "logs",
+            "catalog": "codex 0.166.0",
+            "docs": "https://learn.chatgpt.com/docs/config-file/config-advanced#observability-and-telemetry",
+            "gates": [
+              {
+                "flag": "otel.log_user_prompt",
+                "label": "Prompt text",
+                "on": true,
+                "sent": "yes",
+                "value": "true",
+                "setBy": "mdm",
+                "path": "/Library/Managed Preferences/alice/com.openai.codex.plist",
+                "text": "Prompt text: sent, because otel.log_user_prompt = true (set by organization (MDM profile))"
+              },
+              {
+                "flag": "otel.log_agent_responses",
+                "label": "Codex's final replies",
+                "on": false,
+                "sent": "no",
+                "value": "false",
+                "setBy": "system",
+                "path": "/etc/codex/requirements.toml",
+                "text": "Codex's final replies: not sent, because otel.log_agent_responses = false (set by organization (system config file))"
+              },
+              {
+                "flag": "otel.log_guardian_assessments",
+                "label": "Automatic approval reviews, with their rationale",
+                "on": false,
+                "sent": "no",
+                "value": null,
+                "setBy": null,
+                "path": null,
+                "text": "Automatic approval reviews, with their rationale: not sent, because otel.log_guardian_assessments is unset"
+              }
+            ],
+            "identity": [
+              {
+                "key": "user.email",
+                "what": "your account email, when available",
+                "group": "identity"
+              },
+              {
+                "key": "user.account_id",
+                "what": "your workspace account ID",
+                "group": "identity"
+              },
+              {
+                "key": "conversation.id",
+                "what": "the conversation ID",
+                "group": "identity"
+              },
+              {
+                "key": "auth_mode",
+                "what": "your authentication mode",
+                "group": "identity"
+              },
+              {
+                "key": "terminal.type",
+                "what": "your terminal type",
+                "group": "identity"
+              }
+            ],
+            "resource": [
+              {
+                "key": "service.name",
+                "what": "the Codex service name, usually codex_cli_rs",
+                "group": "resource"
+              },
+              {
+                "key": "service.version",
+                "what": "the Codex version",
+                "group": "resource"
+              },
+              {
+                "key": "env",
+                "what": "the OpenTelemetry environment label, dev by default",
+                "group": "resource"
+              },
+              {
+                "key": "host.name",
+                "what": "your computer's host name",
+                "group": "resource",
+                "maybe": true
+              },
+              {
+                "key": "telemetry.sdk.language",
+                "what": "the telemetry SDK language",
+                "group": "resource",
+                "maybe": true
+              },
+              {
+                "key": "telemetry.sdk.name",
+                "what": "the telemetry SDK name",
+                "group": "resource",
+                "maybe": true
+              },
+              {
+                "key": "telemetry.sdk.version",
+                "what": "the telemetry SDK version",
+                "group": "resource",
+                "maybe": true
+              }
+            ],
+            "records": [
+              {
+                "name": "codex.conversation_starts",
+                "kind": "event",
+                "what": "A session started: model, approval and sandbox policy, MCP servers",
+                "unit": null,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "provider_name",
+                    "what": "the model provider",
+                    "group": "event"
+                  },
+                  {
+                    "key": "reasoning_effort",
+                    "what": "the reasoning effort setting",
+                    "group": "event"
+                  },
+                  {
+                    "key": "reasoning_summary",
+                    "what": "the reasoning summary setting",
+                    "group": "event"
+                  },
+                  {
+                    "key": "context_window",
+                    "what": "the model context window",
+                    "group": "event"
+                  },
+                  {
+                    "key": "max_output_tokens",
+                    "what": "the maximum output token count",
+                    "group": "event"
+                  },
+                  {
+                    "key": "auto_compact_token_limit",
+                    "what": "the automatic compaction token limit",
+                    "group": "event"
+                  },
+                  {
+                    "key": "approval_policy",
+                    "what": "the tool approval policy",
+                    "group": "event"
+                  },
+                  {
+                    "key": "sandbox_policy",
+                    "what": "the sandbox policy",
+                    "group": "event"
+                  },
+                  {
+                    "key": "mcp_servers",
+                    "what": "your MCP server names",
+                    "group": "event"
+                  },
+                  {
+                    "key": "active_profile",
+                    "what": "the active configuration profile",
+                    "group": "event"
+                  },
+                  {
+                    "key": "auth.env_openai_api_key_present",
+                    "what": "whether an OpenAI API key variable is set, not its value",
+                    "group": "event",
+                    "maybe": true
+                  },
+                  {
+                    "key": "auth.env_codex_api_key_present",
+                    "what": "whether a Codex API key variable is set, not its value",
+                    "group": "event",
+                    "maybe": true
+                  },
+                  {
+                    "key": "auth.env_codex_api_key_enabled",
+                    "what": "whether the Codex API key variable is enabled",
+                    "group": "event",
+                    "maybe": true
+                  },
+                  {
+                    "key": "auth.env_refresh_token_url_override_present",
+                    "what": "whether a refresh token URL override is set",
+                    "group": "event",
+                    "maybe": true
+                  }
+                ]
+              },
+              {
+                "name": "codex.api_request",
+                "kind": "event",
+                "what": "A request to the model API",
+                "unit": null,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "attempt",
+                    "what": "the request attempt number",
+                    "group": "event"
+                  },
+                  {
+                    "key": "duration_ms",
+                    "what": "how long the request took",
+                    "group": "event"
+                  },
+                  {
+                    "key": "http.response.status_code",
+                    "what": "the HTTP response status code",
+                    "group": "event"
+                  },
+                  {
+                    "key": "error.message",
+                    "what": "the request error message",
+                    "group": "event"
+                  },
+                  {
+                    "key": "auth.header_attached",
+                    "what": "whether an authentication header was attached",
+                    "group": "event",
+                    "maybe": true
+                  },
+                  {
+                    "key": "auth.header_name",
+                    "what": "the authentication header name",
+                    "group": "event",
+                    "maybe": true
+                  },
+                  {
+                    "key": "auth.mode",
+                    "what": "the authentication mode",
+                    "group": "event",
+                    "maybe": true
+                  },
+                  {
+                    "key": "auth.env_*",
+                    "what": "whether an authentication variable is set, not its value",
+                    "group": "event",
+                    "maybe": true
+                  },
+                  {
+                    "key": "endpoint",
+                    "what": "the model service endpoint",
+                    "group": "event",
+                    "maybe": true
+                  },
+                  {
+                    "key": "success",
+                    "what": "whether the request succeeded",
+                    "group": "event",
+                    "maybe": true
+                  }
+                ]
+              },
+              {
+                "name": "codex.sse_event",
+                "kind": "event",
+                "what": "A streamed response event, with token counts",
+                "unit": null,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "event.kind",
+                    "what": "the streamed event kind",
+                    "group": "event"
+                  },
+                  {
+                    "key": "duration_ms",
+                    "what": "how long event handling took",
+                    "group": "event"
+                  },
+                  {
+                    "key": "error.message",
+                    "what": "the event error message",
+                    "group": "event"
+                  },
+                  {
+                    "key": "input_token_count",
+                    "what": "the input token count",
+                    "group": "event"
+                  },
+                  {
+                    "key": "output_token_count",
+                    "what": "the output token count",
+                    "group": "event"
+                  },
+                  {
+                    "key": "cached_token_count",
+                    "what": "the cached token count",
+                    "group": "event"
+                  },
+                  {
+                    "key": "reasoning_token_count",
+                    "what": "the reasoning token count",
+                    "group": "event"
+                  },
+                  {
+                    "key": "tool_token_count",
+                    "what": "the tool token count",
+                    "group": "event"
+                  },
+                  {
+                    "key": "cache_write_token_count",
+                    "what": "the cache write token count",
+                    "group": "event",
+                    "maybe": true
+                  },
+                  {
+                    "key": "ttft_ms",
+                    "what": "the time to the first response token",
+                    "group": "event",
+                    "maybe": true
+                  },
+                  {
+                    "key": "model_reasoning_effort",
+                    "what": "the model reasoning effort",
+                    "group": "event",
+                    "maybe": true
+                  }
+                ]
+              },
+              {
+                "name": "codex.websocket_request",
+                "kind": "event",
+                "what": "A WebSocket request to the model",
+                "unit": null,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "duration_ms",
+                    "what": "how long the request took",
+                    "group": "event"
+                  },
+                  {
+                    "key": "success",
+                    "what": "whether the request succeeded",
+                    "group": "event",
+                    "maybe": true
+                  },
+                  {
+                    "key": "auth.connection_reused",
+                    "what": "whether the authenticated connection was reused",
+                    "group": "event",
+                    "maybe": true
+                  },
+                  {
+                    "key": "auth.env_*",
+                    "what": "whether an authentication variable is set, not its value",
+                    "group": "event",
+                    "maybe": true
+                  }
+                ]
+              },
+              {
+                "name": "codex.websocket_event",
+                "kind": "event",
+                "what": "A WebSocket message",
+                "unit": null,
+                "maybe": true,
+                "observed": false,
+                "attrs": []
+              },
+              {
+                "name": "codex.user_prompt",
+                "kind": "event",
+                "what": "You sent a prompt",
+                "unit": null,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "prompt_length",
+                    "what": "the prompt length",
+                    "group": "event"
+                  },
+                  {
+                    "key": "prompt",
+                    "what": "your prompt text",
+                    "group": "content",
+                    "flag": "otel.log_user_prompt",
+                    "sent": "yes"
+                  }
+                ]
+              },
+              {
+                "name": "codex.tool_decision",
+                "kind": "event",
+                "what": "A tool use was approved or denied",
+                "unit": null,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "tool_name",
+                    "what": "the tool's name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "call_id",
+                    "what": "the tool call ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "decision",
+                    "what": "whether the tool was allowed",
+                    "group": "event"
+                  },
+                  {
+                    "key": "source",
+                    "what": "where the decision came from",
+                    "group": "event"
+                  },
+                  {
+                    "key": "tool_namespace",
+                    "what": "the tool namespace",
+                    "group": "event",
+                    "maybe": true
+                  }
+                ]
+              },
+              {
+                "name": "codex.tool_result",
+                "kind": "event",
+                "what": "A tool finished, with its arguments and output",
+                "unit": null,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "tool_name",
+                    "what": "the tool's name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "call_id",
+                    "what": "the tool call ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "duration_ms",
+                    "what": "how long the tool took",
+                    "group": "event"
+                  },
+                  {
+                    "key": "success",
+                    "what": "whether the tool succeeded",
+                    "group": "event"
+                  },
+                  {
+                    "key": "arguments",
+                    "what": "the tool arguments, including the command in full",
+                    "group": "content"
+                  },
+                  {
+                    "key": "output",
+                    "what": "the tool output, up to the configured byte limit",
+                    "group": "content"
+                  },
+                  {
+                    "key": "agent_name",
+                    "what": "the agent name",
+                    "group": "event",
+                    "maybe": true
+                  },
+                  {
+                    "key": "mcp_server",
+                    "what": "the MCP server name",
+                    "group": "event",
+                    "maybe": true
+                  },
+                  {
+                    "key": "mcp_server_origin",
+                    "what": "where the MCP server came from",
+                    "group": "event",
+                    "maybe": true
+                  },
+                  {
+                    "key": "output_truncated",
+                    "what": "whether the output was cut",
+                    "group": "event",
+                    "maybe": true
+                  },
+                  {
+                    "key": "tool_namespace",
+                    "what": "the tool namespace",
+                    "group": "event",
+                    "maybe": true
+                  },
+                  {
+                    "key": "tool_result_seq",
+                    "what": "the tool result sequence number",
+                    "group": "event",
+                    "maybe": true
+                  }
+                ]
+              },
+              {
+                "name": "codex.agent_response",
+                "kind": "event",
+                "what": "Final answers from the main agent and spawned task agents",
+                "unit": null,
+                "observed": false,
+                "flag": "otel.log_agent_responses",
+                "sent": "no",
+                "attrs": [
+                  {
+                    "key": "agent.type",
+                    "what": "the agent type",
+                    "group": "event"
+                  },
+                  {
+                    "key": "turn.id",
+                    "what": "the turn ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "item.id",
+                    "what": "the response item ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "parent.conversation.id",
+                    "what": "the parent conversation ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "parent.turn.id",
+                    "what": "the parent turn ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "root.turn.id",
+                    "what": "the root turn ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "initiating.agent.path",
+                    "what": "the path of the agent that started this one",
+                    "group": "event"
+                  },
+                  {
+                    "key": "response_length",
+                    "what": "the response length in characters",
+                    "group": "event"
+                  },
+                  {
+                    "key": "response_truncated",
+                    "what": "whether the response was cut",
+                    "group": "event"
+                  },
+                  {
+                    "key": "response",
+                    "what": "Codex's final reply",
+                    "group": "content"
+                  }
+                ]
+              },
+              {
+                "name": "codex.guardian_assessment",
+                "kind": "event",
+                "what": "An automatic approval review",
+                "unit": null,
+                "observed": false,
+                "flag": "otel.log_guardian_assessments",
+                "sent": "no",
+                "attrs": [
+                  {
+                    "key": "conversation.id",
+                    "what": "the reviewed conversation ID",
+                    "group": "identity"
+                  },
+                  {
+                    "key": "turn.id",
+                    "what": "the reviewed turn ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "review.id",
+                    "what": "the Guardian review ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "target_item.id",
+                    "what": "the reviewed target item ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "status",
+                    "what": "the review status",
+                    "group": "event"
+                  },
+                  {
+                    "key": "risk_level",
+                    "what": "the assessed risk level",
+                    "group": "event"
+                  },
+                  {
+                    "key": "user_authorization",
+                    "what": "the user's authorization level",
+                    "group": "event"
+                  },
+                  {
+                    "key": "outcome",
+                    "what": "the review outcome",
+                    "group": "event"
+                  },
+                  {
+                    "key": "rationale_length",
+                    "what": "the review rationale length",
+                    "group": "event"
+                  },
+                  {
+                    "key": "rationale_truncated",
+                    "what": "whether the rationale was cut",
+                    "group": "event"
+                  },
+                  {
+                    "key": "rationale",
+                    "what": "the review rationale",
+                    "group": "content"
+                  }
+                ]
+              },
+              {
+                "name": "codex.skill_invocation",
+                "kind": "event",
+                "what": "A skill ran",
+                "unit": null,
+                "observed": false,
+                "attrs": [
+                  {
+                    "key": "skill.name",
+                    "what": "the skill name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "skill.invocation_type",
+                    "what": "how the skill was used",
+                    "group": "event"
+                  },
+                  {
+                    "key": "conversation.id",
+                    "what": "the conversation ID",
+                    "group": "identity"
+                  },
+                  {
+                    "key": "turn.id",
+                    "what": "the turn ID",
+                    "group": "event"
+                  },
+                  {
+                    "key": "skill.scope",
+                    "what": "where the skill is defined",
+                    "group": "event"
+                  },
+                  {
+                    "key": "skill.plugin_id",
+                    "what": "the plugin that supplied the skill",
+                    "group": "event"
+                  },
+                  {
+                    "key": "user.id",
+                    "what": "the authenticated user ID",
+                    "group": "identity"
+                  },
+                  {
+                    "key": "user.account_id",
+                    "what": "the workspace account ID",
+                    "group": "identity"
+                  }
+                ]
+              },
+              {
+                "name": "codex.startup_phase",
+                "kind": "event",
+                "what": "A startup step finished",
+                "unit": null,
+                "maybe": true,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "startup.phase",
+                    "what": "the startup step",
+                    "group": "event"
+                  },
+                  {
+                    "key": "startup.status",
+                    "what": "the startup step result",
+                    "group": "event"
+                  },
+                  {
+                    "key": "duration_ms",
+                    "what": "how long the startup step took",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.turn_ttft",
+                "kind": "event",
+                "what": "The time to first token of a turn",
+                "unit": null,
+                "maybe": true,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "duration_ms",
+                    "what": "the time to the first token in the turn",
+                    "group": "event"
+                  }
+                ]
+              },
+              {
+                "name": "codex.websocket_connect",
+                "kind": "event",
+                "what": "A WebSocket connection",
+                "unit": null,
+                "maybe": true,
+                "observed": true,
+                "attrs": [
+                  {
+                    "key": "auth.connection_reused",
+                    "what": "whether the authenticated connection was reused",
+                    "group": "event"
+                  },
+                  {
+                    "key": "auth.env_*",
+                    "what": "whether an authentication variable is set, not its value",
+                    "group": "event"
+                  },
+                  {
+                    "key": "auth.header_attached",
+                    "what": "whether an authentication header was attached",
+                    "group": "event"
+                  },
+                  {
+                    "key": "auth.header_name",
+                    "what": "the authentication header name",
+                    "group": "event"
+                  },
+                  {
+                    "key": "auth.retry_after_unauthorized",
+                    "what": "whether Codex retried after an unauthorized response",
+                    "group": "event"
+                  },
+                  {
+                    "key": "duration_ms",
+                    "what": "how long the connection took",
+                    "group": "event"
+                  },
+                  {
+                    "key": "endpoint",
+                    "what": "the model service endpoint",
+                    "group": "event"
+                  },
+                  {
+                    "key": "success",
+                    "what": "whether the connection succeeded",
+                    "group": "event"
+                  }
+                ]
+              }
+            ],
+            "sample": [
+              "resource:",
+              "  service.name = <the Codex service name, usually codex_cli_rs>",
+              "  service.version = <the Codex version>",
+              "  env = <the OpenTelemetry environment label, dev by default>",
+              "  host.name = <your computer's host name>",
+              "  telemetry.sdk.language = <the telemetry SDK language>",
+              "  telemetry.sdk.name = <the telemetry SDK name>",
+              "  telemetry.sdk.version = <the telemetry SDK version>",
+              "codex.tool_result:",
+              "  user.email = <your account email, when available>",
+              "  user.account_id = <your workspace account ID>",
+              "  conversation.id = <the conversation ID>",
+              "  auth_mode = <your authentication mode>",
+              "  terminal.type = <your terminal type>",
+              "  event.name = <the event name>",
+              "  event.timestamp = <when the event occurred>",
+              "  app.version = <the Codex version>",
+              "  model = <the model name>",
+              "  slug = <the model's short name>",
+              "  originator = <what started the Codex session>",
+              "  tool_name = <the tool's name>",
+              "  call_id = <the tool call ID>",
+              "  duration_ms = <how long the tool took>",
+              "  success = <whether the tool succeeded>",
+              "  arguments = <the tool arguments, including the command in full>",
+              "  output = <the tool output, up to the configured byte limit>",
+              "  agent_name = <the agent name>",
+              "  mcp_server = <the MCP server name>",
+              "  mcp_server_origin = <where the MCP server came from>",
+              "  output_truncated = <whether the output was cut>",
+              "  tool_namespace = <the tool namespace>",
+              "  tool_result_seq = <the tool result sequence number>"
+            ]
+          }
+        },
+        {
+          "id": "openai-2",
+          "key": "da0fa37197578dc6",
+          "level": "medium",
+          "title": "Codex sends traces of your session to traces.user.example.com",
+          "detail": "Codex's trace export is on. Codex doesn't document span names or fields, so what they carry may differ from the log events.",
+          "surface": "codex",
+          "sends": [
+            "tool-details",
+            "usage",
+            "identity"
+          ],
+          "setBy": "user",
+          "inEffect": true,
+          "maybe": true,
+          "counts": false,
+          "config": {
+            "path": "~/.codex/config.toml",
+            "kind": "file",
+            "evidence": [
+              "endpoint = https://traces.user.example.com/v1/traces"
+            ]
+          },
+          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference",
+          "payload": {
+            "export": "traces",
+            "catalog": "codex 0.166.0",
+            "docs": "https://learn.chatgpt.com/docs/config-file/config-advanced#observability-and-telemetry",
+            "maybe": true,
+            "gates": [],
+            "identity": [
+              {
+                "key": "conversation.id",
+                "what": "the conversation ID",
+                "group": "identity",
+                "maybe": true
+              },
+              {
+                "key": "auth_mode",
+                "what": "your authentication mode",
+                "group": "identity",
+                "maybe": true
+              },
+              {
+                "key": "terminal.type",
+                "what": "your terminal type",
+                "group": "identity",
+                "maybe": true
+              }
+            ],
+            "resource": [
+              {
+                "key": "service.name",
+                "what": "the Codex service name, usually codex_cli_rs",
+                "group": "resource"
+              },
+              {
+                "key": "service.version",
+                "what": "the Codex version",
+                "group": "resource"
+              },
+              {
+                "key": "env",
+                "what": "the OpenTelemetry environment label, dev by default",
+                "group": "resource"
+              },
+              {
+                "key": "telemetry.sdk.language",
+                "what": "the telemetry SDK language",
+                "group": "resource",
+                "maybe": true
+              },
+              {
+                "key": "telemetry.sdk.name",
+                "what": "the telemetry SDK name",
+                "group": "resource",
+                "maybe": true
+              },
+              {
+                "key": "telemetry.sdk.version",
+                "what": "the telemetry SDK version",
+                "group": "resource",
+                "maybe": true
+              }
+            ],
+            "records": [
+              {
+                "name": "codex.*",
+                "kind": "span",
+                "what": "Codex spans; their names and fields are undocumented",
+                "unit": null,
+                "maybe": true,
+                "observed": false,
+                "attrs": []
+              }
+            ],
+            "sample": [
+              "resource:",
+              "  service.name = <the Codex service name, usually codex_cli_rs>",
+              "  service.version = <the Codex version>",
+              "  env = <the OpenTelemetry environment label, dev by default>",
+              "  telemetry.sdk.language = <the telemetry SDK language>",
+              "  telemetry.sdk.name = <the telemetry SDK name>",
+              "  telemetry.sdk.version = <the telemetry SDK version>",
+              "codex.*:",
+              "  conversation.id = <the conversation ID>",
+              "  auth_mode = <your authentication mode>",
+              "  terminal.type = <your terminal type>"
+            ]
+          }
+        },
+        {
+          "id": "openai-3",
+          "key": "e04d9c8c72e9db83",
+          "level": "ok",
+          "title": "Your organization sets Codex requirements",
+          "detail": "Requirements constrain what Codex may do; the values aren't shown.",
+          "surface": "codex",
+          "sends": [
+            "policy"
+          ],
+          "setBy": "mdm",
+          "inEffect": true,
+          "maybe": false,
+          "counts": true,
+          "config": {
+            "path": "/Library/Managed Preferences/alice/com.openai.codex.plist",
+            "kind": "file",
+            "evidence": [
+              "telemetry: otel"
+            ]
+          },
+          "docs": "https://learn.chatgpt.com/docs/enterprise/managed-configuration"
+        },
+        {
+          "id": "openai-4",
+          "key": "8ee67e8bd0fc200f",
+          "level": "ok",
+          "title": "OpenAI usage metrics is turned off",
+          "detail": "A setting turns off the vendor's default telemetry, so nothing is sent by default. Your organization enforces this; Codex CLI before 0.166.0 ignores it and uses your config instead.",
+          "surface": "codex",
+          "sends": [],
+          "setBy": "system",
+          "inEffect": false,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "/etc/codex/requirements.toml",
+            "kind": "file",
+            "evidence": []
+          },
+          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference"
+        },
+        {
+          "id": "openai-5",
+          "key": "0867a84cea12477a",
+          "level": "ok",
+          "title": "Codex has a shadowed config setting for `otel.exporter`",
+          "detail": "A requirements setting takes precedence; Codex does not use this config value.",
+          "surface": "codex",
+          "sends": [],
+          "setBy": "user",
+          "inEffect": false,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "~/.codex/config.toml",
+            "kind": "file",
+            "evidence": [
+              "key = otel.exporter"
+            ]
+          },
+          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference"
+        },
+        {
+          "id": "openai-6",
+          "key": "0867a84cea12477a-2",
+          "level": "ok",
+          "title": "Codex has a shadowed config setting for `otel.log_agent_responses`",
+          "detail": "A requirements setting takes precedence; Codex does not use this config value.",
+          "surface": "codex",
+          "sends": [],
+          "setBy": "user",
+          "inEffect": false,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "~/.codex/config.toml",
+            "kind": "file",
+            "evidence": [
+              "key = otel.log_agent_responses"
+            ]
+          },
+          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference"
+        },
+        {
+          "id": "openai-7",
+          "key": "0867a84cea12477a-3",
+          "level": "ok",
+          "title": "Codex has a shadowed config setting for `otel.log_user_prompt`",
+          "detail": "A requirements setting takes precedence; Codex does not use this config value.",
+          "surface": "codex",
+          "sends": [],
+          "setBy": "user",
+          "inEffect": false,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "~/.codex/config.toml",
+            "kind": "file",
+            "evidence": [
+              "key = otel.log_user_prompt"
+            ]
+          },
+          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference"
+        },
+        {
+          "id": "openai-8",
+          "key": "0867a84cea12477a-4",
+          "level": "ok",
+          "title": "Codex has a shadowed config setting for `otel.metrics_exporter`",
+          "detail": "A requirements setting takes precedence; Codex does not use this config value.",
+          "surface": "codex",
+          "sends": [],
+          "setBy": "user",
+          "inEffect": false,
+          "maybe": false,
+          "counts": false,
+          "config": {
+            "path": "~/.codex/config.toml",
+            "kind": "file",
+            "evidence": [
+              "key = otel.metrics_exporter"
+            ]
+          },
+          "docs": "https://learn.chatgpt.com/docs/config-file/config-reference"
+        }
+      ],
+      "notes": [
+        "Findings about telemetry, analytics, model providers, `notify` and hooks describe your base config; a `--profile` you use can change them."
+      ]
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "kind": "app",
+      "installed": false,
+      "status": {
+        "level": "not-installed",
+        "label": "NOT INSTALLED",
+        "summary": "Not installed"
+      },
+      "sends": [],
+      "surfaces": [],
+      "findings": [],
+      "notes": []
+    }
+  ],
+  "others": [],
+  "sources": [
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.openai.codex.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/Library/Managed Preferences/alice/com.openai.codex.plist#requirements_toml_base64",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/Library/Managed Preferences/com.openai.codex.plist",
+        "origin": "mdm",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/etc/codex/config.toml",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/etc/codex/managed_config.toml",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "/etc/codex/requirements.toml",
+        "origin": "system",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "~/.codex/cloud-config-bundle-cache.json",
+        "origin": "server",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "~/.codex/config.toml",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "present",
+      "note": null
+    },
+    {
+      "tool": "codex",
+      "source": {
+        "path": "~/.codex/hooks.json",
+        "origin": "user",
+        "kind": "file"
+      },
+      "state": "absent",
+      "note": null
+    }
+  ]
+}

@@ -491,7 +491,8 @@ Mode: 3P when `inferenceProvider` is set, else 1P.
 ## CX. Codex (`codex.rs` → `CxConfig`; `codex_telemetry.rs`)
 
 Ref: `https://learn.chatgpt.com/docs/` — `enterprise/managed-configuration`,
-`config-file/config-reference`, `config-file/config-advanced`, `hooks`.
+`config-file/config-reference`, `config-file/config-reference#requirementstoml`,
+`config-file/config-advanced`, `hooks`.
 
 `<home>` = the `CodexHome` tool home (`$CODEX_HOME` if absolute or `~/…` without `..`, else
 `~/.codex`).
@@ -524,7 +525,14 @@ Ref: `https://learn.chatgpt.com/docs/` — `enterprise/managed-configuration`,
 - **Requirements vs config.** Requirements constrain and config chooses within them; there is
   no blanket "requirements override config". For the keys read here: a requirements
   `features.<f>` pins that feature; `allow_managed_hooks_only` and the MCP allowlists only
-  remove things; `model_provider` in requirements pins the provider.
+  remove things; `model_provider` in requirements pins the provider. Requirements `[otel]`
+  (Codex CLI 0.166.0 and later; `config-file/config-reference#requirementstoml`,
+  `enterprise/managed-configuration`) overrides config: for each of `otel.exporter`,
+  `otel.trace_exporter`, `otel.metrics_exporter`, `otel.log_user_prompt`,
+  `otel.log_agent_responses` and `otel.log_guardian_assessments`, the highest requirements
+  layer that sets the key supplies its whole value (an exporter table is never merged with a
+  lower layer or with config), and every config setter of that key is shadowed (info, not in
+  effect). A key no requirements layer sets resolves from config as above.
 
 ### CX.2 Cloud keys the client ignores
 
@@ -538,7 +546,7 @@ kept.)
 
 | Key (effective) | Signals |
 | --- | --- |
-| requirements: any key | policy, one finding per layer; evidence = keys (values redacted) grouped as approvals/sandbox, login (`allowed_login_methods`, `allowed_chatgpt_workspaces`), features, mcp, hooks (`allow_managed_hooks_only`), other |
+| requirements: any key | policy, one finding per layer; evidence = keys (values redacted) grouped as approvals/sandbox, login (`allowed_login_methods`, `allowed_chatgpt_workspaces`), features, telemetry (`otel`), mcp, hooks (`allow_managed_hooks_only`), other |
 | selected provider = requirements `model_provider`, else config `model_provider`, else `openai` | |
 | `model_providers.<selected>.base_url` | traffic: "model traffic goes through `<host>`" (+ policy if from requirements). An unselected provider → info |
 | `openai_base_url` (selected = openai) / config `chatgpt_base_url` | traffic |
@@ -564,6 +572,11 @@ exactly one key, `otlp-http` or `otlp-grpc`. That key's table may hold `endpoint
 `headers` and `tls.*`. Anything else is `Unknown(<shape>)`. `otel.exporter` (log events) and
 `otel.trace_exporter` take `none|otlp-http|otlp-grpc`. `otel.metrics_exporter` also takes
 `statsig`, and defaults to `Statsig`.
+
+The `otel.*` keys resolve through CX.1; a finding whose exporter or flag comes from requirements
+cites that layer, and its detail ends with: 'Your organization enforces this; Codex CLI before
+0.166.0 ignores it and uses your config instead.' A telemetry finding whose value comes from the
+cloud cache is best effort (worded "may"), because the cache's shape is undocumented (CX.1).
 
 | Condition | Signals | Title |
 | --- | --- | --- |
