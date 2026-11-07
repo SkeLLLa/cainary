@@ -1,11 +1,11 @@
-//! Routing, content checks and the OTLP/JSON pipeline (design §8.2, §14.2): from a request body
+//! Routing and the OTLP/JSON pipeline (design §8.2, §14.2): from a request body
 //! to the owned events the output thread prints. Pure: no I/O.
 //!
 //! Classification is `cainary_core::rules::otel_classify`; this module applies the output policy
 //! (design §14.2) to everything it returns: names print verbatim only when they are catalog
 //! entries or pass the name rule after a complete red-flag scan, values are masked.
 
-use crate::http::Head;
+use crate::decode::{Encoding, Format};
 use crate::output::{AlertEvent, BatchEvent, ErrorEvent, escape};
 use crate::redflag::{Hit, Matcher, Scanner};
 use cainary_core::rules::otel_catalog::{self, Export, Group, Item, ItemKind};
@@ -28,10 +28,6 @@ const MAX_TEXT_BODY: usize = 256 << 10;
 const MAX_TEXT_VALUE: usize = 512;
 /// What the output thread adds in front of a batch's JSON tail.
 const ENVELOPE_BYTES: usize = 256;
-
-pub const PROTOBUF_MESSAGE: &str = "cainary-otel-debug reads OTLP/JSON only: set OTEL_EXPORTER_OTLP_PROTOCOL=http/json (Claude Code) or protocol = \"json\" in the otlp-http exporter (Codex)";
-pub const COMPRESSED_MESSAGE: &str =
-    "compressed bodies aren't supported; unset OTEL_EXPORTER_OTLP_COMPRESSION or set it to none";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Signal {
@@ -129,33 +125,9 @@ pub struct Meta<'a> {
     pub path: Option<&'a str>,
     /// Takeover mode: the validated host the request named.
     pub host: Option<&'a str>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct Reject {
-    pub status: u16,
-    pub message: &'static str,
-}
-
-/// `Content-Type` must be `application/json` (parameters ignored); `Content-Encoding` absent
-/// or `identity`.
-pub fn check_content(head: &Head) -> Result<(), Reject> {
-    let ct = head.header("content-type").unwrap_or("");
-    let media = ct.split(';').next().unwrap_or("").trim();
-    if !media.eq_ignore_ascii_case("application/json") {
-        return Err(Reject {
-            status: 415,
-            message: PROTOBUF_MESSAGE,
-        });
-    }
-    let enc = head.header("content-encoding").unwrap_or("identity").trim();
-    if !enc.eq_ignore_ascii_case("identity") {
-        return Err(Reject {
-            status: 415,
-            message: COMPRESSED_MESSAGE,
-        });
-    }
-    Ok(())
+    /// How the body was written; only a non-default is printed.
+    pub format: Format,
+    pub encoding: Encoding,
 }
 
 pub fn parse(body: &[u8]) -> Result<Value, String> {
@@ -908,6 +880,12 @@ pub fn process_with(
         m.insert("host".into(), json!(h));
     }
     m.insert("bytes".into(), json!(bytes));
+    if let Format::Protobuf(_) = meta.format {
+        m.insert("format".into(), json!("protobuf"));
+    }
+    if meta.encoding == Encoding::Gzip {
+        m.insert("encoding".into(), json!("gzip"));
+    }
     m.insert("vendor".into(), json!(vendor));
     m.insert("service".into(), service_json);
     m.insert("catalog".into(), json!(catalog));
@@ -928,12 +906,18 @@ pub fn process_with(
     if tail.len() + ENVELOPE_BYTES > crate::output::MAX_LINE_BYTES {
         return Err(Fail::TooLarge);
     }
-    let header = format!(
+    let mut header = format!(
         "{} · {} · {} records",
         signal.name(),
         catalog.as_deref().unwrap_or("unknown vendor"),
         c.records
     );
+    if let Format::Protobuf(_) = meta.format {
+        header.push_str(" · protobuf");
+    }
+    if meta.encoding == Encoding::Gzip {
+        header.push_str(" · gzip");
+    }
     let extra = if incomplete {
         vec![ErrorEvent::other(
             "red-flags",
@@ -995,51 +979,6 @@ mod tests {
         assert_eq!(route("POST", "/v1/logs/"), Route::NotFound);
         assert_eq!(known_path("/v1/logs"), Some("/v1/logs"));
         assert_eq!(known_path("/secret"), None);
-    }
-
-    fn head(headers: &[(&str, &str)]) -> Head {
-        Head {
-            method: "POST".into(),
-            target: "/v1/logs".into(),
-            minor: 1,
-            headers: headers
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect(),
-        }
-    }
-
-    #[test]
-    fn content_checks() {
-        assert_eq!(
-            check_content(&head(&[("content-type", "application/json")])),
-            Ok(())
-        );
-        assert_eq!(
-            check_content(&head(&[(
-                "content-type",
-                "Application/JSON; charset=utf-8"
-            )])),
-            Ok(())
-        );
-        assert_eq!(
-            check_content(&head(&[
-                ("content-type", "application/json"),
-                ("content-encoding", "identity")
-            ])),
-            Ok(())
-        );
-        for ct in ["application/x-protobuf", "", "text/plain"] {
-            let e = check_content(&head(&[("content-type", ct)])).unwrap_err();
-            assert_eq!((e.status, e.message), (415, PROTOBUF_MESSAGE));
-        }
-        assert!(PROTOBUF_MESSAGE.contains("OTEL_EXPORTER_OTLP_PROTOCOL"));
-        let e = check_content(&head(&[
-            ("content-type", "application/json"),
-            ("content-encoding", "gzip"),
-        ]))
-        .unwrap_err();
-        assert_eq!((e.status, e.message), (415, COMPRESSED_MESSAGE));
     }
 
     fn run(doc: &Value, show: bool) -> (Value, Vec<Value>, Prepared) {
@@ -1484,6 +1423,7 @@ mod tests {
         let m = Meta {
             path: Some("<custom path>"),
             host: Some("otel.example-corp.test"),
+            ..Meta::default()
         };
         let p = process_with(Signal::Logs, 1, &doc, &c, &m).unwrap();
         let v: Value = serde_json::from_str(&p.batch.tail).unwrap();
@@ -1504,11 +1444,45 @@ mod tests {
     }
 
     #[test]
+    fn batch_meta_names_a_non_default_format_and_encoding() {
+        use crate::decode::X_PROTOBUF;
+        let c = ctx(false);
+        let doc = logs(vec![], json!({"name": "s"}), vec![json!({})]);
+        let at = |format, encoding| {
+            let m = Meta {
+                format,
+                encoding,
+                ..Meta::default()
+            };
+            process_with(Signal::Logs, 7, &doc, &c, &m).unwrap().batch
+        };
+        let plain = at(Format::Json, Encoding::Identity);
+        assert!(!plain.tail.contains("\"format\"") && !plain.tail.contains("\"encoding\""));
+        assert!(plain.text_header.ends_with(" records"));
+        let both = at(Format::Protobuf(X_PROTOBUF), Encoding::Gzip);
+        let v: Value = serde_json::from_str(&both.tail).unwrap();
+        let keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(keys[..5], ["signal", "path", "bytes", "format", "encoding"]);
+        assert_eq!(
+            (v["format"].as_str(), v["encoding"].as_str()),
+            (Some("protobuf"), Some("gzip"))
+        );
+        assert!(both.text_header.ends_with(" records · protobuf · gzip"));
+        let gz = at(Format::Json, Encoding::Gzip);
+        assert!(
+            gz.tail
+                .contains("\"bytes\":7,\"encoding\":\"gzip\",\"vendor\"")
+        );
+        assert!(gz.text_header.ends_with(" records · gzip"));
+    }
+
+    #[test]
     fn batch_host_follows_the_name_policy() {
         let doc = logs(vec![], json!({"name": "s"}), vec![json!({})]);
         let meta = Meta {
             path: Some("<custom path>"),
             host: Some("secret.example.test"),
+            ..Meta::default()
         };
         // A red flag that matches the host: labelled, and alerted without the name.
         let c = secret_like_ctx("secret");

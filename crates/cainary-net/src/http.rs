@@ -340,7 +340,7 @@ pub const CONTINUE: &[u8] = b"HTTP/1.1 100 Continue\r\n\r\n";
 pub struct Response {
     pub status: u16,
     pub headers: Vec<(&'static str, String)>,
-    pub body: String,
+    pub body: Vec<u8>,
     pub close: bool,
 }
 
@@ -366,7 +366,7 @@ impl Response {
         Response {
             status,
             headers: vec![("Content-Type", "application/json".to_string())],
-            body,
+            body: body.into_bytes(),
             // Every non-200 closes (design §8.2).
             close: status != 200 || !keep_alive,
         }
@@ -376,6 +376,35 @@ impl Response {
     pub fn error(status: u16, message: &str) -> Response {
         let body = serde_json::json!({"code": 3, "message": message}).to_string();
         Response::json(status, body, false)
+    }
+
+    /// The OTLP/HTTP protobuf answer: an empty `ExportServiceResponse` in the request's media type.
+    pub fn protobuf_ok(media: &str, keep_alive: bool) -> Response {
+        Response {
+            status: 200,
+            headers: vec![("Content-Type", media.to_string())],
+            body: Vec::new(),
+            close: !keep_alive,
+        }
+    }
+
+    /// A `google.rpc.Status` (1: code = 3 INVALID_ARGUMENT, 2: message), the OTLP error body for
+    /// a protobuf request. The HTTP status is the JSON answer's.
+    pub fn protobuf_error(status: u16, media: &str, message: &str) -> Response {
+        let mut body = vec![0x08, 0x03, 0x12];
+        let mut len = message.len();
+        while len >= 0x80 {
+            body.push((len & 0x7f) as u8 | 0x80);
+            len >>= 7;
+        }
+        body.push(len as u8);
+        body.extend_from_slice(message.as_bytes());
+        Response {
+            status,
+            headers: vec![("Content-Type", media.to_string())],
+            body,
+            close: true,
+        }
     }
 
     pub fn with_header(mut self, name: &'static str, value: &str) -> Response {
@@ -395,8 +424,9 @@ impl Response {
             "Connection: keep-alive\r\n"
         });
         s.push_str("\r\n");
-        s.push_str(&self.body);
-        s.into_bytes()
+        let mut out = s.into_bytes();
+        out.extend_from_slice(&self.body);
+        out
     }
 }
 
@@ -671,5 +701,29 @@ mod tests {
             assert!(Response::error(st, "x").close);
             assert_ne!(reason(st), "Error");
         }
+    }
+
+    #[test]
+    fn protobuf_responses() {
+        let ok = Response::protobuf_ok("application/x-protobuf", true);
+        assert_eq!(
+            String::from_utf8(ok.to_bytes()).unwrap(),
+            "HTTP/1.1 200 OK\r\nContent-Type: application/x-protobuf\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n"
+        );
+        assert!(Response::protobuf_ok("application/protobuf", false).close);
+        // google.rpc.Status: code 3, then the message.
+        let e = Response::protobuf_error(415, "application/protobuf", "no");
+        assert_eq!((e.status, e.close), (415, true));
+        assert_eq!(e.body, [0x08, 0x03, 0x12, 0x02, b'n', b'o']);
+        let bytes = e.to_bytes();
+        assert!(bytes.starts_with(
+            b"HTTP/1.1 415 Unsupported Media Type\r\nContent-Type: application/protobuf\r\n"
+        ));
+        assert!(bytes.ends_with(b"Connection: close\r\n\r\n\x08\x03\x12\x02no"));
+        // A message over 127 bytes needs a two-byte length.
+        let long = "x".repeat(300);
+        let e = Response::protobuf_error(400, "application/x-protobuf", &long);
+        assert_eq!(e.body[..5], [0x08, 0x03, 0x12, 0xac, 0x02]);
+        assert_eq!(e.body.len(), 5 + 300);
     }
 }

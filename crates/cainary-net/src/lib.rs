@@ -5,6 +5,7 @@
 
 pub mod args;
 pub mod config;
+pub mod decode;
 pub mod host;
 pub mod http;
 pub mod jsonedit;

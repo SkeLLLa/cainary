@@ -4,6 +4,7 @@
 //! One acceptor per listener, at most 16 connection threads, at most 2 parse/match jobs at a
 //! time, and an output queue bounded by items and bytes.
 
+use crate::decode::{self, Format};
 use crate::http::{self, HttpError, Limits, Response};
 use crate::logfile::LogFile;
 use crate::otlp::{self, Ctx, Route};
@@ -936,17 +937,16 @@ fn request<S: Wire>(reader: &mut BufReader<Guarded<S>>, sh: &Shared) -> Next {
     let method = Some(head.method.as_str());
     let path = otlp::known_path(head.path());
     let deadline = reader.get_ref().deadline.get();
+    // Set once the request is known to be protobuf: its errors are `google.rpc.Status` too.
+    let mut protobuf: Option<&'static str> = None;
     macro_rules! deny {
         ($status:expr, $message:expr) => {{
             let message: &str = $message;
-            reject(
-                sh,
-                reader,
-                Response::error($status, message),
-                method,
-                path,
-                message,
-            )
+            let r = match protobuf {
+                Some(media) => Response::protobuf_error($status, media, message),
+                None => Response::error($status, message),
+            };
+            reject(sh, reader, r, method, path, message)
         }};
     }
 
@@ -1005,8 +1005,18 @@ fn request<S: Wire>(reader: &mut BufReader<Guarded<S>>, sh: &Shared) -> Next {
             return reject(sh, reader, r, method, path, "method not allowed");
         }
     };
-    if let Err(rej) = otlp::check_content(&head) {
-        return deny!(rej.status, rej.message);
+    let (format, encoding) = match decode::content(&head) {
+        Ok(c) => c,
+        Err(rej) => return deny!(rej.status, &rej.message),
+    };
+    if let Format::Protobuf(media) = format {
+        protobuf = Some(media);
+        if tls_mode && hint.is_none() {
+            return deny!(
+                400,
+                "can't tell which signal this is (protobuf needs a /v1/<signal> path)"
+            );
+        }
     }
     let framing = match http::framing(&head, &sh.t.limits) {
         Ok(f) => f,
@@ -1027,9 +1037,10 @@ fn request<S: Wire>(reader: &mut BufReader<Guarded<S>>, sh: &Shared) -> Next {
         Err(HttpError::Io(e)) => return io_close(sh, reader, &e),
         Err(HttpError::Eof) => return Next::Close { linger: false },
     };
-    let doc = match otlp::parse(&body) {
+    // Decompression and transcoding stay inside the job permit, like the parse before them.
+    let doc = match decode::document(signal, format, encoding, &body, sh.t.limits.max_body) {
         Ok(d) => d,
-        Err(m) => return deny!(400, &m),
+        Err(rej) => return deny!(rej.status, &rej.message),
     };
     if tls_mode {
         signal = match (hint, otlp::root_signal(&doc)) {
@@ -1047,6 +1058,8 @@ fn request<S: Wire>(reader: &mut BufReader<Guarded<S>>, sh: &Shared) -> Next {
         // Paths are never printed: the canonical one, or a fixed marker (design §16.7.7).
         path: tls_mode.then_some(path.unwrap_or("<custom path>")),
         host: batch_host.as_deref(),
+        format,
+        encoding,
     };
     let prepared = match otlp::process_with(signal, bytes, &doc, &sh.ctx, &meta) {
         Ok(p) => p,
@@ -1067,7 +1080,10 @@ fn request<S: Wire>(reader: &mut BufReader<Guarded<S>>, sh: &Shared) -> Next {
         Err(Refused::Timeout) => return deny!(503, "busy"),
     };
     let keep = head.keep_alive();
-    let resp = Response::json(200, "{}".to_string(), keep);
+    let resp = match format {
+        Format::Json => Response::json(200, "{}".to_string(), keep),
+        Format::Protobuf(media) => Response::protobuf_ok(media, keep),
+    };
     if !write_response(reader, &resp) {
         return Next::Close { linger: false };
     }
