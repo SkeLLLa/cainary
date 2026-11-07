@@ -1007,7 +1007,7 @@
         },
         {
           "id": "openai-4",
-          "key": "8ee67e8bd0fc200f",
+          "key": "6f6baf0022ac77bf",
           "level": "ok",
           "title": "OpenAI usage metrics is turned off",
           "detail": "A setting turns off the vendor's default telemetry, so nothing is sent by default. Your organization enforces this; Codex CLI before 0.166.0 ignores it and uses your config instead.",
@@ -1020,7 +1020,9 @@
           "config": {
             "path": "/etc/codex/requirements.toml",
             "kind": "file",
-            "evidence": []
+            "evidence": [
+              "otel.metrics_exporter = none"
+            ]
           },
           "docs": "https://learn.chatgpt.com/docs/config-file/config-reference"
         },

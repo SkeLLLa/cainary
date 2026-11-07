@@ -1754,7 +1754,7 @@
         },
         {
           "id": "openai-9",
-          "key": "6f1c9efe16fbb3ac",
+          "key": "0e64f678023477cc",
           "level": "ok",
           "title": "Codex would log prompts only through `otel.exporter`, which is off",
           "detail": "",
@@ -1767,7 +1767,9 @@
           "config": {
             "path": "~/.codex/config.toml",
             "kind": "file",
-            "evidence": []
+            "evidence": [
+              "otel.log_user_prompt = true"
+            ]
           },
           "docs": "https://learn.chatgpt.com/docs/config-file/config-reference"
         }

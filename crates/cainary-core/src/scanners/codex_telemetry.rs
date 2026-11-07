@@ -351,6 +351,7 @@ pub fn scan(ctx: &mut ScanCtx, cfg: &CxConfig) {
                 ctx.emit(
                     FindingBuilder::new(title)
                         .detail(provenance_detail("", requirements, cloud))
+                        .evidence([format!("{key} = true")])
                         .source(finding_source(cfg, s.layer, &related))
                         .best_effort(cloud)
                         .reference(REF),
@@ -461,12 +462,12 @@ fn metrics_vendor_finding(
         )
     } else {
         (
-            if cloud {
+            if cloud || unknown {
                 "OpenAI may receive anonymous usage metrics by default"
             } else {
                 "OpenAI receives anonymous usage metrics by default"
             },
-            if cloud {
+            if cloud || unknown {
                 "Codex may send anonymous usage metrics to OpenAI unless the metrics exporter is turned off."
             } else {
                 "Codex sends anonymous usage metrics to OpenAI unless the metrics exporter is turned off."
@@ -475,6 +476,11 @@ fn metrics_vendor_finding(
     };
     let mut b = FindingBuilder::new(title)
         .detail(provenance_detail(base_detail, requirements, cloud))
+        // Evidence anchors the finding key, so rewording the title keeps the key.
+        .evidence([format!(
+            "otel.metrics_exporter = {}",
+            redact::value("otel.metrics_exporter", &setting.value)
+        )])
         .source(finding_source(cfg, setting.layer, &related))
         .reference(REF)
         .best_effort(cloud || unknown);
@@ -838,5 +844,40 @@ mod tests {
         let report = crate::scan(&h, &crate::ScanOptions::default());
         let rendered = format!("{report:?}");
         assert!(!rendered.contains("fake-account-id-0001"));
+    }
+
+    #[test]
+    fn vendor_metrics_key_ignores_the_may_wording() {
+        let key_of = |layer: CxLayerId, origin: Origin| {
+            let cfg = CxConfig {
+                layers: vec![CxLayer {
+                    id: layer,
+                    loc: Loc::test("~/.codex/shared.json"),
+                    origin,
+                }],
+                otel: [(
+                    "otel.metrics_exporter".to_string(),
+                    CxSetting {
+                        value: json!("none"),
+                        layer,
+                        shadowed: vec![],
+                    },
+                )]
+                .into(),
+                ..CxConfig::default()
+            };
+            let h = Harness::test(Os::Macos, &[]);
+            let mut ctx = ScanCtx::new(&h, Tool::Codex);
+            scan(&mut ctx, &cfg);
+            let mut f = ctx.finish().findings;
+            crate::analysis::sort_and_number(&mut f);
+            assert_eq!(f.len(), 1);
+            (f[0].title.clone(), f[0].best_effort, f[0].key.clone())
+        };
+        let certain = key_of(CxLayerId::SysReq, Origin::System);
+        let cloud = key_of(CxLayerId::CloudReq, Origin::Server);
+        assert!(!certain.1 && cloud.1);
+        assert_ne!(certain.0, cloud.0);
+        assert_eq!(certain.2, cloud.2);
     }
 }
