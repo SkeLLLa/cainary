@@ -250,7 +250,9 @@ linux-ui-test:
 	$(call skipped,Linux)
 endif
 
-linux-run: build
+# The debug workspace plus the collector's `tls` feature, so --tls works in a dev run (release builds always have it).
+linux-run:
+	$(CARGO_CMD) build $(MANIFEST) --workspace --features cainary-net/tls
 	$(CARGO_CD) env CAINARY_CORE="$(CURDIR)/target/debug/cainary" \
 		CAINARY_OTEL_DEBUG="$(CURDIR)/target/debug/cainary-otel-debug" \
 		CAINARY_ICON_THEME_PATH="$(CURDIR)/linux/data/icons" \
