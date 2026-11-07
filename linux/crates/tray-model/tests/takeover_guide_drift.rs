@@ -36,7 +36,7 @@ fn kinds(g: &cainary_tray_model::takeover_guide::TakeoverGuide) -> Vec<&str> {
 fn redirect_both_families() {
     let (g, _) = guide(8443, true, true);
     assert_eq!(kinds(&g), ["hosts", "redirect", "trust", "restart"]);
-    assert_eq!(g.warnings.len(), 4);
+    assert_eq!(g.warnings.len(), 6);
     assert_eq!(g.steps[0].lines.len(), 4);
     assert_eq!(g.steps[0].lines[0], "127.0.0.1 otel.example-corp.com");
     assert_eq!(g.steps[0].lines[1], "::1 otel.example-corp.com");

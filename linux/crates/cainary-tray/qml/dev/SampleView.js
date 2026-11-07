@@ -54722,6 +54722,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -54745,7 +54747,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -60214,6 +60218,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -60237,7 +60243,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -60354,6 +60362,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -60371,7 +60381,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -64575,6 +64587,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -64600,7 +64614,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -64728,6 +64744,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -64753,7 +64771,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -64881,6 +64901,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -64906,7 +64928,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -65047,6 +65071,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -65072,7 +65098,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -65221,6 +65249,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -65246,7 +65276,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -65387,6 +65419,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -65412,7 +65446,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -65560,6 +65596,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 a1.example-corp.com",
@@ -65599,7 +65637,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -65796,6 +65836,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -65821,7 +65863,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -65964,6 +66008,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -65989,7 +66035,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -66130,6 +66178,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -66155,7 +66205,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -66296,6 +66348,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -66321,7 +66375,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -66470,6 +66526,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -66495,7 +66553,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -66644,6 +66704,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -66669,7 +66731,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -66824,6 +66888,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -66849,7 +66915,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -66990,6 +67058,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -67015,7 +67085,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -67159,6 +67231,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -67184,7 +67258,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -67327,6 +67403,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -67352,7 +67430,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -67501,6 +67581,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -67526,7 +67608,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -67675,6 +67759,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -67700,7 +67786,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -67849,6 +67937,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -67874,7 +67964,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -68015,6 +68107,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -68040,7 +68134,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -68181,6 +68277,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -68206,7 +68304,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {
@@ -68355,6 +68455,8 @@ var collectors = {
       "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
       "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
       "The host names below are what you configured here, not an authenticated sender identity.",
+      "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+      "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
       "",
       "1. Point the host names at loopback (add these lines to /etc/hosts as root):",
       "  127.0.0.1 otel.example-corp.com",
@@ -68380,7 +68482,9 @@ var collectors = {
         "TLS takeover: read this first.",
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
-        "The host names below are what you configured here, not an authenticated sender identity."
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not."
       ],
       "steps": [
         {

@@ -596,6 +596,8 @@ fn takeover_lines_for(hosts: &[&str], port: u16) -> Vec<String> {
         "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
         "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
         "The host names below are what you configured here, not an authenticated sender identity.",
+        "If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.",
+        "Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.",
         "",
     ]
     .map(String::from)

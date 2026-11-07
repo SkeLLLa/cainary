@@ -26,8 +26,8 @@ usage:
   cainary-otel-debug --delete-ca
   cainary-otel-debug --version | --help
 
-A local OTLP/HTTP receiver, loopback only (127.0.0.1 and ::1), OTLP/JSON only (no protobuf, no
-gzip). It never opens an outbound connection. Attribute values are masked unless --show-values.
+A local OTLP/HTTP receiver, loopback only (127.0.0.1 and ::1), JSON or protobuf, gzip or
+uncompressed (no gRPC). It never opens an outbound connection. Attribute values are masked unless --show-values.
 Red flags (secrets, emails, your own words) raise `alert` lines; --list-presets shows the built-ins.
 --red-flag values land in your shell history; GUIs use --config-stdin instead.
 

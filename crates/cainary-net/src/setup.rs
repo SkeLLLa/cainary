@@ -40,6 +40,9 @@ fn plain(endpoint: &str) -> Setup {
             "Codex: requirements.toml [otel] overrides config.toml.".into(),
             "`cainary scan` shows which of these your organization sets.".into(),
             "The collector is unauthenticated: any local process can post to it, so the stream shows what was received, and the vendor is inferred from the payload.".into(),
+            "On Linux only programs run by your own user can send: connections from another local user are refused.".into(),
+            "http/protobuf and gzip are accepted too; gRPC isn't.".into(),
+            "If the exporting process uses HTTPS_PROXY, add 127.0.0.1, ::1 and localhost to its NO_PROXY, or the proxy gets the request instead of this collector.".into(),
         ],
     }
 }
@@ -57,7 +60,7 @@ pub fn text(s: &Setup) -> String {
     for l in &s.codex {
         t.push_str(&format!("  {l}\n"));
     }
-    t.push_str("\nSettings can override these:\n");
+    t.push_str("\nNotes:\n");
     for n in &s.notes {
         t.push_str(&format!("- {n}\n"));
     }
@@ -95,6 +98,8 @@ pub fn takeover(t: &Takeover<'_>) -> Vec<String> {
         "The host names below are what you configured here, not an authenticated sender identity."
             .into(),
     );
+    l.push("If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.".into());
+    l.push("Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.".into());
     l.push(String::new());
     l.push(format!(
         "{}. Point the host names at loopback (add these lines to /etc/hosts as root):",
@@ -344,7 +349,7 @@ mod tests {
             "Point an agent at it.",
             "Claude Code (start",
             "Codex (~/.codex",
-            "Settings can override",
+            "Notes:",
             "unauthenticated",
         ] {
             assert!(t.contains(needle), "{needle}");

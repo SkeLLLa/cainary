@@ -46,7 +46,7 @@ impl Refusal {
             Refusal::NoSni => "tls handshake refused: no SNI (no server name sent)".into(),
             Refusal::ServerName => "tls handshake refused: SNI not in --tls-host".into(),
             Refusal::Alpn => {
-                "tls handshake refused: no common ALPN (this serves http/1.1 only)".into()
+                "tls handshake refused: no common ALPN (this serves http/1.1 only; gRPC exporters aren't supported)".into()
             }
             Refusal::ClientRejectedCertificate => format!(
                 "tls handshake failed: the client rejected the certificate (it doesn't trust the CA: start it with NODE_EXTRA_CA_CERTS={})",
