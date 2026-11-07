@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/cainary-core", "crates/cainary-cli", "crates/cainary-net"]
+members = ["crates/cainary-core", "crates/cainary-cli", "crates/cainary-net", "crates/cainary-sig"]
 exclude = ["linux"]
 
 [workspace.package]
@@ -20,6 +20,7 @@ publish = ["crates-io"]
 [workspace.dependencies]
 # Exact: the two crates are released together at one version (scripts/set-version.sh).
 cainary-core = { path = "crates/cainary-core", version = "=0.5.2" }
+cainary-sig = { path = "crates/cainary-sig", version = "=0.5.2" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 toml = "1.1"

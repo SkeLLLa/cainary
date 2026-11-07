@@ -10,6 +10,7 @@ const DIRECT_DEPENDENCIES: &[&str] = &[
     "async-io",
     "async-channel",
     "cc",
+    "cainary-sig",
     "cainary-tray-dbus",
     "cainary-tray-model",
     "cxx",

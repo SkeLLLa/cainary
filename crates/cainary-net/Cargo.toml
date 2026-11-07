@@ -22,6 +22,7 @@ path = "src/main.rs"
 
 [dependencies]
 cainary-core.workspace = true
+cainary-sig.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 libc.workspace = true

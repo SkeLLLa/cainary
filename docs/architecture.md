@@ -119,6 +119,8 @@ daemon: no autostart, pidfile or service), auto-update, and any server-side visi
       src/redflag/           `mod.rs` (patterns, `Matcher`), `presets.rs`, `file.rs` (the `--red-flags` TOML reader)
       src/setup.rs           the "point an agent at it" lines (text and `hello.setup`)
       tests/server.rs  tests/redflag.rs  tests/redflag_timing.rs
+    cainary-sig/             pure, dependency-free SHA-256 and HMAC-SHA256; used by cainary-net and the Linux tray
+      src/sha256.rs  src/hmac.rs
   macos/                     SwiftUI menu bar app (macos.md)
     Info.plist  Sources/*.swift  Tests/
   linux/                     Qt 6 tray app: its own workspace, Cargo.lock and guards (linux.md)
@@ -143,6 +145,7 @@ Dependencies, all in `[workspace.dependencies]`:
 | `rcgen` (`ring`, `pem`; no default features) | the takeover's ephemeral CA and leaves (§12.10) | same: `cainary-net` under `tls` only |
 | `time` (`std`; no default features) | validity dates for those certificates | already in the lock through `plist`; named by `cainary-net` under `tls` only |
 | `regex` | user red-flag patterns in the collector (§12.5) | **`cainary-net` only.** Linear-time matching, so a hostile pattern or input can't ReDoS, and compile-size limits (1 MiB per regex, 16 MiB in all) |
+| `cainary-sig` (path) | hand-written SHA-256 and HMAC-SHA256 primitives | no dependencies or I/O; used by `cainary-net` and Linux `tray-model`, never by `cainary` or `cainary-core` |
 
 Nothing else: no `clap` (a small hand-written parser), no `chrono`, and `time` only under the collector's `tls` feature (one RFC 3339
 formatter elsewhere), no `regex` in the core or CLI (substring and token checks), no `dirs`, and no async. `tests/guards.rs`
@@ -152,7 +155,8 @@ visible, reviewed change. `regex` pulls in `regex-automata`, `regex-syntax` and 
 they are the `NET_ONLY` set. `memchr` is also a dependency of those, but it is already in the
 core's closure through `serde_json`, so it is not net-only. Guard 4 requires the lock to stay
 inside the allowlist **and** the dependency closure of `cainary` and `cainary-core` to miss every
-`NET_ONLY` package, so the network program's dependencies can't reach the read-only product (§10).
+`NET_ONLY`, `TLS_ONLY` or `SIG_ONLY` package, so the collector and signature primitives can't
+reach the read-only product (§10).
 That guard is a regression check, not a proof. What keeps the product
 read-only and offline is that the only call sites that open files or start a process are
 `harness/fs.rs` and the one `Command::new` in `harness/platform.rs`, and fixture-mode tests show
@@ -163,7 +167,7 @@ the root `Cargo.toml`) with its own `Cargo.lock`, so none of its crates enter th
 the root lockfile guard. Its guards live in `linux/crates/cainary-tray/tests/guards.rs`:
 
 1. **L1, direct dependencies.** Every `linux/crates/*/Cargo.toml` may depend only on
-   `cainary-tray-model`, `cainary-tray-dbus`, `cxx`, `cxx-qt`, `cxx-qt-lib`, `cxx-qt-build`,
+   `cainary-tray-model`, `cainary-tray-dbus`, `cainary-sig`, `cxx`, `cxx-qt`, `cxx-qt-lib`, `cxx-qt-build`,
    `ksni`, `zbus`, `serde`, `serde_json`, `toml`, `libc`, `async-channel` and `futures-lite`.
 2. **L2, transitive denylist.** `linux/Cargo.lock` must not contain GTK, GLib or GIO crates
    (`gtk*`, `gdk*`, `glib*`, `gio*`, `gobject*`, `pango*`, `cairo*`, `atk*`), AppIndicator
@@ -942,7 +946,8 @@ state.
 - **Unit tests** sit next to the code: value conversion and budgets, each redaction rule (with
   synthetic tokens like `sk-test-EXAMPLE`), deny-list cases (relocations, aliases, case),
   analysis (counting per mode, levels, entries, summaries), finding keys, every diff rule, hook
-  classification, and the per-tool resolvers against `tests/resolve/` fixtures.
+  classification, the SHA-256 and HMAC-SHA256 vectors in `cainary-sig`, and the per-tool resolvers
+  against `tests/resolve/` fixtures.
 - **Fixtures** live in `crates/cainary-core/tests/fixtures/<name>/` with `fixture.json`, `root/`
   and `home/`. They hold only synthetic data: `example-corp.com`, `AcmeCollector`, user `alice`.
   Names are prefixed by tool (`claude-code-org-macos`, `codex-bad-base64`, `device-only-proxy`,
@@ -961,14 +966,15 @@ state.
      anywhere outside tests.
   3. `Command::new` exactly once, in `harness/platform.rs`, with the literal `/usr/sbin/scutil`;
      `libc::` only in `harness/fs.rs`.
-  4. `Cargo.lock` packages ⊆ the allowlist, which is three sets: `CORE_ALLOWED` (the core's
+  4. `Cargo.lock` packages ⊆ the allowlist, which includes `CORE_ALLOWED` (the core's
      closure), `NET_ONLY` (`cainary-net`, `regex`, `regex-automata`, `regex-syntax`,
      `aho-corasick`) and `TLS_ONLY` (`rustls`, `ring`, `rcgen`, `rustls-webpki`, `rustls-pki-types`
      and the rest of their closure, including the optional `x509-parser` family the lock lists for
-     rcgen; no `aws-lc-rs`). The **dependency closure** of `cainary` and `cainary-core` (walked
-     through `[[package]].dependencies` in `Cargo.lock`) must not reach any `NET_ONLY` or
-     `TLS_ONLY` package. A further set (goal 3's `MITM_ONLY`) is one more row in the closure
-     table.
+     rcgen; no `aws-lc-rs`), and `SIG_ONLY` (`cainary-sig`). The **dependency closure** of
+     `cainary` and `cainary-core` (walked through `[[package]].dependencies` in `Cargo.lock`) must
+     not reach any `NET_ONLY`, `TLS_ONLY` or `SIG_ONLY` package. `cainary-sig` has no dependencies,
+     performs no I/O, and is used only by `cainary-net` and the Linux tray; it never enters the
+     core or CLI closure.
 
   The collector crate has its own source guards, over `crates/cainary-net/src/`:
 
@@ -984,7 +990,7 @@ state.
     the effective uid), `tls/ca_file.rs` (the same, `flock`, `openat`) and `tls/privdrop.rs`
     (`capset`, `prctl`). Guard 3's "`Command::new` exactly once" counts the whole workspace.
   - **N4 (manifests):** the `cainary-core` and `cainary-cli` manifests never mention
-    `cainary-net`; the net manifest declares only `cainary-core`, `libc`, `rcgen`, `regex`,
+    `cainary-net`; the net manifest declares only `cainary-core`, `cainary-sig`, `libc`, `rcgen`, `regex`,
     `rustls`, `serde`, `serde_json`, `time` and `toml` (in any dependency table) and sets
     `publish = false`.
   - **N5 (TLS crates):** `rustls`, `rcgen` and `ring` are named only under

@@ -473,6 +473,7 @@ fn check_tls_paths(srcs: &[Src]) -> Vec<String> {
 /// Dependencies the net crate may declare, in any dependency table.
 const NET_DEPS: &[&str] = &[
     "cainary-core",
+    "cainary-sig",
     "libc",
     "rcgen",
     "rustls",
@@ -522,6 +523,40 @@ fn check_n4(core: &str, cli: &str, net: &str) -> Vec<String> {
     let publish = v.get("package").and_then(|p| p.get("publish"));
     if publish != Some(&toml::Value::Boolean(false)) {
         bad.push("cainary-net must set `publish = false`".to_string());
+    }
+    bad
+}
+
+/// The signature primitives crate has no build-time or runtime dependencies and cannot be
+/// published independently from the workspace release.
+fn check_sig_manifest(sig: &str) -> Vec<String> {
+    let Ok(v) = toml::from_str::<toml::Value>(sig) else {
+        return vec!["cainary-sig/Cargo.toml does not parse".to_string()];
+    };
+    let mut bad = Vec::new();
+    let mut tables: Vec<(String, &toml::Value)> = Vec::new();
+    for table in ["dependencies", "build-dependencies"] {
+        if let Some(deps) = v.get(table) {
+            tables.push((table.to_string(), deps));
+        }
+    }
+    if let Some(targets) = v.get("target").and_then(|t| t.as_table()) {
+        for (cfg, body) in targets {
+            for table in ["dependencies", "build-dependencies"] {
+                if let Some(deps) = body.get(table) {
+                    tables.push((format!("target.{cfg}.{table}"), deps));
+                }
+            }
+        }
+    }
+    for (table, deps) in tables {
+        if deps.as_table().is_some_and(|deps| !deps.is_empty()) {
+            bad.push(format!("cainary-sig [{table}] must have no dependencies"));
+        }
+    }
+    let publish = v.get("package").and_then(|p| p.get("publish"));
+    if publish != Some(&toml::Value::Boolean(false)) {
+        bad.push("cainary-sig must set `publish = false`".to_string());
     }
     bad
 }
@@ -630,15 +665,19 @@ const TLS_ONLY: &[&str] = &[
     "zeroize",
 ];
 
-/// Closure rules: a named package set, and the roots whose dependency closure must not touch
-/// it. A further set (goal 3's `MITM_ONLY`) is one more row, plus its names in `ALLOWED_SETS`.
+/// The pure signature primitives are available to the net collector and Linux tray, never to the
+/// read-only core or CLI.
+const SIG_ONLY: &[&str] = &["cainary-sig"];
+
+/// Closure rules: a named package set, and the roots whose dependency closure must not touch it.
 const CLOSURE_RULES: &[(&str, &[&str], &[&str])] = &[
     ("NET_ONLY", NET_ONLY, &["cainary", "cainary-core"]),
     ("TLS_ONLY", TLS_ONLY, &["cainary", "cainary-core"]),
+    ("SIG_ONLY", SIG_ONLY, &["cainary", "cainary-core"]),
 ];
 
 /// Every set the lock may draw from.
-const ALLOWED_SETS: &[&[&str]] = &[CORE_ALLOWED, NET_ONLY, TLS_ONLY];
+const ALLOWED_SETS: &[&[&str]] = &[CORE_ALLOWED, NET_ONLY, TLS_ONLY, SIG_ONLY];
 
 fn lock_packages(lock: &str) -> Vec<String> {
     let v: toml::Value = toml::from_str(lock).expect("Cargo.lock parses as TOML");
@@ -784,6 +823,13 @@ fn n4_net_manifests() {
 fn guard4_cargo_lock_matches_allowlist() {
     let lock = fs::read_to_string(crates_dir().join("../Cargo.lock")).expect("read Cargo.lock");
     assert_clean("guard 4", check_guard4(&lock));
+}
+
+#[test]
+fn sig_manifest_has_no_dependencies_and_is_not_publishable() {
+    let manifest = fs::read_to_string(crates_dir().join("cainary-sig/Cargo.toml"))
+        .expect("read cainary-sig manifest");
+    assert_clean("cainary-sig manifest", check_sig_manifest(&manifest));
 }
 
 // `.append(`/`.truncate(` are matched with their `bool` argument so `Vec::append` and
@@ -1106,11 +1152,38 @@ mod fires {
         }
     }
 
+    #[test]
+    fn sig_manifest_dependency_entries_fire() {
+        for manifest in [
+            "[package]\nname = \"cainary-sig\"\npublish = false\n[dependencies]\nserde = \"1\"\n",
+            "[package]\nname = \"cainary-sig\"\npublish = false\n[build-dependencies]\ncc = \"1\"\n",
+            "[package]\nname = \"cainary-sig\"\npublish = false\n[target.'cfg(unix)'.dependencies]\nserde = \"1\"\n",
+        ] {
+            assert!(
+                check_sig_manifest(manifest)
+                    .iter()
+                    .any(|b| b.contains("no dependencies")),
+                "{manifest}"
+            );
+        }
+    }
+
+    #[test]
+    fn sig_manifest_publish_guard_fires() {
+        let manifest = "[package]\nname = \"cainary-sig\"\npublish = true\n";
+        assert!(
+            check_sig_manifest(manifest)
+                .iter()
+                .any(|b| b.contains("publish = false"))
+        );
+    }
+
     const LOCK: &str = "[[package]]\nname = \"cainary\"\nversion = \"1\"\ndependencies = [\"cainary-core\", \"serde_json 1.0.0\"]\n\n\
         [[package]]\nname = \"cainary-core\"\nversion = \"1\"\ndependencies = [\"serde_json 1.0.0\"]\n\n\
         [[package]]\nname = \"serde_json\"\nversion = \"1.0.0\"\ndependencies = [\"memchr\"]\n\n\
         [[package]]\nname = \"memchr\"\nversion = \"2\"\n\n\
         [[package]]\nname = \"cainary-net\"\nversion = \"1\"\ndependencies = [\"cainary-core\", \"regex\"]\n\n\
+        [[package]]\nname = \"cainary-sig\"\nversion = \"1\"\n\n\
         [[package]]\nname = \"regex\"\nversion = \"1\"\ndependencies = [\"regex-automata\", \"aho-corasick 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)\"]\n\n\
         [[package]]\nname = \"regex-automata\"\nversion = \"1\"\ndependencies = [\"memchr\"]\n\n\
         [[package]]\nname = \"aho-corasick\"\nversion = \"1.0.0\"\ndependencies = [\"memchr\"]\n";
@@ -1155,6 +1228,29 @@ mod fires {
         );
         // Net may of course use them, and the net crate reaching core is fine.
         assert!(!check_guard4(LOCK).iter().any(|b| b.contains("cainary-net")));
+    }
+
+    #[test]
+    fn sig_only_closure_fires_for_the_core_or_cli() {
+        let core = LOCK.replace(
+            "dependencies = [\"serde_json 1.0.0\"]\n\n[[package]]\nname = \"serde_json\"",
+            "dependencies = [\"serde_json 1.0.0\", \"cainary-sig\"]\n\n[[package]]\nname = \"serde_json\"",
+        );
+        assert!(
+            check_guard4(&core)
+                .iter()
+                .any(|b| b.contains("`cainary-core` reaches `cainary-sig`"))
+        );
+
+        let cli = LOCK.replace(
+            "dependencies = [\"cainary-core\", \"serde_json 1.0.0\"]",
+            "dependencies = [\"cainary-core\", \"serde_json 1.0.0\", \"cainary-sig\"]",
+        );
+        assert!(
+            check_guard4(&cli)
+                .iter()
+                .any(|b| b.contains("`cainary` reaches `cainary-sig`"))
+        );
     }
 
     #[test]
