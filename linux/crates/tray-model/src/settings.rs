@@ -148,6 +148,13 @@ impl Default for CollectorSettings {
     }
 }
 
+/// Why the collector can't start: a stable `code` for the UI and a message fit to show.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Problem {
+    pub code: &'static str,
+    pub message: String,
+}
+
 impl CollectorSettings {
     /// The input is bounded enough to retain in tray.toml and pass through the settings command.
     /// Individual rows may still be invalid so the UI can explain and skip them.
@@ -170,10 +177,67 @@ impl CollectorSettings {
     }
 
     pub fn valid(&self) -> bool {
-        (1024..=u16::MAX).contains(&self.port)
-            && self.safe_to_store()
-            && !self.over_limit()
-            && (!self.tls || self.valid_tls_config())
+        self.problem().is_none()
+    }
+
+    /// The first reason the collector can't start with these settings. A port below 1024 is not a
+    /// problem here: the privilege to bind it is checked separately.
+    pub fn problem(&self) -> Option<Problem> {
+        let problem = |code, message: String| Some(Problem { code, message });
+        if self.port == 0 {
+            return problem("port-range", "The collector port must be 1–65535.".into());
+        }
+        if self.tls {
+            if self.tls_port == 0 {
+                return problem("port-range", "The HTTPS port must be 1–65535.".into());
+            }
+            for (index, host) in self.tls_hosts.iter().enumerate() {
+                if host.is_empty() {
+                    continue;
+                }
+                if let Some(why) = self.tls_host_problem(index) {
+                    return problem("tls-bad-host", format!("Host name “{host}”: {why}"));
+                }
+            }
+            if self.valid_tls_hosts().is_empty() {
+                return problem(
+                    "tls-no-host",
+                    "HTTPS takeover needs at least one host name.".into(),
+                );
+            }
+        }
+        if !self.safe_to_store() {
+            let named = self.patterns.iter().find(|pattern| {
+                pattern.name.len() > MAX_STORED_PATTERN_FIELD_BYTES
+                    || pattern.pattern.len() > MAX_STORED_PATTERN_FIELD_BYTES
+            });
+            let message = match named {
+                Some(pattern) => format!(
+                    "Red-flag pattern “{}” is too large.",
+                    pattern.name.chars().take(64).collect::<String>()
+                ),
+                None => "The collector settings are too large.".into(),
+            };
+            return problem("patterns", message);
+        }
+        if self.over_limit() {
+            return problem(
+                "patterns",
+                format!(
+                    "Too many red-flag patterns: presets and custom patterns share a limit of {COLLECTOR_MAX_PATTERNS}."
+                ),
+            );
+        }
+        if self.log_to_file
+            && self.log_path.trim().is_empty()
+            && Self::suggested_log_path().is_empty()
+        {
+            return problem(
+                "log-path",
+                "Choose a path for the collector log file.".into(),
+            );
+        }
+        None
     }
 
     pub fn tls_host_problem(&self, index: usize) -> Option<&'static str> {

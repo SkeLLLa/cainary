@@ -37,8 +37,8 @@ struct RedFlagInput<'a> {
 
 /// Only non-sensitive flags are passed on argv. Custom patterns go in config stdin.
 pub fn child_args(settings: &CollectorSettings) -> Result<Vec<String>, String> {
-    if !settings.valid() {
-        return Err("check the collector port and red-flag patterns".into());
+    if let Some(problem) = settings.problem() {
+        return Err(problem.message);
     }
     let port = if settings.tls {
         settings.tls_port
@@ -71,8 +71,8 @@ pub fn child_args(settings: &CollectorSettings) -> Result<Vec<String>, String> {
 
 /// Encodes the private settings separately from argv and keeps stdin open after this line.
 pub fn config_stdin(settings: &CollectorSettings) -> Result<Vec<u8>, String> {
-    if !settings.valid() {
-        return Err("check the collector port and red-flag patterns".into());
+    if let Some(problem) = settings.problem() {
+        return Err(problem.message);
     }
     let selected = settings
         .presets
@@ -494,6 +494,11 @@ pub struct ErrorLine {
     pub message: Option<String>,
     #[serde(default)]
     pub dropped: Option<u64>,
+    /// Stable machine-readable reason; absent on lines from older collectors.
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub port: Option<u16>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -539,6 +544,9 @@ pub struct Model {
     batches: VecDeque<StoredBatch>,
     alerts: VecDeque<StoredAlert>,
     errors: VecDeque<ErrorLine>,
+    /// The first `error` seen before `hello`: what the collector said about why it couldn't start.
+    startup_error: Option<ErrorLine>,
+    failure: Option<Failure>,
     retained_bytes: usize,
     notified: HashMap<String, Instant>,
 }
@@ -562,6 +570,45 @@ impl Model {
         self.batches = VecDeque::new();
         self.alerts = VecDeque::new();
         self.retained_bytes = 0;
+    }
+
+    /// Records the child's exit. A startup error reported on stdout beats the first stderr line,
+    /// and either beats the bare exit status.
+    pub fn exited(&mut self, code: Option<i32>, stderr_tail: &str) {
+        let startup = self.startup_error.clone();
+        let first_stderr = stderr_tail
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or_default();
+        let (failure_code, port, text) = match startup {
+            Some(error) => {
+                let text = error
+                    .message
+                    .clone()
+                    .filter(|message| !message.is_empty())
+                    .unwrap_or_else(|| "Collector reported an error".into());
+                (error.code, error.port, text)
+            }
+            None if !first_stderr.is_empty() => (None, None, first_stderr.to_owned()),
+            None => match code.filter(|code| *code != 0) {
+                Some(code) => (None, None, format!("collector exited with status {code}")),
+                None => (None, None, String::new()),
+            },
+        };
+        self.set_stderr_tail(stderr_tail);
+        if matches!(self.state, State::Starting | State::Listening) {
+            if text.is_empty() {
+                self.stopped("Stopped");
+            } else {
+                self.stopped(format!("Stopped: {text}"));
+                self.failure = Some(Failure {
+                    code: failure_code,
+                    message: text,
+                    port,
+                });
+            }
+        }
     }
 
     pub fn failed(&mut self, reason: impl Into<String>) {
@@ -619,6 +666,9 @@ impl Model {
                 (false, Some(alert))
             }
             Ok(Line::Error(error)) => {
+                if self.hello.is_none() && self.startup_error.is_none() {
+                    self.startup_error = Some(error.clone());
+                }
                 self.errors.push_back(error);
                 while self.errors.len() > 20 {
                     self.errors.pop_front();
@@ -742,8 +792,19 @@ impl Model {
             flag_groups,
             errors,
             retained_bytes: self.retained_bytes,
+            failure: self.failure.clone(),
         }
     }
+}
+
+/// Why the collector stopped on its own. `code` and `port` are present only when the collector
+/// reported them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Failure {
+    pub code: Option<String>,
+    pub message: String,
+    pub port: Option<u16>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -767,6 +828,8 @@ pub struct View {
     pub flag_groups: Vec<FlagGroup>,
     pub errors: Vec<ErrorView>,
     pub retained_bytes: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<Failure>,
 }
 
 #[derive(Clone, Debug, Serialize)]
