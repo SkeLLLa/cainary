@@ -9,7 +9,7 @@ use super::files::{
     publish, read_in, read_snapshot, stage, unlink_checked, unlink_in, unlink_unchanged,
 };
 use super::state::{
-    ClaudeState, Pending, PendingKind, Rec, Refused, State, check_owned, delete_owned,
+    ClaudeState, Pending, PendingKind, Rec, Refused, State, Use, check_owned, delete_owned,
     publish_bundle, read_state, reconcile, save_state,
 };
 use super::{
@@ -843,6 +843,33 @@ pub(super) fn settings_view(path: &str) -> Option<(String, Option<String>)> {
     Some((sha_of(&bytes), value))
 }
 
+/// Whether the settings at `path` name `bundle_path` in our key. Anything that stops the file
+/// from being read and parsed safely is `Unknown`, never "not referenced".
+fn bundle_use(path: &str, bundle_path: &str) -> Use {
+    let Some(parent) = Path::new(path).parent() else {
+        return Use::Unknown;
+    };
+    let dir = match CaDir::open_shared(parent, false) {
+        Ok(Some(d)) => d,
+        Ok(None) => return Use::NotReferenced,
+        Err(_) => return Use::Unknown,
+    };
+    let bytes = match read_snapshot(&dir, "settings.json") {
+        Ok(Some(s)) => s.bytes,
+        Ok(None) => return Use::NotReferenced,
+        Err(_) => return Use::Unknown,
+    };
+    let value = std::str::from_utf8(&bytes)
+        .ok()
+        .and_then(|t| jsonedit::parse(t).ok())
+        .map(|d| d.env_value(KEY));
+    match value {
+        Some(Ok(v)) if v.as_deref() == Some(bundle_path) => Use::Referenced,
+        Some(Ok(_)) => Use::NotReferenced,
+        _ => Use::Unknown,
+    }
+}
+
 /// For the status: SHA-256 of a file in the settings directory (a backup), if it exists.
 pub(super) fn sibling_sha(settings_path: &str, name: &str) -> Option<String> {
     let dir = CaDir::open_shared(Path::new(settings_path).parent()?, false).ok()??;
@@ -920,11 +947,13 @@ pub(super) fn recover(env: &Env<'_>, ca: &CaDir, _lock: &TrustLock) -> Option<St
             |c| c.settings_path.clone(),
         );
         let bundle_path = ca.path().join(CLAUDE_BUNDLE).display().to_string();
-        let in_use = settings_view(&settings_path)
-            .is_some_and(|(_, v)| v.as_deref() == Some(bundle_path.as_str()));
-        let r = reconcile(ca, &mut next, in_use);
+        let r = reconcile(ca, &mut next, bundle_use(&settings_path, &bundle_path));
         if r.ignored {
             note = Some("A bundle update record that named an unexpected file was ignored.");
+        } else if r.deferred {
+            note = Some(
+                "A certificate bundle update was left pending: your Claude Code settings couldn't be checked, so the bundle was kept.",
+            );
         } else if r.changed {
             note = note.or(Some("Settled an interrupted certificate bundle update."));
         }

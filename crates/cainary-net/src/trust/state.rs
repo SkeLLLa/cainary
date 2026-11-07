@@ -513,21 +513,34 @@ fn expected_path(ca: &CaDir, target: Target) -> String {
     ca.path().join(bundle_file(target)).display().to_string()
 }
 
+/// Whether the Claude Code settings point at the bundle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Use {
+    Referenced,
+    /// The settings are confirmed absent, or parsed and the key doesn't name the bundle.
+    NotReferenced,
+    /// Unreadable, unparseable or unsafe: nothing may be concluded.
+    Unknown,
+}
+
 /// What `reconcile` did.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) struct Reconciled {
     pub(super) changed: bool,
     /// An entry named a file other than its target's bundle and was dropped untouched.
     pub(super) ignored: bool,
+    /// An orphaned Claude Code bundle was left, with its journal entry, because the settings
+    /// couldn't be checked.
+    pub(super) deferred: bool,
 }
 
 /// Settles every journal entry from what the file holds now: the new hash means the replace
 /// happened (the hash is recorded, or an orphaned Claude Code bundle that no settings file points
 /// at is removed); the old hash (or still absent) means it never did; anything else is foreign and
 /// left alone. An entry whose path isn't exactly its target's bundle is dropped without reading
-/// anything. `claude_bundle_in_use`: the Claude Code settings point at the bundle, so an unrecorded
-/// one is kept. Needs the trust lock, and the Claude Code settings transaction resolved first.
-pub(super) fn reconcile(ca: &CaDir, st: &mut State, claude_bundle_in_use: bool) -> Reconciled {
+/// anything. `claude_bundle_use`: an unrecorded Claude Code bundle is deleted only when the
+/// settings are known not to reference it, and kept with its entry when that is unknown. Needs the trust lock, and the Claude Code settings transaction resolved first.
+pub(super) fn reconcile(ca: &CaDir, st: &mut State, claude_bundle_use: Use) -> Reconciled {
     let mut out = Reconciled::default();
     if st.journal.is_empty() {
         return out;
@@ -565,8 +578,17 @@ pub(super) fn reconcile(ca: &CaDir, st: &mut State, claude_bundle_in_use: bool) 
                 _ => false,
             },
         };
-        if !recorded && !claude_bundle_in_use {
-            let _ = delete_owned(ca, name, &Rec::Sha(j.new_sha.clone()));
+        if !recorded {
+            match claude_bundle_use {
+                Use::NotReferenced => {
+                    let _ = delete_owned(ca, name, &Rec::Sha(j.new_sha.clone()));
+                }
+                Use::Referenced => {}
+                Use::Unknown => {
+                    st.journal.push(j);
+                    out.deferred = true;
+                }
+            }
         }
     }
     out
@@ -1028,6 +1050,49 @@ mod tests {
             );
             assert!(v.get("pending").is_none() && v.get("pendingBundles").is_none());
             assert_eq!(undo(&fx).action, Action::Undone);
+        }
+    }
+
+    #[test]
+    fn unreadable_settings_keeps_orphan_bundle() {
+        use std::os::unix::fs::PermissionsExt;
+        for variant in ["unreadable", "unparseable", "not-referenced"] {
+            let fx = Fx::new(&format!("orphan-{variant}"), "");
+            mine(&fx);
+            let cb = fx.ca_dir.join(CLAUDE_BUNDLE);
+            stop_at("after-rename");
+            let _ = apply(&fx);
+            clear_hooks();
+            // Make it an orphan: no transaction, no record, only the journal entry.
+            let mut v = state_json(&fx);
+            v.as_object_mut().unwrap().remove("pending");
+            v.as_object_mut().unwrap().remove("claudeCode");
+            assert!(v["pendingBundles"].is_array());
+            put_state(&fx, &v.to_string());
+            match variant {
+                "unreadable" => {
+                    fs::set_permissions(fx.settings(), fs::Permissions::from_mode(0o000)).unwrap()
+                }
+                "unparseable" => fx.write_settings("{ not json"),
+                _ => fx.write_settings("{\"model\":\"opus\"}\n"),
+            }
+            let s = status(&fx);
+            if variant == "not-referenced" {
+                assert!(!cb.exists(), "confirmed unreferenced: removed");
+                assert!(state_bytes(&fx).is_none(), "journal settled");
+            } else {
+                let after = state_json(&fx);
+                assert!(cb.exists(), "{variant}: the bundle is kept");
+                assert!(
+                    after["pendingBundles"].is_array(),
+                    "{variant}: so is the entry"
+                );
+                assert!(
+                    s["note"].as_str().unwrap().contains("couldn't be checked"),
+                    "{s}"
+                );
+            }
+            fs::set_permissions(fx.settings(), fs::Permissions::from_mode(0o600)).ok();
         }
     }
 }
