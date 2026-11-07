@@ -1571,6 +1571,11 @@ bundles), `claude.rs` and `codex.rs` (the two targets).
   rotating the CA never accumulates roots. The `modes` table is stamped for every registry mode
   whose certificate file exists, and `owned[]` bundle `fingerprints` list the preserved originals
   then the certificate of each enabled mode.
+- **Mode certificate and original rules.** A mode certificate other than `takeover`'s must parse
+  as an X.509 certificate; one that doesn't is treated as missing. A relative path for an
+  original (the key's current value) is refused. Every bundle replacement, including the first
+  Codex apply, is journaled in `pendingBundles` with the target's new `modes`
+  (`publish_bundle_modes`), so a crash settles the hash and the mode set together.
 - **Missing mode certificate.** Every bundle rewrite after the first (`rebuild`: journal with the
   new mode set, staged replace with re-check, then the hash and modes recorded together) needs the
   certificate of each enabled mode. If one is missing (or isn't exactly one certificate), the
