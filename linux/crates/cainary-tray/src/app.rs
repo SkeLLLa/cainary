@@ -1705,7 +1705,15 @@ impl Notifier for AppNotifier {
 
 #[cfg(test)]
 mod tests {
-    use super::{collector_settings_json, view_changed};
+    use super::{
+        AppMessage, CollectorRuntime, Mutex, StreamMsg, collector_settings_json, privport,
+        runner::Reserved, view_changed,
+    };
+    use std::os::fd::OwnedFd;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use cainary_tray_model::settings::Settings;
     use cainary_tray_model::settings::{
         COLLECTOR_MAX_PATTERN_BYTES, CollectorPattern, CollectorPatternKind, CollectorSettings,
     };
@@ -1737,5 +1745,132 @@ mod tests {
             Some("The pattern is over 1024 bytes.")
         );
         assert_eq!(value["overLimit"].as_bool(), Some(false));
+    }
+
+    const HELLO: &str =
+        r#"{"v":1,"type":"hello","mode":"receiver","endpoint":"http://127.0.0.1:443"}"#;
+
+    fn reserved() -> Reserved {
+        Reserved {
+            v4: OwnedFd::from(std::fs::File::open("/dev/null").unwrap()),
+            v6: None,
+            warning: None,
+        }
+    }
+
+    fn prefs(enabled: bool, port: u16) -> CollectorSettings {
+        CollectorSettings {
+            enabled,
+            port,
+            ..CollectorSettings::default()
+        }
+    }
+
+    fn runtime() -> (CollectorRuntime, async_channel::Receiver<AppMessage>) {
+        let (sender, receiver) = async_channel::unbounded();
+        let runtime = CollectorRuntime::new(
+            Some(PathBuf::from("/nonexistent/cainary-otel-debug")),
+            None,
+            Arc::new(Mutex::new(Settings::default())),
+            sender,
+            false,
+        );
+        (runtime, receiver)
+    }
+
+    #[test]
+    fn starting_never_asks_for_a_privileged_port() {
+        if !privport::needs_privilege(443) {
+            return;
+        }
+        let (mut runtime, messages) = runtime();
+        runtime.restart(prefs(true, 443));
+        let view = runtime.model.view();
+        assert_eq!(
+            view.failure.unwrap().code.as_deref(),
+            Some("port-privileged")
+        );
+        assert!(!runtime.opening && runtime.hold.port().is_none());
+        // Only the helper probe may have been queued, never an authentication result.
+        while let Ok(message) = messages.try_recv() {
+            assert!(!matches!(message, AppMessage::PortOpened { .. }));
+        }
+        // Without a probe result there is nothing to open with, and the click does nothing.
+        runtime.open_privileged_port();
+        assert!(!runtime.opening);
+    }
+
+    #[test]
+    fn the_reservation_ends_when_the_collector_is_switched_off() {
+        let (mut runtime, _messages) = runtime();
+        runtime.hold.keep(443, reserved());
+        runtime.restart(prefs(false, 443));
+        assert!(runtime.hold.port().is_none());
+    }
+
+    #[test]
+    fn the_reservation_ends_when_the_effective_port_changes() {
+        let (mut runtime, _messages) = runtime();
+        runtime.hold.keep(443, reserved());
+        runtime.restart(prefs(true, 8443));
+        assert!(runtime.hold.port().is_none());
+        // The takeover port counts too.
+        runtime.hold.keep(443, reserved());
+        let takeover = CollectorSettings {
+            tls: true,
+            tls_hosts: vec!["otel.example.test".into()],
+            tls_port: 444,
+            ..prefs(true, 443)
+        };
+        runtime.restart(takeover);
+        assert!(runtime.hold.port().is_none());
+    }
+
+    #[test]
+    fn a_restart_on_the_same_port_keeps_the_reservation() {
+        let (mut runtime, _messages) = runtime();
+        runtime.hold.keep(443, reserved());
+        runtime.restart(prefs(true, 443));
+        assert!(runtime.hold.holds(443));
+    }
+
+    #[test]
+    fn a_startup_failure_releases_but_a_crash_keeps() {
+        let exited = |code| StreamMsg::Exited {
+            code: Some(code),
+            stderr_tail: String::new(),
+        };
+        let (mut runtime, _messages) = runtime();
+        runtime.hold.keep(443, reserved());
+        runtime.model.starting();
+        let generation = runtime.generation;
+        runtime.handle_stream(generation, exited(2));
+        assert!(runtime.hold.port().is_none());
+
+        runtime.hold.keep(443, reserved());
+        runtime.model.starting();
+        runtime.model.accept(HELLO.into());
+        runtime.handle_stream(generation, exited(137));
+        assert!(runtime.hold.holds(443));
+        runtime.port = 443;
+        assert_eq!(runtime.privilege_view().state, "held-stopped");
+    }
+
+    #[test]
+    fn an_expired_or_stale_timer_is_handled() {
+        let (mut runtime, _messages) = runtime();
+        runtime.hold.keep(443, reserved());
+        runtime.hold_expired(runtime.hold_token.wrapping_add(1));
+        assert!(runtime.hold.holds(443), "a stale timer does nothing");
+        runtime.hold_expired(runtime.hold_token);
+        assert!(runtime.hold.port().is_none());
+    }
+
+    #[test]
+    fn quitting_releases_the_reservation() {
+        let (mut runtime, _messages) = runtime();
+        runtime.hold.keep(443, reserved());
+        runtime.stop();
+        assert!(runtime.hold.port().is_none());
     }
 }
