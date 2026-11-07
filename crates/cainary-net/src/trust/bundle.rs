@@ -1,8 +1,8 @@
 //! Certificate bundles: PEM blocks, the combined bundles, the collector certificate and the
 //! system roots.
 
-use super::MODES;
 use super::files::{read_bundle_text, read_in, read_original_text};
+use super::{MODES, TAKEOVER};
 use crate::tls::ca_file::{CA_FILE, CaDir};
 use cainary_core::harness::Harness;
 use std::collections::HashSet;
@@ -114,8 +114,23 @@ pub(super) fn mode_cas(ca: &CaDir, modes: &[String]) -> Result<Vec<String>, Miss
     MODES
         .iter()
         .filter(|(n, _)| modes.iter().any(|m| m == n))
-        .map(|(n, file)| one_cert(ca, file).ok_or(MissingCa(n)))
+        .map(|(n, file)| {
+            one_cert(ca, file)
+                .filter(|c| *n == TAKEOVER || is_trust_anchor(c))
+                .ok_or(MissingCa(n))
+        })
         .collect()
+}
+
+/// Whether a certificate block decodes to a DER certificate usable as a trust anchor (parsed by
+/// the TLS stack's own anchor reader), so arbitrary base64 never reaches a trust bundle.
+fn is_trust_anchor(block: &str) -> bool {
+    let body: String = block.lines().filter(|l| !l.starts_with("-----")).collect();
+    unbase64(&body).is_some_and(|der| {
+        rustls::RootCertStore::empty()
+            .add(rustls::pki_types::CertificateDer::from(der))
+            .is_ok()
+    })
 }
 
 /// SHA-256 of a certificate's DER (what browsers and `openssl x509 -fingerprint` show). A block

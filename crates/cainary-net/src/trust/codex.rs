@@ -5,7 +5,7 @@ use super::bundle::{bundle, collector_ca, mode_cas, system_roots};
 use super::claude::{modes_with, rebuild_modes, recover};
 use super::files::{Replace, lock_trust, read_in, unlink_unchanged};
 use super::state::{
-    CodexState, Owned, Rec, Refused, check_owned, publish_bundle, read_state, save_state,
+    CodexState, Owned, Rec, Refused, check_owned, publish_bundle_modes, read_state, save_state,
 };
 use super::{
     Action, BUSY, CODEX_BUNDLE, Env, Line, MODES, NEWER, TAKEOVER, Target, dir_error, lock_wait,
@@ -155,13 +155,14 @@ pub(super) fn codex_mode(env: &Env<'_>, mode: &str, undo: bool) -> Line {
     };
     let text = bundle(&roots, &cas);
     let same = matches!(read_in(&ca_dir, CODEX_BUNDLE), Ok(Some(b)) if b == text.as_bytes());
-    let sha = match publish_bundle(
+    let sha = match publish_bundle_modes(
         &ca_dir,
         &mut state,
         Target::Codex,
         CODEX_BUNDLE,
         &rec,
         text.as_bytes(),
+        &new_modes,
     ) {
         Ok(sha) => sha,
         Err(Refused::Foreign) => {

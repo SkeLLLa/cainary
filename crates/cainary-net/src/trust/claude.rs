@@ -2057,7 +2057,7 @@ mod tests {
     }
 
     // ── mode changes ──
-    const PROXY_CA: &str = "-----BEGIN CERTIFICATE-----\nUFJPWFktQ0E=\n-----END CERTIFICATE-----\n";
+    const PROXY_CA: &str = "-----BEGIN CERTIFICATE-----\nMIIBmDCCAT2gAwIBAgIUZQShPRCEs+ZGNQXvrk1c/KV0nXcwCgYIKoZIzj0EAwIw\nIDEeMBwGA1UEAwwVY2FpbmFyeSB0ZXN0IHByb3h5IGNhMCAXDTI2MTEwNzEzMjk1\nMVoYDzIxMjYxMDE0MTMyOTUxWjAgMR4wHAYDVQQDDBVjYWluYXJ5IHRlc3QgcHJv\neHkgY2EwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATZQFxq1SAqZRKTBH3lTDhz\nZ/iSSDcWlrEPlehjaqs+qK1u0tfty/tyI6M2FQf/wiF85RL3unNVGI6tfo2WEtSs\no1MwUTAdBgNVHQ4EFgQUxKOVDWfKNxhbIxRNBSYEp3MNi5swHwYDVR0jBBgwFoAU\nxKOVDWfKNxhbIxRNBSYEp3MNi5swDwYDVR0TAQH/BAUwAwEB/zAKBggqhkjOPQQD\nAgNJADBGAiEA3Ok0pzb4YmMlzs7//d3x2lJHM2MvBj2ry5EKNfuIOe0CIQDvqlCM\n6rtef3SLHc4XbInyrKd6kXu32vXZp14XFjvgvg==\n-----END CERTIFICATE-----\n";
 
     fn both() -> Vec<String> {
         vec![TAKEOVER.to_string(), PROXY.to_string()]

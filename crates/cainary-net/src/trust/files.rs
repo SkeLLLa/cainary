@@ -358,6 +358,10 @@ pub(super) fn read_bundle_text(path: &Path) -> Option<String> {
 /// lies inside the resolved directory or is the same file (device and inode) as any entry in it,
 /// so no CA file or managed bundle can come back as an "original".
 pub(super) fn read_original_text(ca: &CaDir, path: &Path) -> Option<String> {
+    // A relative path would mean whatever the current directory is today: never an original.
+    if !path.is_absolute() {
+        return None;
+    }
     read_text(path, Some(ca))
 }
 

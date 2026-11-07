@@ -475,6 +475,20 @@ pub(super) fn publish_bundle(
     publish_with(ca, st, target, name, rec, bytes, None)
 }
 
+/// `publish_bundle` that also journals the modes the bundle is made for, so a crash before the
+/// record is saved is settled with them.
+pub(super) fn publish_bundle_modes(
+    ca: &CaDir,
+    st: &mut State,
+    target: Target,
+    name: &str,
+    rec: &Rec,
+    bytes: &[u8],
+    modes: &[String],
+) -> Result<String, Refused> {
+    publish_with(ca, st, target, name, rec, bytes, Some(modes.to_vec()))
+}
+
 fn publish_with(
     ca: &CaDir,
     st: &mut State,
@@ -1196,7 +1210,7 @@ mod tests {
     }
 
     // ── modes in bundles and the journal ──
-    const PROXY_CA: &str = "-----BEGIN CERTIFICATE-----\nUFJPWFktQ0E=\n-----END CERTIFICATE-----\n";
+    const PROXY_CA: &str = "-----BEGIN CERTIFICATE-----\nMIIBmDCCAT2gAwIBAgIUZQShPRCEs+ZGNQXvrk1c/KV0nXcwCgYIKoZIzj0EAwIw\nIDEeMBwGA1UEAwwVY2FpbmFyeSB0ZXN0IHByb3h5IGNhMCAXDTI2MTEwNzEzMjk1\nMVoYDzIxMjYxMDE0MTMyOTUxWjAgMR4wHAYDVQQDDBVjYWluYXJ5IHRlc3QgcHJv\neHkgY2EwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATZQFxq1SAqZRKTBH3lTDhz\nZ/iSSDcWlrEPlehjaqs+qK1u0tfty/tyI6M2FQf/wiF85RL3unNVGI6tfo2WEtSs\no1MwUTAdBgNVHQ4EFgQUxKOVDWfKNxhbIxRNBSYEp3MNi5swHwYDVR0jBBgwFoAU\nxKOVDWfKNxhbIxRNBSYEp3MNi5swDwYDVR0TAQH/BAUwAwEB/zAKBggqhkjOPQQD\nAgNJADBGAiEA3Ok0pzb4YmMlzs7//d3x2lJHM2MvBj2ry5EKNfuIOe0CIQDvqlCM\n6rtef3SLHc4XbInyrKd6kXu32vXZp14XFjvgvg==\n-----END CERTIFICATE-----\n";
 
     fn both() -> Vec<String> {
         vec![TAKEOVER.to_string(), PROXY.to_string()]
@@ -1456,7 +1470,7 @@ mod tests {
         let fx = Fx::new("o-rel", "");
         fs::write(fx.ca_dir.join(PROXY_CA_FILE), PROXY_CA).unwrap();
         let ca = CaDir::open_existing(&fx.ca_dir).unwrap().unwrap();
-        // Resolved against the working directory, then checked like any other path.
+        // Never resolved against the working directory.
         let cwd = std::env::current_dir().unwrap();
         let rel = pathdiff(&fx.ca_dir.join(PROXY_CA_FILE), &cwd);
         assert!(rel.is_relative());
@@ -1509,5 +1523,87 @@ mod tests {
         let sym = fx.base.join("sym.pem");
         std::os::unix::fs::symlink(&hard, &sym).unwrap();
         assert!(read_original(&ca, &sym).is_none());
+    }
+
+    #[test]
+    fn relative_original_refused_on_apply_and_rebuild() {
+        let fx = Fx::new("o-rel-flow", "");
+        fx.roots();
+        let cwd = std::env::current_dir().unwrap();
+        let mine_abs = fx.base.join("mine.pem");
+        fs::write(&mine_abs, ROOT_A).unwrap();
+        let rel = pathdiff(&mine_abs, &cwd);
+        assert!(rel.is_relative() && rel.exists());
+        // First apply with a relative NODE_EXTRA_CA_CERTS: refused, nothing written.
+        fx.write_settings(&format!(
+            "{{\"env\":{{\"{KEY}\":\"{}\"}}}}\n",
+            rel.display()
+        ));
+        let before = fx.read_settings();
+        let a = apply(&fx);
+        assert_eq!(a.action, Action::Refused, "{a:?}");
+        assert_eq!(fx.read_settings(), before);
+        assert!(!fx.ca_dir.join(CLAUDE_BUNDLE).exists());
+        // A stored relative original makes a rebuild refuse and leave the bundle as it is.
+        fx.write_settings(&format!(
+            "{{\"env\":{{\"{KEY}\":\"{}\"}}}}\n",
+            mine_abs.display()
+        ));
+        assert_eq!(apply(&fx).action, Action::Applied);
+        let ca = CaDir::open_existing(&fx.ca_dir).unwrap().unwrap();
+        let mut st = read_state(&ca);
+        st.claude.as_mut().unwrap().original = Some(rel.display().to_string());
+        save_state(&ca, &st).unwrap();
+        fs::write(fx.ca_dir.join(PROXY_CA_FILE), PROXY_CA).unwrap();
+        let bundle = fs::read(fx.ca_dir.join(CLAUDE_BUNDLE)).unwrap();
+        let l = apply_mode(&fx.env(), Target::ClaudeCode, PROXY);
+        assert_eq!(l.action, Action::Refused, "{l:?}");
+        assert_eq!(fs::read(fx.ca_dir.join(CLAUDE_BUNDLE)).unwrap(), bundle);
+        let w = refresh(&fx.env());
+        assert_eq!(w.len(), 1, "{w:?}");
+    }
+
+    #[test]
+    fn invalid_mode_ca_refused() {
+        let fx = Fx::new("bad-mode-ca", "");
+        fx.roots();
+        let ca = CaDir::open_existing(&fx.ca_dir).unwrap().unwrap();
+        // One block that is valid base64 but not an X.509 certificate.
+        let fake = "-----BEGIN CERTIFICATE-----\nUFJPWFktQ0E=\n-----END CERTIFICATE-----\n";
+        fs::write(fx.ca_dir.join(PROXY_CA_FILE), fake).unwrap();
+        assert_eq!(mode_cas(&ca, &[PROXY.to_string()]), Err(MissingCa(PROXY)));
+        let a = apply_mode(&fx.env(), Target::Codex, PROXY);
+        assert_eq!(a.action, Action::Refused, "{a:?}");
+        assert!(!fx.ca_dir.join(CODEX_BUNDLE).exists());
+        // A real certificate is accepted.
+        fs::write(fx.ca_dir.join(PROXY_CA_FILE), PROXY_CA).unwrap();
+        assert_eq!(mode_cas(&ca, &[PROXY.to_string()]).unwrap(), [PROXY_CA]);
+    }
+
+    #[test]
+    fn codex_first_proxy_apply_crash_recovers_as_proxy() {
+        let fx = Fx::new("codex-proxy-crash", "");
+        fx.roots();
+        fs::write(fx.ca_dir.join(PROXY_CA_FILE), PROXY_CA).unwrap();
+        stop_at("after-bundle-publish");
+        let l = apply_mode(&fx.env(), Target::Codex, PROXY);
+        clear_hooks();
+        assert_eq!(l.action, Action::Refused);
+        let s = status(&fx);
+        assert_eq!(s["codex"]["state"], "ready", "{s}");
+        let v = state_json(&fx);
+        assert_eq!(v["codex"]["modes"], json!(["proxy"]), "{v}");
+        // A refresh after a new takeover CA keeps the proxy CA only.
+        fs::write(fx.ca_dir.join(CA_FILE), CA2).unwrap();
+        assert!(refresh(&fx.env()).is_empty());
+        assert_eq!(
+            bundle_certs(&fx, CODEX_BUNDLE),
+            [ROOT_A, ROOT_B, ROOT_C, PROXY_CA]
+        );
+        assert_eq!(
+            undo_mode(&fx.env(), Target::Codex, PROXY).action,
+            Action::Undone
+        );
+        assert!(!fx.ca_dir.join(CODEX_BUNDLE).exists());
     }
 }
