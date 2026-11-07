@@ -134,7 +134,8 @@ pub fn same(mut line: Value) -> Value {
     for k in ["ts", "seq", "bytes", "format", "encoding"] {
         o.remove(k);
     }
-    // Protobuf can't tell an empty scope version from none; JSON can (codex sends "").
+    // The one real difference: a scope `version` of "" in JSON (codex sends it) reads as
+    // `<empty>`, but protobuf can't tell an empty string from an absent one, so it reads null.
     let scopes = o
         .get_mut("resources")
         .and_then(Value::as_array_mut)
@@ -147,26 +148,7 @@ pub fn same(mut line: Value) -> Value {
             scope["version"] = Value::Null;
         }
     }
-    even_doubles(&mut line);
     line
-}
-
-/// A double that is a whole number reads `0` in a JSON source and `0.0` once decoded from
-/// protobuf; with `--show-values` that is the one place the text differs. Same number.
-fn even_doubles(v: &mut Value) {
-    match v {
-        Value::Object(o) => {
-            if o.get("type") == Some(&Value::from("double"))
-                && let Some(Value::String(t)) = o.get_mut("value")
-                && let Ok(f) = t.parse::<f64>()
-            {
-                *t = f.to_string();
-            }
-            o.values_mut().for_each(even_doubles);
-        }
-        Value::Array(a) => a.iter_mut().for_each(even_doubles),
-        _ => {}
-    }
 }
 
 /// A `google.rpc.Status` body: (code, message).

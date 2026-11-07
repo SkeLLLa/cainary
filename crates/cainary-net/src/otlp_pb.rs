@@ -12,7 +12,7 @@
 //!
 //! The output follows the OTLP JSON encoding: lowerCamelCase names, trace and span ids as
 //! lowercase hex, other bytes as base64, enums as numbers, 64-bit integers as decimal strings,
-//! non-finite doubles as `"NaN"` / `"Infinity"` / `"-Infinity"`, absent scalars and empty
+//! whole doubles below 2^53 as integers (as protojson does), non-finite doubles as `"NaN"` / `"Infinity"` / `"-Infinity"`, absent scalars and empty
 //! repeated fields omitted, a present message always emitted (even `{}`).
 //!
 //! Protobuf semantics: a singular scalar seen twice keeps the last, a singular message seen
@@ -487,6 +487,10 @@ fn base64(bytes: &[u8]) -> String {
 }
 
 fn double(v: f64) -> Value {
+    // protojson (Go, Java) writes a whole double without a fraction: 3.0 is `3`, -0.0 is `0`.
+    if v.fract() == 0.0 && v.abs() < 9_007_199_254_740_992.0 {
+        return Value::from(v as i64);
+    }
     match Number::from_f64(v) {
         Some(n) => Value::Number(n),
         None if v.is_nan() => Value::String("NaN".into()),
@@ -961,6 +965,57 @@ mod tests {
         let v = to_json(Signal::Metrics, &bytes).unwrap();
         let p = &v["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["gauge"]["dataPoints"][0];
         assert_eq!(p, &json!({"asDouble": "NaN"}));
+    }
+
+    #[test]
+    fn whole_doubles_are_integers_like_protojson() {
+        let gauge = |vals: &[f64]| {
+            let dps: Vec<Vec<u8>> = vals.iter().map(|v| ld(1, &fx64(4, v.to_bits()))).collect();
+            let bytes = ld(1, &ld(2, &ld(2, &ld(5, &dps.concat()))));
+            let v = to_json(Signal::Metrics, &bytes).unwrap();
+            v["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["gauge"]["dataPoints"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| p["asDouble"].clone())
+                .collect::<Vec<_>>()
+        };
+        let big = 9_007_199_254_740_992.0_f64; // 2^53
+        let got = gauge(&[
+            0.0,
+            -0.0,
+            3.0,
+            -3.0,
+            1e15,
+            big - 1.0,
+            0.5,
+            -2.5,
+            big,
+            -big,
+            1e300,
+        ]);
+        assert_eq!(
+            got,
+            [
+                json!(0),
+                json!(0),
+                json!(3),
+                json!(-3),
+                json!(1_000_000_000_000_000_i64),
+                json!(9_007_199_254_740_991_i64),
+                json!(0.5),
+                json!(-2.5),
+                json!(big),
+                json!(-big),
+                json!(1e300),
+            ]
+        );
+        // Integers print without a fraction, the rest keep theirs.
+        let text: Vec<String> = got.iter().map(Value::to_string).collect();
+        assert_eq!(&text[..4], ["0", "0", "3", "-3"]);
+        assert_eq!(&text[6..8], ["0.5", "-2.5"]);
+        assert!(got[0].is_i64() || got[0].is_u64());
+        assert!(got[8].is_f64() && got[9].is_f64());
     }
 
     #[test]
