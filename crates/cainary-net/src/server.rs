@@ -9,6 +9,7 @@ use crate::http::{self, HttpError, Limits, Response};
 use crate::logfile::LogFile;
 use crate::otlp::{self, Ctx, Route};
 use crate::output::{self, ErrorEvent, Event, FlagInfo, Hello};
+use crate::peer::Lookup;
 use crate::queue::{Queue, Refused, Semaphore};
 use crate::redflag::Matcher;
 use crate::setup;
@@ -26,6 +27,41 @@ pub const QUEUE_ITEMS: usize = 256;
 pub const QUEUE_BYTES: usize = 8 << 20;
 pub const WIRE_BUDGET: usize = 20 << 20;
 pub const ERRORS_PER_SECOND: u32 = 10;
+
+/// How many times the tables are read for one client before it counts as not found.
+#[cfg(target_os = "linux")]
+const PEER_LOOKUPS: u32 = 3;
+
+/// The refusal's message, in the 403 body and in the `error` line.
+pub const PEER_REFUSED: &str = "connection from another local user refused";
+
+/// Who may connect (design D3): the check that a client's socket belongs to the user running
+/// the collector. Nothing outside the tests can pick `Off` or `Fake`: the CLI builds its
+/// `Config` from `Tunables::default()` and has no flag or variable for either.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeerUid {
+    /// Linux: the client socket is found in `/proc/net/tcp{,6}` and its uid must be ours.
+    /// Elsewhere this is `Off`: there is no check on macOS.
+    System,
+    #[doc(hidden)]
+    Off,
+    /// What the lookup found, instead of asking the kernel; the uid is still compared with ours.
+    #[doc(hidden)]
+    Fake(Lookup),
+    /// The tables couldn't be read.
+    #[doc(hidden)]
+    FakeUnreadable,
+}
+
+impl PeerUid {
+    fn system() -> PeerUid {
+        if cfg!(target_os = "linux") {
+            PeerUid::System
+        } else {
+            PeerUid::Off
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Tunables {
@@ -47,6 +83,8 @@ pub struct Tunables {
     pub first_request_deadline: Duration,
     /// Takeover mode: at most one `error` line per handshake category in this window, with a count.
     pub tls_error_window: Duration,
+    /// Own-user check, before the handshake and before any byte is read.
+    pub peer_uid: PeerUid,
 }
 
 impl Default for Tunables {
@@ -65,6 +103,7 @@ impl Default for Tunables {
             error_window: Duration::from_secs(1),
             first_request_deadline: Duration::from_secs(30),
             tls_error_window: Duration::from_secs(10),
+            peer_uid: PeerUid::system(),
         }
     }
 }
@@ -239,6 +278,8 @@ struct Shared {
     /// Takeover mode: the configured hosts (empty in plain mode) and the ports a `Host` may name.
     tls_hosts: Vec<String>,
     host_ports: Vec<u16>,
+    /// Every port a client's socket may be connected to: the listening ports and the public one.
+    server_ports: Vec<u16>,
     #[cfg(feature = "tls")]
     tls: Option<crate::tls::Tls>,
     #[cfg(feature = "tls")]
@@ -508,6 +549,10 @@ pub fn start(cfg: Config, ready: Ready) -> Result<Server, SetupError> {
         .spawn(move || output::run(out_queue, out_cfg))
         .map_err(|e| setup_err(1, format!("can't start the output thread: {e}")))?;
 
+    let mut server_ports: Vec<u16> = addrs.iter().map(SocketAddr::port).collect();
+    server_ports.extend(&host_ports);
+    server_ports.sort_unstable();
+    server_ports.dedup();
     let error_window = cfg.tunables.error_window;
     let shared = Arc::new(Shared {
         ctx: Ctx {
@@ -526,6 +571,7 @@ pub fn start(cfg: Config, ready: Ready) -> Result<Server, SetupError> {
         hosts,
         tls_hosts,
         host_ports,
+        server_ports,
         #[cfg(feature = "tls")]
         tls: cfg.tls.map(|r| r.tls),
         #[cfg(feature = "tls")]
@@ -741,8 +787,81 @@ impl Wire for Clipped {
     }
 }
 
+/// Whether the client's socket belongs to the user running the collector. Anything but a single
+/// socket with our uid is a no: another user, no match, two matches, an unreadable table.
+fn peer_is_us(stream: &TcpStream, sh: &Shared) -> bool {
+    let found = match sh.t.peer_uid {
+        PeerUid::Off => return true,
+        PeerUid::Fake(l) => Ok(l),
+        PeerUid::FakeUnreadable => Err(()),
+        PeerUid::System => system_lookup(stream, &sh.server_ports),
+    };
+    match found {
+        Ok(Lookup::Uid(uid)) => own_uid() == Some(uid),
+        Ok(Lookup::NotFound | Lookup::Ambiguous) | Err(()) => false,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn own_uid() -> Option<u32> {
+    crate::peer_proc::euid().ok()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn own_uid() -> Option<u32> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn system_lookup(stream: &TcpStream, server_ports: &[u16]) -> Result<Lookup, ()> {
+    use crate::peer::{Endpoint, lookup_all};
+    let client = match stream.peer_addr().map_err(|_| ())? {
+        SocketAddr::V4(a) => Endpoint::v4(a.ip().octets(), a.port()),
+        SocketAddr::V6(a) => match a.ip().to_ipv4_mapped() {
+            Some(v4) => Endpoint::v4(v4.octets(), a.port()),
+            None => Endpoint::v6(a.ip().octets(), a.port()),
+        },
+    };
+    // The kernel writes the tables in chunks, so a row can be missed while connections come and
+    // go; look again before concluding the client isn't there.
+    let mut found = Lookup::NotFound;
+    for attempt in 0..PEER_LOOKUPS {
+        if attempt > 0 {
+            thread::sleep(Duration::from_millis(5));
+        }
+        let (tcp, tcp6) = crate::peer_proc::read_tables().map_err(|_| ())?;
+        found = lookup_all(&tcp, &tcp6, client, server_ports);
+        if matches!(found, Lookup::Uid(_)) {
+            break;
+        }
+    }
+    Ok(found)
+}
+
+/// No check off Linux (`PeerUid::system` is `Off` there), so nothing ever gets here.
+#[cfg(not(target_os = "linux"))]
+fn system_lookup(_: &TcpStream, _: &[u16]) -> Result<Lookup, ()> {
+    Err(())
+}
+
+/// The refusal: a plain 403 without reading the request, or on a TLS port just a close, with
+/// no handshake. One rate-limited `error` line either way.
+fn refuse_peer(stream: TcpStream, sh: &Shared) {
+    if sh.tls_hosts.is_empty() {
+        let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
+        let r = Response::error(403, PEER_REFUSED);
+        let _ = (&stream).write_all(&r.to_bytes());
+    }
+    let _ = stream.shutdown(Shutdown::Both);
+    sh.emit_error(ErrorEvent::http(403, None, None, PEER_REFUSED));
+}
+
 /// One accepted connection, in its own thread: plain, or the takeover's TLS handshake first.
 fn connection(stream: TcpStream, accepted_at: Instant, sh: &Shared) {
+    if !peer_is_us(&stream, sh) {
+        refuse_peer(stream, sh);
+        return;
+    }
     #[cfg(feature = "tls")]
     if let Some(tls) = &sh.tls {
         let _ = stream.set_read_timeout(Some(sh.t.read_timeout));

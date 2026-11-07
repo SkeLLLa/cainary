@@ -15,6 +15,8 @@ pub mod otlp;
 pub mod otlp_pb;
 pub mod output;
 pub mod peer;
+#[cfg(target_os = "linux")]
+pub mod peer_proc;
 pub mod privdrop;
 pub mod queue;
 pub mod redflag;

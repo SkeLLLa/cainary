@@ -1,5 +1,5 @@
 //! Which local user owns a loopback client's socket (design D3). Pure parsers over the text of
-//! `/proc/net/tcp` and `/proc/net/tcp6`; reading those files is the caller's business, so this
+//! `/proc/net/tcp` and `/proc/net/tcp6`; reading them is `peer_proc.rs`, so this
 //! module touches no file, no socket and no `std::net` type (guards N1/N2).
 //!
 //! A row matches when its local address is the client's socket, its remote address is a loopback
@@ -51,23 +51,29 @@ pub enum Lookup {
     Ambiguous,
 }
 
-/// Rows matching so far: how many, and the uid of the first.
-#[derive(Debug, Default, Clone, Copy)]
+/// Sockets matching so far: the uid of the first, and one key per distinct socket. The kernel
+/// writes the tables in chunks, so a busy machine can show one row twice in a single read; a row
+/// identical to an earlier one (same inode and socket pointer, only `sl` differs) is that socket
+/// again, not a second one.
+#[derive(Debug, Default, Clone)]
 struct Found {
-    count: u32,
     uid: u32,
+    keys: Vec<String>,
 }
 
 impl Found {
-    fn add(&mut self, uid: u32) {
-        if self.count == 0 {
+    /// `key` is the row without its `sl` column.
+    fn add(&mut self, uid: u32, key: String) {
+        if self.keys.is_empty() {
             self.uid = uid;
         }
-        self.count = self.count.saturating_add(1);
+        if !self.keys.contains(&key) {
+            self.keys.push(key);
+        }
     }
 
-    fn lookup(self) -> Lookup {
-        match self.count {
+    fn lookup(&self, count: usize) -> Lookup {
+        match count {
             0 => Lookup::NotFound,
             1 => Lookup::Uid(self.uid),
             _ => Lookup::Ambiguous,
@@ -134,7 +140,8 @@ fn scan(table: &[u8], client: Endpoint, server_ports: &[u16]) -> Found {
             continue;
         };
         if local == client && remote.is_loopback() && server_ports.contains(&remote.port) {
-            found.add(uid);
+            let key: Vec<&str> = line.split_ascii_whitespace().skip(1).collect();
+            found.add(uid, key.join(" "));
         }
     }
     found
@@ -142,18 +149,32 @@ fn scan(table: &[u8], client: Endpoint, server_ports: &[u16]) -> Found {
 
 /// Look `client` up in one table (the full text of `/proc/net/tcp` or `tcp6`).
 pub fn lookup(table: &[u8], client: Endpoint, server_ports: &[u16]) -> Lookup {
-    scan(table, client, server_ports).lookup()
+    let found = scan(table, client, server_ports);
+    found.lookup(found.keys.len())
 }
 
 /// Look `client` up in both tables; a match in each, or two in one, is `Ambiguous`.
 pub fn lookup_all(tcp: &[u8], tcp6: &[u8], client: Endpoint, server_ports: &[u16]) -> Lookup {
     let a = scan(tcp, client, server_ports);
     let b = scan(tcp6, client, server_ports);
+    // A socket is in one table, so a match in each is two sockets.
+    let uid = if a.keys.is_empty() { b.uid } else { a.uid };
     Found {
-        count: a.count.saturating_add(b.count),
-        uid: if a.count > 0 { a.uid } else { b.uid },
+        uid,
+        keys: Vec::new(),
     }
-    .lookup()
+    .lookup(a.keys.len() + b.keys.len())
+}
+
+/// The effective uid from the text of `/proc/self/status` (`Uid:\treal\teffective\tsaved\tfs`).
+/// Unlike the owner of `/proc/self`, which is root for a process that isn't dumpable (a binary
+/// with a file capability), this is always the process's own.
+pub fn parse_euid(status: &[u8]) -> Option<u32> {
+    let text = std::str::from_utf8(status).ok()?;
+    let line = text.lines().find_map(|l| l.strip_prefix("Uid:"))?;
+    let mut ids = line.split_ascii_whitespace();
+    let (_real, effective) = (ids.next()?, ids.next()?);
+    effective.parse().ok()
 }
 
 #[cfg(test)]
@@ -190,8 +211,12 @@ mod tests {
     const LO6: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
 
     fn row(sl: u32, local: &str, remote: &str, st: u8, uid: u32) -> String {
+        row_inode(sl, local, remote, st, uid, 12345)
+    }
+
+    fn row_inode(sl: u32, local: &str, remote: &str, st: u8, uid: u32, inode: u64) -> String {
         format!(
-            "{sl:4}: {local} {remote} {st:02X} 00000000:00000000 00:00000000 00000000 {uid:5}        0 12345 1 0000000000000000 20 4 30 10 -1\n"
+            "{sl:4}: {local} {remote} {st:02X} 00000000:00000000 00:00000000 00000000 {uid:5}        0 {inode} 1 0000000000000000 20 4 30 10 -1\n"
         )
     }
 
@@ -332,12 +357,15 @@ mod tests {
     }
 
     #[test]
-    fn duplicates_are_ambiguous() {
-        let r = row(0, &v4_str(LO, 5), &v4_str(LO, PORT), 1, 7);
-        let two = table(&[r.clone(), r.clone()]);
+    fn two_sockets_are_ambiguous() {
+        let local = v4_str(LO, 5);
+        let remote = v4_str(LO, PORT);
+        let a = row_inode(0, &local, &remote, 1, 7, 100);
+        let b = row_inode(1, &local, &remote, 1, 7, 101);
+        let two = table(&[a.clone(), b]);
         let client = Endpoint::v4(LO, 5);
         assert_eq!(lookup(&two, client, &[PORT]), Lookup::Ambiguous);
-        let one = table(&[r]);
+        let one = table(&[a]);
         assert_eq!(lookup_all(&one, &one, client, &[PORT]), Lookup::Ambiguous);
         assert_eq!(
             lookup_all(&one, &table(&[]), client, &[PORT]),
@@ -346,6 +374,27 @@ mod tests {
         assert_eq!(
             lookup_all(&table(&[]), &table(&[]), client, &[PORT]),
             Lookup::NotFound
+        );
+    }
+
+    /// The kernel can print a row twice when the table changes under a chunked read: `sl` differs,
+    /// the rest is the same socket.
+    #[test]
+    fn a_row_printed_twice_is_one_socket() {
+        let local = v4_str(LO, 5);
+        let remote = v4_str(LO, PORT);
+        let first = row_inode(2476, &local, &remote, 1, 7, 100);
+        let again = row_inode(2480, &local, &remote, 1, 7, 100);
+        let client = Endpoint::v4(LO, 5);
+        assert_eq!(
+            lookup(&table(&[first.clone(), again.clone()]), client, &[PORT]),
+            Lookup::Uid(7)
+        );
+        // An orphan (inode 0) in a different state is a different row.
+        let orphan = row_inode(2481, &local, &remote, 5, 0, 0);
+        assert_eq!(
+            lookup(&table(&[first, again, orphan]), client, &[PORT]),
+            Lookup::Ambiguous
         );
     }
 
@@ -427,5 +476,22 @@ mod tests {
             let _ = lookup(&t, client, &[PORT]);
             let _ = lookup_all(&t, &t, client, &[PORT]);
         }
+    }
+
+    #[test]
+    fn euid_is_the_second_uid_field() {
+        let status =
+            b"Name:\tcainary\nUmask:\t0022\nUid:\t1000\t1001\t1002\t1003\nGid:\t1\t2\t3\t4\n";
+        assert_eq!(parse_euid(status), Some(1001));
+    }
+
+    #[test]
+    fn euid_needs_a_well_formed_uid_line() {
+        assert_eq!(parse_euid(b"Name:\tx\n"), None);
+        assert_eq!(parse_euid(b"Uid:\t1000\n"), None);
+        assert_eq!(parse_euid(b"Uid:\t1000\tfoo\t1\t1\n"), None);
+        assert_eq!(parse_euid(b"Uid:\t1000\t-1\t1\t1\n"), None);
+        assert_eq!(parse_euid(b"\xff\xfe"), None);
+        assert_eq!(parse_euid(b""), None);
     }
 }

@@ -174,6 +174,7 @@ const NET_TLS: &str = "cainary-net/src/tls/";
 const NET_CA_FILE: &str = "cainary-net/src/tls/ca_file.rs";
 const NET_TLS_MOD: &str = "cainary-net/src/tls/mod.rs";
 const NET_TRUST_FILES: &str = "cainary-net/src/trust/files.rs";
+const NET_PEER_PROC: &str = "cainary-net/src/peer_proc.rs";
 const NET_PRIVDROP: &str = "cainary-net/src/privdrop.rs";
 const NET_LISTENFD: &str = "cainary-net/src/listenfd.rs";
 const NET_MAIN: &str = "cainary-net/src/main.rs";
@@ -405,7 +406,8 @@ fn check_n1(srcs: &[Src]) -> Vec<String> {
     bad
 }
 
-/// N2: `std::fs` only in `logfile.rs` (write) and `redflag/file.rs` (read); `OpenOptions` and
+/// N2: `std::fs` only in `logfile.rs` (write), `redflag/file.rs` (read) and `peer_proc.rs` (the
+/// kernel's `/proc/net/tcp{,6}`, read); `OpenOptions` and
 /// write-shaped calls only in `logfile.rs`; `std::env` and `std::process` only in `main.rs`.
 fn check_n2(srcs: &[Src]) -> Vec<String> {
     let mut bad = Vec::new();
@@ -417,6 +419,8 @@ fn check_n2(srcs: &[Src]) -> Vec<String> {
                         || s.rel == NET_REDFLAG_FILE
                         || s.rel == NET_CA_FILE
                         || s.rel == NET_TRUST_FILES
+                        // The kernel's /proc/net/tcp{,6} and /proc/self/status, read-only.
+                        || s.rel == NET_PEER_PROC
                 }
                 "env" | "process" => s.rel == NET_MAIN,
                 _ => true, // `net` is N1's
