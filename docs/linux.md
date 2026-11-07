@@ -399,3 +399,26 @@ collector.
 The tray looks for the collector binary in this order: `CAINARY_OTEL_DEBUG` in development mode,
 next to `cainary-tray`, then `/usr/bin/cainary-otel-debug`. It never searches `PATH`. Packaged
 Linux builds include the binary.
+
+## 11. Logs
+
+The tray keeps an in-memory activity log (`tray-model/src/logbook.rs`) for the Logs view. It is
+never written to disk. The newest 2,000 entries and 2 MiB (message plus detail bytes) are kept;
+older ones are evicted and counted, and "Copy all" starts with "N older entries dropped".
+
+An entry has:
+
+| Field | Meaning |
+| --- | --- |
+| `seq` | Increasing number; survives Clear. |
+| `ts` | UTC time, RFC 3339 in JSON (`2026-11-07T12:34:56Z`). |
+| `level` | `info`, `warn` or `error`. |
+| `source` | `tray`, `scan`, `collector`, `trust` or `privilege`. |
+| `message` | One line, at most 300 characters (cut with `…`). |
+| `detail` | Optional text, at most 16 KiB (cut with `… [truncated]`). |
+
+Control characters, bidi overrides/isolates and other invisible format characters are escaped as
+`\u{XXXX}` in both fields. Callers redact: never log batches, alerts, matches, values, stdin
+config, red-flag names or environment values. "Copy all" emits `HH:MM:SS LEVEL source message`
+lines with detail indented four spaces, an optional diagnostics block first, and the home
+directory shown as `~`.

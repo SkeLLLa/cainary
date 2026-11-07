@@ -146,6 +146,31 @@ pub fn static_json(version: &str, commit: &str, built: &str) -> Value {
     })
 }
 
+/// Escapes characters that could spoof or corrupt a single displayed line as `\u{XXXX}`:
+/// C0/C1 controls (including newline and tab), bidi overrides and isolates (U+202A–202E,
+/// U+2066–2069), directional marks (U+200E, U+200F, U+061C) and other invisible format
+/// characters (zero-width, line/paragraph separators, word joiners, BOM, soft hyphen).
+/// A superset of the tray's former `safe_output_line`.
+pub fn safe_line(text: &str) -> String {
+    let mut safe = String::with_capacity(text.len());
+    for ch in text.chars() {
+        let code = ch as u32;
+        if code <= 0x1f
+            || (0x7f..=0x9f).contains(&code)
+            || (0x200b..=0x200f).contains(&code)
+            || (0x2028..=0x202e).contains(&code)
+            || (0x2060..=0x2064).contains(&code)
+            || (0x2066..=0x2069).contains(&code)
+            || matches!(code, 0x00ad | 0x061c | 0x180e | 0xfeff)
+        {
+            safe.push_str(&format!("\\u{{{code:04X}}}"));
+        } else {
+            safe.push(ch);
+        }
+    }
+    safe
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

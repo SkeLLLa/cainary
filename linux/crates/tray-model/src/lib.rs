@@ -9,6 +9,7 @@ pub mod collector;
 pub mod fixtures;
 pub mod level;
 pub mod locate;
+pub mod logbook;
 pub mod notify_plan;
 pub mod report;
 pub mod runner;
