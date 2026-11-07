@@ -1134,6 +1134,7 @@ fn trust_through_the_binary_applies_reports_and_undoes() {
     assert_eq!(st["claudeCode"]["state"], "absent");
     assert_eq!(st["codex"]["state"], "absent");
     assert_eq!(st["caPath"], ca.display().to_string());
+    assert_eq!(st["owned"], json!([]));
 
     // Preview: exit 0, nothing written.
     let out = trust_bin(&home)

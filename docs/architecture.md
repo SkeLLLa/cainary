@@ -1283,7 +1283,7 @@ true` is set, and the `summary` always stays.
 | `batch` | `seq`, `signal` (`logs`, `metrics`, `traces`), `path` (`/v1/<signal>`, or the fixed marker `<custom path>` in takeover mode: request paths are never printed), `host` (takeover only: the validated host name), `bytes`, `vendor` (`claude-code`, `codex` or `null`), `service` (`{name, version}` or `null`), `catalog` (the catalog label or `null`), `records`, `notInCatalog`, `summary`, `resources` or `resourcesOmitted`, and `scanIncomplete` when set |
 | `alert` | `seq`, `pattern`, `preset`, `signal`, `event` (record name or `null`), `events` (up to 8 names), `attribute` (key label or `null`), `where` (`key`, `value`, `body`, `resource`, `scope` or `name`), `count`, `match` |
 | `trust` | one per `--trust` call: `target` (`claude-code`, `codex`), `action` (`preview`, `applied`, `already`, `undone`, `nothing-to-undo`, `refused`), `message` (fixed text), `settingsPath`, `backupPath`, `key` (`NODE_EXTRA_CA_CERTS` or `null`), `from`, `to`, `bundlePath`, `command` (`null` where not applicable) |
-| `trust-status` | `claudeCode` (`{state: applied\|absent\|other-value\|managed, settingsPath, value}`), `codex` (`{state: ready\|absent, bundlePath, command}`), `caPath`, `caExists` (the collector certificate file exists), `note` (a sentence when an interrupted change was just finished or cleared, else `null`) |
+| `trust-status` | `claudeCode` (`{state: applied\|absent\|other-value\|managed, settingsPath, value}`), `codex` (`{state: ready\|absent, bundlePath, command}`), `caPath`, `caExists` (the collector certificate file exists), `note` (a sentence when an interrupted change was just finished or cleared, or that the state file is newer than this build; else `null`), `owned` (additive: every file cAInary recorded as its own, `[{mode, target, kind: settings\|backup\|bundle, path, key, fingerprints, foreign, sha256}]`, §12.11) |
 | `error` | `source`, then either `status`, `method`, `path`, `message` (for `http`) or `dropped`, `message`, or `message` alone |
 
 - `summary` is `{identity: [keys], resource: [keys], records: [{name, kind, count, known, what?,
@@ -1498,6 +1498,35 @@ bundles), `claude.rs` and `codex.rs` (the two targets).
   `env CODEX_CA_CERTIFICATE=<quoted path> codex`. Codex replaces the system roots with that one
   bundle, hence the combined file. No Codex configuration or shell file is touched; `--undo`
   deletes the bundle.
+- **State file v2 (`otel-debug-trust.json`).** Top-level `"v": 2`; a `modes` table keyed by mode
+  name (`takeover` is the only one; `proxy` is added later without a schema change) holding
+  `{caFile, fingerprint}` (SHA-256 of the certificate's DER, refreshed on every write); then
+  `claudeCode` and `codex`, each with its enabled `modes` and the sha-256 hex of what cAInary last
+  wrote: Claude Code's `newSha` (the settings file as left), `origSha` (the backup's bytes) and
+  `bundleSha` (the combined bundle), Codex's `bundleSha`, plus `originalFingerprints`, the
+  fingerprints of the user's own certificates the Claude Code bundle preserved (Codex's system
+  roots are not the user's and aren't listed). The `pending` record is unchanged.
+- **Migration.** A file without `v` (the first shape) reads as v2 with only `takeover` enabled and
+  no recorded bundle hashes (such a bundle is adopted as it is), and is rewritten as v2 by the next
+  successful write (a command that changes something, or the bundle refresh of a `--tls` start). A
+  `v` above 2, or not a number, is read for the status (which says so in `note`) but **every**
+  write, undo and refresh refuses: "trust state was written by a newer cAInary; refusing to change
+  it". The file is left byte for byte.
+- **Ownership rule.** Before cAInary overwrites or deletes a file it owns, it compares the file's
+  sha-256 with the recorded one. A different file (edited by the user or another program, or no
+  longer a plain file) is refused for that target and left untouched, and the status marks it
+  `foreign`: the Codex bundle on apply and undo; the Claude Code bundle on apply, undo, recovery
+  and refresh (a refresh warns and skips it). A **missing** file is not foreign: the status lists
+  it with `sha256: null`, a write recreates it, and an undo only clears the record. The settings
+  file is shared with Claude Code, so it is never compared as a whole: it is `foreign` only when
+  `env.NODE_EXTRA_CA_CERTS` no longer holds the value cAInary wrote (the existing "changed since
+  cAInary wrote it" refusal), and the backup only when its bytes differ from the recorded ones.
+- **`owned[]` in `trust-status`.** One entry per owned file and enabled mode: `mode`, `target`
+  (`claude-code`, `codex`), `kind` (`settings`, `backup`, `bundle`), `path`, `key` (the settings
+  key, else `null`), `fingerprints` (for a bundle: the preserved originals, then the mode's
+  certificate; else `[]`), `foreign` and `sha256` (the file now, `null` if missing). The text
+  status adds one `owned: <mode> <target> <kind> (<path>)` line per entry, with ` foreign` when
+  it is. Every other field of the line is unchanged, so older readers ignore `owned`.
 - **Each `--tls` start** regenerates the recorded bundles from their originals plus the new CA,
   so the paths never change; the client still has to be restarted. Nothing is refreshed, and a
   warning is printed, if a source file has gone.

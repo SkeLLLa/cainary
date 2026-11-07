@@ -21,15 +21,20 @@ pub use codex::codex;
 use crate::jsonedit;
 use crate::setup::quote;
 use crate::tls::ca_file::{CA_FILE, CaDir};
-use bundle::{bundle, collector_ca, read_certs, system_roots};
+use bundle::{bundle, collector_ca, read_certs, sha_of, system_roots};
 use cainary_core::harness::{Harness, ToolHome};
-use claude::{inspect_note, managed_sets_key, open_settings, recover};
+use claude::{inspect_note, managed_sets_key, open_settings, recover, settings_view, sibling_sha};
 use codex::codex_command;
 use files::{lock_trust, read_in, write_atomic};
 use serde_json::{Map, Value, json};
-use state::{State, read_state};
+use state::{Owned, State, check_owned, read_state, save_state};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
+
+/// The one mode that exists so far (the `modes` table of the state file is keyed by name).
+pub(super) const TAKEOVER: &str = "takeover";
+/// Said for every write or undo when the state file has a schema this build doesn't know.
+pub(super) const NEWER: &str = "trust state was written by a newer cAInary; refusing to change it";
 
 pub const KEY: &str = "NODE_EXTRA_CA_CERTS";
 pub const CLAUDE_BUNDLE: &str = "otel-debug-claude-bundle.pem";
@@ -305,21 +310,136 @@ pub fn status_json(env: &Env<'_>, ts: &str) -> String {
     );
     m.insert("caPath".into(), json!(ca_path));
     m.insert("caExists".into(), json!(ca_exists));
+    let note = note.or_else(|| state.newer.then(|| NEWER.to_string()));
     m.insert("note".into(), json!(note));
+    m.insert(
+        "owned".into(),
+        Value::Array(owned_entries(&state, claude_dir.as_ref())),
+    );
     format!("{}\n", Value::Object(m))
+}
+
+/// One `owned[]` entry of the status line.
+#[allow(clippy::too_many_arguments)]
+fn owned_entry(
+    mode: &str,
+    target: Target,
+    kind: &str,
+    path: &str,
+    key: Option<&str>,
+    fingerprints: &[String],
+    sha: Option<String>,
+    foreign: bool,
+) -> Value {
+    json!({"mode": mode, "target": target.as_str(), "kind": kind, "path": path, "key": key,
+           "fingerprints": fingerprints, "foreign": foreign, "sha256": sha})
+}
+
+/// Every file cAInary recorded as its own, with whether it is still what cAInary wrote. A file
+/// that is gone is not foreign (`sha256` is null). The settings file is shared with Claude Code,
+/// so it is foreign only when our key no longer holds our value.
+fn owned_entries(state: &State, ca: Option<&CaDir>) -> Vec<Value> {
+    let mut out = Vec::new();
+    let collector_fp: Vec<String> = state
+        .modes
+        .get(TAKEOVER)
+        .map(|m| vec![m.fingerprint.clone()])
+        .unwrap_or_default();
+    let bundle_state = |name: &str, written: Option<&str>| match ca {
+        Some(d) => (
+            check_owned(d, name, written) == Owned::Foreign,
+            read_in(d, name).ok().flatten().map(|b| sha_of(&b)),
+        ),
+        None => (false, None),
+    };
+    if let Some(cs) = &state.claude {
+        let dir = Path::new(&cs.settings_path).parent();
+        let bundle_path = ca.map(|d| d.path().join(CLAUDE_BUNDLE).display().to_string());
+        for mode in &cs.modes {
+            let view = settings_view(&cs.settings_path);
+            let foreign = view
+                .as_ref()
+                .is_some_and(|(_, v)| v.as_deref() != Some(cs.written.as_str()));
+            out.push(owned_entry(
+                mode,
+                Target::ClaudeCode,
+                "settings",
+                &cs.settings_path,
+                Some(KEY),
+                &[],
+                view.map(|(s, _)| s),
+                foreign,
+            ));
+            if let (Some(name), Some(dir)) = (&cs.backup, dir) {
+                let sha = sibling_sha(&cs.settings_path, name);
+                let foreign = sha.is_some() && cs.orig_sha.is_some() && sha != cs.orig_sha;
+                out.push(owned_entry(
+                    mode,
+                    Target::ClaudeCode,
+                    "backup",
+                    &dir.join(name).display().to_string(),
+                    None,
+                    &[],
+                    sha,
+                    foreign,
+                ));
+            }
+            if let Some(bp) = bundle_path.as_ref().filter(|p| **p == cs.written) {
+                let (foreign, sha) = bundle_state(CLAUDE_BUNDLE, cs.bundle_sha.as_deref());
+                let fps: Vec<String> = cs.orig_fps.iter().chain(&collector_fp).cloned().collect();
+                out.push(owned_entry(
+                    mode,
+                    Target::ClaudeCode,
+                    "bundle",
+                    bp,
+                    None,
+                    &fps,
+                    sha,
+                    foreign,
+                ));
+            }
+        }
+    }
+    if let Some(c) = &state.codex {
+        for mode in &c.modes {
+            let (foreign, sha) = bundle_state(CODEX_BUNDLE, c.bundle_sha.as_deref());
+            out.push(owned_entry(
+                mode,
+                Target::Codex,
+                "bundle",
+                &c.bundle_path,
+                None,
+                &collector_fp,
+                sha,
+                foreign,
+            ));
+        }
+    }
+    out
 }
 
 /// A person's version of the status.
 pub fn status_text(env: &Env<'_>) -> String {
     let v: Value = serde_json::from_str(&status_json(env, "")).expect("our own JSON");
     let s = |p: &Value| p.as_str().unwrap_or("-").to_string();
-    format!(
+    let mut text = format!(
         "claude code: {} ({})\ncodex: {}\ncertificate: {}\n",
         s(&v["claudeCode"]["state"]),
         crate::output::escape(&s(&v["claudeCode"]["settingsPath"])),
         s(&v["codex"]["state"]),
         crate::output::escape(&s(&v["caPath"])),
-    )
+    );
+    for o in v["owned"].as_array().into_iter().flatten() {
+        text.push_str(&format!(
+            "owned: {} {} {} ({}){}\n",
+            s(&o["mode"]),
+            s(&o["target"]),
+            s(&o["kind"]),
+            crate::output::escape(&s(&o["path"])),
+            if o["foreign"] == true { " foreign" } else { "" },
+        ));
+    }
+    text
 }
 
 // ── each `--tls` start ───────────────────────────────────────────────────────────────────────
@@ -340,9 +460,12 @@ pub fn refresh(env: &Env<'_>) -> Vec<String> {
             ];
         }
     };
-    let state = read_state(&ca_dir);
+    let mut state = read_state(&ca_dir);
     if state.is_empty() {
         return warnings;
+    }
+    if state.newer {
+        return vec![format!("{NEWER}; the trust bundles were not refreshed")];
     }
     let ca = match collector_ca(&ca_dir) {
         Ok(c) => c,
@@ -352,7 +475,8 @@ pub fn refresh(env: &Env<'_>) -> Vec<String> {
             ];
         }
     };
-    if let Some(cs) = &state.claude {
+    let mut changed = false;
+    if let Some(cs) = state.claude.as_mut() {
         let bundle_path = ca_dir.path().join(CLAUDE_BUNDLE).display().to_string();
         if cs.written == bundle_path {
             let certs = cs
@@ -360,28 +484,46 @@ pub fn refresh(env: &Env<'_>) -> Vec<String> {
                 .as_deref()
                 .and_then(|p| read_certs(Path::new(p)));
             match certs {
+                _ if !check_owned(&ca_dir, CLAUDE_BUNDLE, cs.bundle_sha.as_deref()).may_replace() => {
+                    warnings.push("the Claude Code trust bundle was changed since cAInary wrote it; it was not refreshed".into());
+                }
                 Some(certs) => {
                     let b = bundle(&certs, &ca);
                     if write_atomic(&ca_dir, CLAUDE_BUNDLE, b.as_bytes(), 0o644).is_err() {
                         warnings.push("the Claude Code trust bundle could not be rewritten".into());
+                    } else {
+                        cs.bundle_sha = Some(sha_of(b.as_bytes()));
+                        changed = true;
                     }
                 }
                 None => warnings.push("the file your Claude Code bundle was made from can't be read; the bundle was not refreshed".into()),
             }
         }
     }
-    if state.codex_bundle.is_some() {
+    if let Some(cx) = state.codex.as_mut() {
         match system_roots(env.harness) {
+            _ if !check_owned(&ca_dir, CODEX_BUNDLE, cx.bundle_sha.as_deref()).may_replace() => {
+                warnings.push(
+                    "the Codex bundle was changed since cAInary wrote it; it was not refreshed"
+                        .into(),
+                );
+            }
             Some(roots) => {
                 let b = bundle(&roots, &ca);
                 if write_atomic(&ca_dir, CODEX_BUNDLE, b.as_bytes(), 0o644).is_err() {
                     warnings.push("the Codex bundle could not be rewritten".into());
+                } else {
+                    cx.bundle_sha = Some(sha_of(b.as_bytes()));
+                    changed = true;
                 }
             }
             None => warnings.push(
                 "no system certificate bundle was found; the Codex bundle was not refreshed".into(),
             ),
         }
+    }
+    if changed && save_state(&ca_dir, &state).is_err() {
+        warnings.push("the trust state could not be updated".into());
     }
     warnings
 }
@@ -655,7 +797,8 @@ mod tests {
                 "codex",
                 "caPath",
                 "caExists",
-                "note"
+                "note",
+                "owned"
             ]
         );
         assert_eq!(v["caExists"], true);

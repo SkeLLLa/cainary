@@ -1,16 +1,19 @@
 //! The Codex target: a combined certificate bundle and the command that uses it. Nothing in
 //! Codex's own configuration is touched.
 
-use super::bundle::{bundle, collector_ca, system_roots};
+use super::bundle::{bundle, collector_ca, sha_of, system_roots};
 use super::files::{lock_trust, read_in, unlink_in, write_atomic};
-use super::state::{read_state, save_state};
-use super::{Action, BUSY, CODEX_BUNDLE, Env, Line, Target, dir_error, lock_wait};
+use super::state::{CodexState, Owned, check_owned, read_state, save_state};
+use super::{Action, BUSY, CODEX_BUNDLE, Env, Line, NEWER, TAKEOVER, Target, dir_error, lock_wait};
 use crate::setup::quote;
 use crate::tls::ca_file::CaDir;
 
 pub(super) fn codex_command(path: &str) -> String {
     format!("env CODEX_CA_CERTIFICATE={} codex", quote(path))
 }
+
+const FOREIGN_BUNDLE: &str =
+    "The Codex certificate bundle was changed since cAInary wrote it; leaving it untouched.";
 
 pub fn codex(env: &Env<'_>, undo: bool) -> Line {
     let t = Target::Codex;
@@ -36,9 +39,24 @@ pub fn codex(env: &Env<'_>, undo: bool) -> Line {
     };
     let path = ca_dir.path().join(CODEX_BUNDLE).display().to_string();
     let mut state = read_state(&ca_dir);
+    if state.newer {
+        return Line::refused(t, NEWER);
+    }
+    // The bundle is cAInary's own file: if its bytes are no longer what cAInary wrote, someone
+    // else edited it, and it is neither rewritten nor deleted.
+    let own = check_owned(
+        &ca_dir,
+        CODEX_BUNDLE,
+        state.codex.as_ref().and_then(|c| c.bundle_sha.as_deref()),
+    );
+    if !own.may_replace() {
+        let mut l = Line::refused(t, FOREIGN_BUNDLE);
+        l.bundle_path = Some(path);
+        return l;
+    }
     if undo {
-        let existed = matches!(read_in(&ca_dir, CODEX_BUNDLE), Ok(Some(_)));
-        if !existed && state.codex_bundle.is_none() {
+        let existed = own != Owned::Missing;
+        if !existed && state.codex.is_none() {
             return Line::new(
                 t,
                 Action::NothingToUndo,
@@ -48,7 +66,7 @@ pub fn codex(env: &Env<'_>, undo: bool) -> Line {
         if unlink_in(&ca_dir, CODEX_BUNDLE).is_err() {
             return Line::refused(t, "The Codex bundle could not be removed.");
         }
-        state.codex_bundle = None;
+        state.codex = None;
         let _ = save_state(&ca_dir, &state);
         let mut l = Line::new(t, Action::Undone, "Removed the Codex certificate bundle.");
         l.bundle_path = Some(path);
@@ -69,7 +87,11 @@ pub fn codex(env: &Env<'_>, undo: bool) -> Line {
     if !same && write_atomic(&ca_dir, CODEX_BUNDLE, text.as_bytes(), 0o644).is_err() {
         return Line::refused(t, "The Codex bundle could not be written.");
     }
-    state.codex_bundle = Some(path.clone());
+    state.codex = Some(CodexState {
+        bundle_path: path.clone(),
+        bundle_sha: Some(sha_of(text.as_bytes())),
+        modes: vec![TAKEOVER.to_string()],
+    });
     if save_state(&ca_dir, &state).is_err() {
         return Line::refused(t, "The state file could not be written.");
     }

@@ -81,6 +81,43 @@ pub(super) fn collector_ca(ca: &CaDir) -> Result<String, &'static str> {
     }
 }
 
+/// SHA-256 of a certificate's DER (what browsers and `openssl x509 -fingerprint` show). A block
+/// that isn't valid base64 is hashed as its text, so every block still gets a stable value.
+pub(super) fn cert_fingerprint(block: &str) -> String {
+    let body: String = block.lines().filter(|l| !l.starts_with("-----")).collect();
+    match unbase64(&body) {
+        Some(der) if !der.is_empty() => sha_of(&der),
+        _ => sha_of(block.as_bytes()),
+    }
+}
+
+fn unbase64(s: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    let (mut acc, mut bits) = (0u32, 0);
+    for c in s
+        .trim_end_matches('=')
+        .bytes()
+        .filter(|b| !b.is_ascii_whitespace())
+    {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        };
+        acc = (acc << 6) | u32::from(v);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+            acc &= (1 << bits) - 1;
+        }
+    }
+    Some(out)
+}
+
 pub(super) fn sha_of(bytes: &[u8]) -> String {
     crate::tls::ca::sha256_hex(bytes)
 }

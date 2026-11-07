@@ -1,15 +1,19 @@
 //! The Claude Code target: one key (`env.NODE_EXTRA_CA_CERTS`) in the user's settings, edited
 //! with a backup and a recorded transaction, and undone from that record.
 
-use super::bundle::{COLLECTOR_MISSING, bundle, collector_ca, read_certs, sha_of};
+use super::bundle::{
+    COLLECTOR_MISSING, bundle, cert_fingerprint, collector_ca, read_certs, sha_of,
+};
 use super::files::{
     Done, MAX_FILE, Snapshot, TrustLock, Why, backup, discard, lock_trust, plain_name, publish,
     read_in, read_snapshot, stage, unlink_checked, unlink_in, write_atomic,
 };
-use super::state::{ClaudeState, Pending, PendingKind, State, read_state, save_state};
+use super::state::{
+    ClaudeState, Pending, PendingKind, State, check_owned, drop_owned, read_state, save_state,
+};
 use super::{
-    Action, BUSY, CLAUDE_BUNDLE, Env, KEY, Line, Mode, ORG_NOTE, RESTART, Target, dir_error, hook,
-    lock_wait, now_string, stamp, with_shell,
+    Action, BUSY, CLAUDE_BUNDLE, Env, KEY, Line, Mode, NEWER, ORG_NOTE, RESTART, TAKEOVER, Target,
+    dir_error, hook, lock_wait, now_string, stamp, with_shell,
 };
 use crate::jsonedit::{self, EditError};
 use crate::tls::ca_file::{CA_FILE, CaDir};
@@ -57,6 +61,7 @@ const RESTORED: &str =
 const UNCERTAIN: &str = "The settings file may have been changed, but that could not be confirmed on disk. Run cainary-otel-debug --trust-status to check and finish.";
 const CHANGED: &str =
     "Your Claude Code settings changed while editing; close Claude Code and try again.";
+const FOREIGN_BUNDLE: &str = "The Claude Code certificate bundle was changed since cAInary wrote it; leaving it untouched, and your settings too.";
 const WHERE_CHANGED: &str = "Your Claude Code settings location changed since cAInary edited it (CLAUDE_CONFIG_DIR?); leaving it alone.";
 
 pub(super) struct Settings {
@@ -180,6 +185,9 @@ pub fn claude_code(env: &Env<'_>, mode: Mode) -> Line {
                 Ok(None) => return Line::refused(t, BUSY),
                 Err(_) => return Line::refused(t, "The trust lock could not be taken."),
             };
+            if read_state(&ca).newer {
+                return Line::refused(t, NEWER);
+            }
             let note = recover(env, &ca, &lock);
             let line = if undo {
                 claude_undo(env, false, &ca, Some(&lock))
@@ -283,8 +291,8 @@ fn claude_apply(
     }
 
     // What to write, and the bundle it may need.
-    let (written, bundle_text): (String, Option<String>) = match &existing {
-        None => (ca_path.clone(), None),
+    let (written, bundle_text, orig_fps): (String, Option<String>, Vec<String>) = match &existing {
+        None => (ca_path.clone(), None, Vec::new()),
         Some(p) => {
             let collector = match ca.map(collector_ca) {
                 Some(Ok(c)) => c,
@@ -308,7 +316,8 @@ fn claude_apply(
                 l.from = Some(p.clone());
                 return l;
             };
-            (bundle_path.clone(), Some(bundle(&certs, &collector)))
+            let fps = certs.iter().map(|c| cert_fingerprint(c)).collect();
+            (bundle_path.clone(), Some(bundle(&certs, &collector)), fps)
         }
     };
     let new_text = match &doc {
@@ -338,6 +347,21 @@ fn claude_apply(
     }
     if bundle_text.as_ref().is_some_and(|b| b.len() > MAX_FILE) {
         return too_big("The combined bundle would be over 1 MiB; refusing to make it.");
+    }
+    // A bundle cAInary wrote earlier is only replaced if it is still what cAInary wrote.
+    if bundle_text.is_some()
+        && let Some(d) = ca
+        && !check_owned(
+            d,
+            CLAUDE_BUNDLE,
+            state.claude.as_ref().and_then(|c| c.bundle_sha.as_deref()),
+        )
+        .may_replace()
+    {
+        let mut l = Line::refused(t, FOREIGN_BUNDLE);
+        fill_paths(&mut l, &settings);
+        l.bundle_path = Some(bundle_path);
+        return l;
     }
     let stamp_now = stamp(&now_string(h));
     let planned_backup = settings
@@ -383,6 +407,9 @@ fn claude_apply(
         orig_sha: settings.snapshot.as_ref().map(|s| sha_of(&s.bytes)),
         backup: None,
         new_sha: Some(sha_of(new_text.as_bytes())),
+        modes: vec![TAKEOVER.to_string()],
+        bundle_sha: bundle_text.as_ref().map(|b| sha_of(b.as_bytes())),
+        orig_fps,
     };
     // 1. The transaction record, durable, before anything changes.
     let mut pending_state = state.clone();
@@ -532,6 +559,15 @@ fn claude_undo(env: &Env<'_>, dry_run: bool, ca_dir: &CaDir, lock: Option<&Trust
         l.from = current;
         return l;
     }
+    let bundle_here = ca_dir.path().join(CLAUDE_BUNDLE).display().to_string();
+    if cs.written == bundle_here
+        && !check_owned(ca_dir, CLAUDE_BUNDLE, cs.bundle_sha.as_deref()).may_replace()
+    {
+        let mut l = Line::refused(t, FOREIGN_BUNDLE);
+        fill_paths(&mut l, &settings);
+        l.bundle_path = Some(bundle_here);
+        return l;
+    }
     // What the file becomes: the exact original bytes if nothing else touched it, else just
     // this key put back (or removed).
     let snap_bytes = settings
@@ -569,7 +605,6 @@ fn claude_undo(env: &Env<'_>, dry_run: bool, ca_dir: &CaDir, lock: Option<&Trust
             }
         }
     };
-    let bundle_here = ca_dir.path().join(CLAUDE_BUNDLE).display().to_string();
     let mut l = Line::new(t, Action::Undone, "");
     fill_paths(&mut l, &settings);
     l.from = Some(cs.written.clone());
@@ -725,7 +760,7 @@ fn stale_record(ca: &CaDir, mut state: State, dry_run: bool) -> Line {
 fn finish_undo(ca: &CaDir, state: &State, cs: &ClaudeState) -> Result<(), &'static str> {
     const LEFT: &str = "The settings were restored, but the record of the change could not be cleared. Run cainary-otel-debug --trust-status to finish it.";
     if cs.written == ca.path().join(CLAUDE_BUNDLE).display().to_string()
-        && unlink_in(ca, CLAUDE_BUNDLE).is_err()
+        && drop_owned(ca, CLAUDE_BUNDLE, cs.bundle_sha.as_deref()).is_err()
     {
         return Err(LEFT);
     }
@@ -741,6 +776,24 @@ const PENDING_NOTE: &str = "An interrupted Claude Code trust change is pending; 
 /// nothing.
 pub(super) fn inspect_note(_env: &Env<'_>, ca: &CaDir) -> Option<String> {
     read_state(ca).pending.map(|_| PENDING_NOTE.to_string())
+}
+
+/// For the status: the settings file at `path` as it is now, as (SHA-256, the value of our key);
+/// `None` when there is no file or it can't be read.
+pub(super) fn settings_view(path: &str) -> Option<(String, Option<String>)> {
+    let dir = CaDir::open_shared(Path::new(path).parent()?, false).ok()??;
+    let bytes = read_snapshot(&dir, "settings.json").ok()??.bytes;
+    let value = std::str::from_utf8(&bytes)
+        .ok()
+        .and_then(|t| jsonedit::parse(t).ok())
+        .and_then(|d| d.env_value(KEY).ok().flatten());
+    Some((sha_of(&bytes), value))
+}
+
+/// For the status: SHA-256 of a file in the settings directory (a backup), if it exists.
+pub(super) fn sibling_sha(settings_path: &str, name: &str) -> Option<String> {
+    let dir = CaDir::open_shared(Path::new(settings_path).parent()?, false).ok()??;
+    read_in(&dir, name).ok().flatten().map(|b| sha_of(&b))
 }
 
 /// What the settings file holds now, by hash, for the file a transaction was about: `None` if the
@@ -764,6 +817,9 @@ pub(super) fn recover(env: &Env<'_>, ca: &CaDir, _lock: &TrustLock) -> Option<St
     let _ = env;
     let state = read_state(ca);
     let p = state.pending.clone()?;
+    if state.newer {
+        return Some(NEWER.to_string());
+    }
     let Some(now) = settings_sha(&p) else {
         return Some("An interrupted Claude Code trust change was found, but the settings can't be inspected right now; run --trust-status again later.".into());
     };
@@ -778,7 +834,7 @@ pub(super) fn recover(env: &Env<'_>, ca: &CaDir, _lock: &TrustLock) -> Option<St
             PendingKind::Undo => {
                 next.claude = None;
                 if p.claude.written == ca.path().join(CLAUDE_BUNDLE).display().to_string()
-                    && unlink_in(ca, CLAUDE_BUNDLE).is_err()
+                    && drop_owned(ca, CLAUDE_BUNDLE, p.claude.bundle_sha.as_deref()).is_err()
                 {
                     return Some("An interrupted undo was found, but its bundle could not be removed; it will be tried again.".into());
                 }
