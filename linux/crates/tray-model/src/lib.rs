@@ -13,6 +13,7 @@ pub mod notify_plan;
 pub mod report;
 pub mod runner;
 pub mod schedule;
+pub mod secret;
 pub mod settings;
 pub mod store;
 pub mod strings;
