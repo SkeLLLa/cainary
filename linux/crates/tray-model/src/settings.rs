@@ -85,6 +85,12 @@ pub struct Settings {
     /// Whether the popup's not-installed app rows are expanded.
     #[serde(rename = "notInstalledExpanded")]
     pub not_installed_expanded: bool,
+    /// Whether the Details window's Scan sidebar section is collapsed.
+    #[serde(rename = "scanCollapsed")]
+    pub scan_collapsed: bool,
+    /// Whether the Details window's Live sidebar section is collapsed.
+    #[serde(rename = "liveCollapsed")]
+    pub live_collapsed: bool,
     /// The opt-in local OTel receiver. Its child settings are versioned independently of tray UI.
     pub collector: CollectorSettings,
 }
@@ -345,6 +351,8 @@ impl Default for Settings {
             details_width: 780,
             details_height: 560,
             not_installed_expanded: false,
+            scan_collapsed: false,
+            live_collapsed: false,
             collector: CollectorSettings::default(),
         }
     }

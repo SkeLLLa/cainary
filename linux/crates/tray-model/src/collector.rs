@@ -1,6 +1,8 @@
 //! Pure decoder and bounded view model for `cainary-otel-debug` JSON-lines v1.
 
-use std::collections::{HashMap, VecDeque};
+use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::mem::MaybeUninit;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -555,6 +557,13 @@ impl Model {
         self.message = reason.into();
     }
 
+    /// Clears the retained feed without changing the collector's state or error history.
+    pub fn clear(&mut self) {
+        self.batches = VecDeque::new();
+        self.alerts = VecDeque::new();
+        self.retained_bytes = 0;
+    }
+
     pub fn failed(&mut self, reason: impl Into<String>) {
         self.state = State::Failed;
         self.message = reason.into();
@@ -701,6 +710,8 @@ impl Model {
             .map(AlertView::from)
             .collect::<Vec<_>>();
         let errors = self.errors.iter().rev().map(ErrorView::from).collect();
+        let rows = build_feed_rows(&batches, &alerts, format_local_clock);
+        let flag_groups = build_flag_groups(&alerts, format_local_clock);
         View {
             state: match self.state {
                 State::Off => "off",
@@ -727,6 +738,8 @@ impl Model {
             stderr_tail: self.stderr_tail.clone(),
             batches,
             alerts,
+            rows,
+            flag_groups,
             errors,
             retained_bytes: self.retained_bytes,
         }
@@ -750,6 +763,8 @@ pub struct View {
     pub stderr_tail: String,
     pub batches: Vec<BatchView>,
     pub alerts: Vec<AlertView>,
+    pub rows: Vec<FeedRow>,
+    pub flag_groups: Vec<FlagGroup>,
     pub errors: Vec<ErrorView>,
     pub retained_bytes: usize,
 }
@@ -854,9 +869,10 @@ impl From<&SummaryAttribute> for SummaryAttributeView {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AlertView {
+    pub seq: u64,
     pub timestamp: String,
     pub pattern: String,
     pub preset: bool,
@@ -872,6 +888,7 @@ impl From<&StoredAlert> for AlertView {
     fn from(stored: &StoredAlert) -> Self {
         let alert = &stored.alert;
         Self {
+            seq: alert.seq,
             timestamp: alert.ts.clone(),
             pattern: alert.pattern.clone(),
             preset: alert.preset,
@@ -886,6 +903,439 @@ impl From<&StoredAlert> for AlertView {
             count: alert.count,
             matched: alert.matched.clone(),
         }
+    }
+}
+
+/// One stable, presentation-ready row in the collector feed.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedRow {
+    pub key: String,
+    pub timestamp: String,
+    pub time: String,
+    pub size: String,
+    pub source: String,
+    pub signal: String,
+    pub records: u64,
+    pub flags: Vec<FeedFlag>,
+    pub flag_details: Vec<AlertView>,
+    pub not_in_catalog: u64,
+    pub is_alert: bool,
+    pub haystack: String,
+    pub batch_id: Option<u64>,
+    pub alert: Option<AlertView>,
+}
+
+/// The compact flag label shown in a feed row. Details stay on `FeedRow::flag_details`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedFlag {
+    pub pattern: String,
+    pub count: u64,
+}
+
+/// Red Flags tab groups, in order of the most recent alert for each pattern.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlagGroup {
+    pub pattern: String,
+    pub preset: bool,
+    pub hits: u64,
+    pub total: u64,
+    pub last: String,
+    pub last_time: String,
+    pub events: Vec<String>,
+    pub attributes: Vec<String>,
+    pub signals: Vec<String>,
+    pub matched: String,
+}
+
+/// Inputs used by the pure feed filter. `signals` contains the enabled signal names.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FeedFilter {
+    pub signals: HashSet<String>,
+    pub flagged_only: bool,
+    pub uncataloged_only: bool,
+    pub search_text: String,
+    pub pattern: String,
+}
+
+/// Returns whether a precomputed row passes the feed's user-controlled filters.
+pub fn matches(row: &FeedRow, filter: &FeedFilter) -> bool {
+    if !filter.signals.contains(&row.signal) {
+        return false;
+    }
+    if filter.flagged_only && row.flags.is_empty() {
+        return false;
+    }
+    if !filter.pattern.is_empty() && !row.flags.iter().any(|flag| flag.pattern == filter.pattern) {
+        return false;
+    }
+    if filter.uncataloged_only && row.not_in_catalog == 0 {
+        return false;
+    }
+    let search = filter.search_text.trim().to_lowercase();
+    search.is_empty() || row.haystack.contains(&search)
+}
+
+fn build_feed_rows(
+    batches: &[BatchView],
+    alerts: &[AlertView],
+    format_time: impl Fn(&str) -> String,
+) -> Vec<FeedRow> {
+    let mut rows = batches
+        .iter()
+        .map(|batch| FeedRow {
+            key: format!("batch:{}", batch.id),
+            timestamp: batch.timestamp.clone(),
+            time: format_time(&batch.timestamp),
+            size: format_size(batch.bytes),
+            source: batch_source(batch),
+            signal: batch.signal.clone(),
+            records: batch.records,
+            flags: Vec::new(),
+            flag_details: Vec::new(),
+            not_in_catalog: batch.not_in_catalog,
+            is_alert: false,
+            haystack: String::new(),
+            batch_id: Some(batch.id),
+            alert: None,
+        })
+        .collect::<Vec<_>>();
+    let batch_rows = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(index, row)| row.batch_id.map(|id| (id, index)))
+        .collect::<HashMap<_, _>>();
+
+    for alert in alerts {
+        if let Some(batch_index) = linked_batch_index(alert, batches)
+            && let Some(row_index) = batch_rows.get(&batches[batch_index].id)
+        {
+            rows[*row_index].flag_details.push(alert.clone());
+            continue;
+        }
+
+        rows.push(FeedRow {
+            key: alert_key(alert),
+            timestamp: alert.timestamp.clone(),
+            time: format_time(&alert.timestamp),
+            size: String::new(),
+            source: if !alert.event.is_empty() {
+                alert.event.clone()
+            } else if !alert.location.is_empty() {
+                alert.location.clone()
+            } else {
+                "?".into()
+            },
+            signal: alert.signal.clone(),
+            records: 0,
+            flags: Vec::new(),
+            flag_details: vec![alert.clone()],
+            not_in_catalog: 0,
+            is_alert: true,
+            haystack: String::new(),
+            batch_id: None,
+            alert: Some(alert.clone()),
+        });
+    }
+
+    for row in &mut rows {
+        row.flags = summarize_flags(&row.flag_details);
+        let batch = row
+            .batch_id
+            .and_then(|id| batches.iter().find(|batch| batch.id == id));
+        row.haystack = row_haystack(batch, &row.flag_details);
+    }
+    rows.sort_by(compare_rows_newest_first);
+    rows
+}
+
+fn linked_batch_index(alert: &AlertView, batches: &[BatchView]) -> Option<usize> {
+    const LINK_WINDOW_NANOS: i128 = 5_000_000_000;
+    let alert_time = timestamp_nanos(&alert.timestamp)?;
+    let mut nearest = None;
+    for (index, batch) in batches.iter().enumerate() {
+        if batch.signal != alert.signal {
+            continue;
+        }
+        let Some(batch_time) = timestamp_nanos(&batch.timestamp) else {
+            continue;
+        };
+        let elapsed = alert_time - batch_time;
+        let closer = match nearest {
+            Some((nearest_time, _)) => batch_time > nearest_time,
+            None => true,
+        };
+        if (0..=LINK_WINDOW_NANOS).contains(&elapsed) && closer {
+            nearest = Some((batch_time, index));
+        }
+    }
+    nearest.map(|(_, index)| index)
+}
+
+fn compare_rows_newest_first(left: &FeedRow, right: &FeedRow) -> Ordering {
+    match (
+        timestamp_nanos(&left.timestamp),
+        timestamp_nanos(&right.timestamp),
+    ) {
+        (Some(left), Some(right)) => right.cmp(&left),
+        _ => right.timestamp.cmp(&left.timestamp),
+    }
+}
+
+fn timestamp_nanos(timestamp: &str) -> Option<i128> {
+    let (seconds, nanos) = parse_timestamp(timestamp)?;
+    Some(i128::from(seconds) * 1_000_000_000 + i128::from(nanos))
+}
+
+fn alert_key(alert: &AlertView) -> String {
+    if alert.seq != 0 {
+        format!("alert:{}", alert.seq)
+    } else {
+        format!(
+            "alert:{}:{}:{}:{}:{}",
+            alert.timestamp, alert.signal, alert.pattern, alert.event, alert.attribute
+        )
+    }
+}
+
+fn batch_source(batch: &BatchView) -> String {
+    if !batch.catalog.is_empty() {
+        return batch.catalog.clone();
+    }
+    let source = [batch.vendor.as_str(), batch.service.as_str()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if source.is_empty() {
+        "?".into()
+    } else {
+        source
+    }
+}
+
+fn format_size(bytes: u64) -> String {
+    if bytes == 0 {
+        String::new()
+    } else if bytes < 1024 {
+        format!("{bytes} B")
+    } else if bytes < 1024 * 1024 {
+        format!("{} KB", (bytes as f64 / 1024.0).round() as u64)
+    } else {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
+}
+
+fn format_local_clock(timestamp: &str) -> String {
+    let Some((seconds, _)) = parse_timestamp(timestamp) else {
+        return timestamp.to_owned();
+    };
+    let seconds = seconds as libc::time_t;
+    let mut local = MaybeUninit::<libc::tm>::uninit();
+    let result = unsafe { libc::localtime_r(&seconds, local.as_mut_ptr()) };
+    if result.is_null() {
+        return timestamp.to_owned();
+    }
+    let local = unsafe { local.assume_init() };
+    format_clock_parts(local.tm_hour, local.tm_min, local.tm_sec)
+}
+
+#[cfg(test)]
+fn format_clock_with_offset(timestamp: &str, offset_seconds: i32) -> String {
+    let Some((seconds, _)) = parse_timestamp(timestamp) else {
+        return timestamp.to_owned();
+    };
+    let seconds = (seconds + i64::from(offset_seconds)).rem_euclid(86_400);
+    format_clock_parts(
+        (seconds / 3_600) as i32,
+        ((seconds / 60) % 60) as i32,
+        (seconds % 60) as i32,
+    )
+}
+
+fn format_clock_parts(hour: i32, minute: i32, second: i32) -> String {
+    format!("{hour:02}:{minute:02}:{second:02}")
+}
+
+fn parse_timestamp(timestamp: &str) -> Option<(i64, u32)> {
+    let bytes = timestamp.as_bytes();
+    if bytes.len() < 20
+        || bytes.get(4) != Some(&b'-')
+        || bytes.get(7) != Some(&b'-')
+        || !matches!(bytes.get(10), Some(b'T' | b't'))
+        || bytes.get(13) != Some(&b':')
+        || bytes.get(16) != Some(&b':')
+    {
+        return None;
+    }
+
+    let year = i64::from(parse_digits(bytes, 0, 4)?);
+    let month = parse_digits(bytes, 5, 2)?;
+    let day = parse_digits(bytes, 8, 2)?;
+    let hour = parse_digits(bytes, 11, 2)?;
+    let minute = parse_digits(bytes, 14, 2)?;
+    let second = parse_digits(bytes, 17, 2)?;
+    if !(1..=12).contains(&month)
+        || day == 0
+        || day > days_in_month(year, month)
+        || hour > 23
+        || minute > 59
+        || second > 59
+    {
+        return None;
+    }
+
+    let mut index = 19;
+    let mut nanos = 0;
+    if bytes.get(index) == Some(&b'.') {
+        index += 1;
+        let start = index;
+        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+            index += 1;
+        }
+        if index == start {
+            return None;
+        }
+        let precision = (index - start).min(9);
+        let fraction = parse_digits(bytes, start, precision)?;
+        nanos = fraction * 10_u32.pow((9 - precision) as u32);
+    }
+
+    let offset_seconds = match bytes.get(index) {
+        Some(b'Z' | b'z') if index + 1 == bytes.len() => 0,
+        Some(sign @ (b'+' | b'-')) if index + 6 == bytes.len() && bytes[index + 3] == b':' => {
+            let hours = parse_digits(bytes, index + 1, 2)?;
+            let minutes = parse_digits(bytes, index + 4, 2)?;
+            if hours > 23 || minutes > 59 {
+                return None;
+            }
+            let magnitude = i64::from(hours * 3_600 + minutes * 60);
+            if *sign == b'+' { magnitude } else { -magnitude }
+        }
+        _ => return None,
+    };
+
+    let local_seconds =
+        days_from_civil(year, month, day) * 86_400 + i64::from(hour * 3_600 + minute * 60 + second);
+    Some((local_seconds - offset_seconds, nanos))
+}
+
+fn parse_digits(bytes: &[u8], start: usize, length: usize) -> Option<u32> {
+    bytes
+        .get(start..start + length)?
+        .iter()
+        .try_fold(0_u32, |value, byte| {
+            byte.is_ascii_digit()
+                .then(|| value * 10 + u32::from(*byte - b'0'))
+        })
+}
+
+fn days_in_month(year: i64, month: u32) -> u32 {
+    match month {
+        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
+}
+
+fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
+    let year = year - i64::from(month <= 2);
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let adjusted_month = i64::from(month) + if month > 2 { -3 } else { 9 };
+    let day_of_year = (153 * adjusted_month + 2) / 5 + i64::from(day) - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
+}
+
+fn row_haystack(batch: Option<&BatchView>, alerts: &[AlertView]) -> String {
+    let mut parts = Vec::new();
+    if let Some(batch) = batch {
+        parts.extend([
+            batch.signal.as_str(),
+            batch.catalog.as_str(),
+            batch.vendor.as_str(),
+            batch.service.as_str(),
+            batch.endpoint_path.as_str(),
+        ]);
+        for record in &batch.summary {
+            parts.extend([record.name.as_str(), record.what.as_str()]);
+            for attribute in &record.attrs {
+                parts.extend([
+                    attribute.key.as_str(),
+                    attribute.group.as_str(),
+                    attribute.flag.as_str(),
+                ]);
+            }
+        }
+    }
+    for alert in alerts {
+        parts.extend([
+            alert.pattern.as_str(),
+            alert.event.as_str(),
+            alert.attribute.as_str(),
+        ]);
+    }
+    parts.retain(|part| !part.is_empty());
+    parts.join("\n").to_lowercase()
+}
+
+fn summarize_flags(alerts: &[AlertView]) -> Vec<FeedFlag> {
+    let mut flags = Vec::<FeedFlag>::new();
+    let mut by_pattern = HashMap::<&str, usize>::new();
+    for alert in alerts {
+        if let Some(index) = by_pattern.get(alert.pattern.as_str()) {
+            flags[*index].count = flags[*index].count.saturating_add(alert.count.max(1));
+        } else {
+            by_pattern.insert(alert.pattern.as_str(), flags.len());
+            flags.push(FeedFlag {
+                pattern: alert.pattern.clone(),
+                count: alert.count.max(1),
+            });
+        }
+    }
+    flags
+}
+
+fn build_flag_groups(alerts: &[AlertView], format_time: impl Fn(&str) -> String) -> Vec<FlagGroup> {
+    let mut groups = Vec::<FlagGroup>::new();
+    let mut by_pattern = HashMap::<&str, usize>::new();
+    for alert in alerts {
+        let index = if let Some(index) = by_pattern.get(alert.pattern.as_str()) {
+            *index
+        } else {
+            let index = groups.len();
+            by_pattern.insert(alert.pattern.as_str(), index);
+            groups.push(FlagGroup {
+                pattern: alert.pattern.clone(),
+                preset: alert.preset,
+                hits: 0,
+                total: 0,
+                last: alert.timestamp.clone(),
+                last_time: format_time(&alert.timestamp),
+                events: Vec::new(),
+                attributes: Vec::new(),
+                signals: Vec::new(),
+                matched: alert.matched.clone(),
+            });
+            index
+        };
+        let group = &mut groups[index];
+        group.hits = group.hits.saturating_add(1);
+        group.total = group.total.saturating_add(alert.count.max(1));
+        add_unique(&mut group.events, &alert.event);
+        add_unique(&mut group.attributes, &alert.attribute);
+        add_unique(&mut group.signals, &alert.signal);
+    }
+    groups
+}
+
+fn add_unique(values: &mut Vec<String>, value: &str) {
+    if !value.is_empty() && !values.iter().any(|known| known == value) {
+        values.push(value.to_owned());
     }
 }
 
@@ -1184,5 +1634,244 @@ mod tests {
         assert_eq!(model.batches.len(), MAX_BATCHES);
         assert_eq!(model.alerts.len(), MAX_ALERTS);
         assert!(model.retained_bytes <= MAX_RETAINED);
+    }
+}
+
+#[cfg(test)]
+mod feed_tests {
+    use super::*;
+
+    fn batch(id: u64, timestamp: &str, signal: &str) -> BatchView {
+        BatchView {
+            id,
+            timestamp: timestamp.into(),
+            signal: signal.into(),
+            endpoint_path: "/v1/logs".into(),
+            catalog: "".into(),
+            vendor: "Acme".into(),
+            service: "worker 1.2".into(),
+            bytes: 2048,
+            records: 3,
+            not_in_catalog: 1,
+            identity: Vec::new(),
+            resource: Vec::new(),
+            summary: vec![SummaryRecordView {
+                name: "claude-code.tool_result".into(),
+                kind: "event".into(),
+                count: 1,
+                known: true,
+                what: "A tool result".into(),
+                attrs: vec![SummaryAttributeView {
+                    key: "user.email".into(),
+                    group: "identity".into(),
+                    flag: String::new(),
+                    known: true,
+                }],
+            }],
+            raw_records: "[]".into(),
+            resources_omitted: false,
+        }
+    }
+
+    fn alert(seq: u64, timestamp: &str, signal: &str, pattern: &str, count: u64) -> AlertView {
+        AlertView {
+            seq,
+            timestamp: timestamp.into(),
+            pattern: pattern.into(),
+            preset: true,
+            signal: signal.into(),
+            event: "claude-code.tool_result".into(),
+            attribute: "tool_input".into(),
+            location: "record".into(),
+            count,
+            matched: "secret".into(),
+        }
+    }
+
+    #[test]
+    fn feed_links_the_nearest_same_signal_batch_at_the_five_second_boundary() {
+        let batches = [
+            batch(1, "2026-11-07T11:59:57Z", "logs"),
+            batch(2, "2026-11-07T11:59:58Z", "logs"),
+        ];
+        let alerts = [alert(
+            7,
+            "2026-11-07T12:00:03Z",
+            "logs",
+            "aws-access-key",
+            2,
+        )];
+        let rows = build_feed_rows(&batches, &alerts, |_| "12:00:00".into());
+
+        let linked = rows.iter().find(|row| row.key == "batch:2").unwrap();
+        assert_eq!(linked.flag_details.len(), 1);
+        assert_eq!(
+            linked.flags,
+            vec![FeedFlag {
+                pattern: "aws-access-key".into(),
+                count: 2
+            }]
+        );
+        assert!(
+            rows.iter()
+                .find(|row| row.key == "batch:1")
+                .unwrap()
+                .flags
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn feed_does_not_link_alerts_outside_the_five_second_window() {
+        let batches = [batch(1, "2026-11-07T11:59:54Z", "logs")];
+        let alerts = [alert(
+            7,
+            "2026-11-07T12:00:00Z",
+            "logs",
+            "aws-access-key",
+            1,
+        )];
+        let rows = build_feed_rows(&batches, &alerts, |_| "12:00:00".into());
+
+        assert_eq!(rows.len(), 2);
+        let unlinked = rows.iter().find(|row| row.is_alert).unwrap();
+        assert_eq!(unlinked.key, "alert:7");
+        assert_eq!(unlinked.flags.len(), 1);
+        assert_eq!(unlinked.flag_details, alerts.to_vec());
+    }
+
+    #[test]
+    fn feed_keeps_alerts_with_no_matching_batch_as_their_own_rows() {
+        let batches = [batch(1, "2026-11-07T11:59:59Z", "metrics")];
+        let alerts = [alert(9, "2026-11-07T12:00:00Z", "logs", "private-value", 1)];
+        let rows = build_feed_rows(&batches, &alerts, |_| "12:00:00".into());
+
+        let unlinked = rows.iter().find(|row| row.is_alert).unwrap();
+        assert_eq!(unlinked.key, "alert:9");
+        assert_eq!(unlinked.source, "claude-code.tool_result");
+        assert_eq!(unlinked.batch_id, None);
+    }
+
+    #[test]
+    fn feed_rows_are_ordered_newest_first() {
+        let batches = [
+            batch(1, "2026-11-07T12:00:00Z", "logs"),
+            batch(2, "2026-11-07T12:05:00Z", "metrics"),
+        ];
+        let alerts = [alert(
+            8,
+            "2026-11-07T12:03:00Z",
+            "traces",
+            "private-value",
+            1,
+        )];
+        let rows = build_feed_rows(&batches, &alerts, |_| String::new());
+
+        assert_eq!(
+            rows.iter().map(|row| row.key.as_str()).collect::<Vec<_>>(),
+            vec!["batch:2", "alert:8", "batch:1"]
+        );
+    }
+
+    #[test]
+    fn feed_preformats_clock_size_and_source() {
+        let row = build_feed_rows(
+            &[batch(1, "2026-11-07T12:34:56Z", "logs")],
+            &[],
+            |timestamp| format_clock_with_offset(timestamp, 2 * 60 * 60),
+        )
+        .remove(0);
+
+        assert_eq!(row.time, "14:34:56");
+        assert_eq!(row.size, "2 KB");
+        assert_eq!(row.source, "Acme worker 1.2");
+        assert_eq!(format_size(1023), "1023 B");
+        assert_eq!(format_size(1_048_576), "1.0 MB");
+        assert_eq!(format_clock_with_offset("unreadable", 0), "unreadable");
+    }
+
+    #[test]
+    fn feed_filter_matches_each_enabled_condition() {
+        let batches = [batch(1, "2026-11-07T12:00:00Z", "logs")];
+        let alerts = [alert(
+            7,
+            "2026-11-07T12:00:01Z",
+            "logs",
+            "aws-access-key",
+            2,
+        )];
+        let row = build_feed_rows(&batches, &alerts, |_| String::new())
+            .into_iter()
+            .find(|row| row.key == "batch:1")
+            .unwrap();
+        let mut filter = FeedFilter {
+            signals: HashSet::from(["logs".into()]),
+            flagged_only: true,
+            uncataloged_only: true,
+            search_text: "  USER.EMAIL  ".into(),
+            pattern: "aws-access-key".into(),
+        };
+
+        assert!(matches(&row, &filter));
+        filter.signals.clear();
+        assert!(!matches(&row, &filter));
+        filter.signals.insert("logs".into());
+        filter.flagged_only = false;
+        filter.pattern.clear();
+        filter.uncataloged_only = false;
+        filter.search_text = "missing".into();
+        assert!(!matches(&row, &filter));
+        filter.search_text.clear();
+        filter.pattern = "another-pattern".into();
+        assert!(!matches(&row, &filter));
+        filter.pattern.clear();
+        filter.uncataloged_only = true;
+        let mut cataloged = row.clone();
+        cataloged.not_in_catalog = 0;
+        assert!(!matches(&cataloged, &filter));
+        filter.uncataloged_only = false;
+        filter.flagged_only = true;
+        let mut unflagged = row;
+        unflagged.flags.clear();
+        assert!(!matches(&unflagged, &filter));
+    }
+
+    #[test]
+    fn flag_groups_keep_recent_pattern_order_and_totals() {
+        let alerts = [
+            alert(3, "2026-11-07T12:02:00Z", "logs", "aws-access-key", 2),
+            alert(2, "2026-11-07T12:01:00Z", "metrics", "aws-access-key", 1),
+            alert(1, "2026-11-07T12:00:00Z", "traces", "private-value", 3),
+        ];
+        let groups = build_flag_groups(&alerts, |_| "12:00:00".into());
+
+        assert_eq!(groups[0].pattern, "aws-access-key");
+        assert_eq!(groups[0].hits, 2);
+        assert_eq!(groups[0].total, 3);
+        assert_eq!(groups[0].last, "2026-11-07T12:02:00Z");
+        assert_eq!(groups[0].last_time, "12:00:00");
+        assert_eq!(groups[0].signals, vec!["logs", "metrics"]);
+        assert_eq!(groups[1].pattern, "private-value");
+    }
+
+    #[test]
+    fn clear_empties_feed_rows_and_red_flag_groups_without_stopping_collector() {
+        let mut model = Model {
+            state: State::Listening,
+            ..Model::default()
+        };
+        model.accept(r#"{"v":1,"type":"batch","seq":1,"ts":"2026-11-07T12:00:00Z"}"#.into());
+        model.accept(r#"{"v":1,"type":"alert","seq":2,"ts":"2026-11-07T12:00:01Z","pattern":"private-value"}"#.into());
+        assert!(!model.view().flag_groups.is_empty());
+
+        model.clear();
+
+        let view = model.view();
+        assert_eq!(model.state, State::Listening);
+        assert_eq!(model.retained_bytes, 0);
+        assert!(view.batches.is_empty());
+        assert!(view.alerts.is_empty());
+        assert!(view.rows.is_empty());
+        assert!(view.flag_groups.is_empty());
     }
 }

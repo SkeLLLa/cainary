@@ -21,18 +21,21 @@ fn settings_round_trip_and_default_when_missing_or_broken() {
     assert_eq!(old.refresh, Refresh::Min5);
     assert!(!old.notifications);
     assert!(!old.collector.enabled);
+    assert!(!old.scan_collapsed);
+    assert!(!old.live_collapsed);
     let s = Settings {
         refresh: Refresh::Daily,
         notifications: false,
         launch_at_login: true,
+        scan_collapsed: true,
+        live_collapsed: true,
         ..Settings::default()
     };
     s.save(&path).unwrap();
-    assert!(
-        std::fs::read_to_string(&path)
-            .unwrap()
-            .contains("refresh = \"daily\"")
-    );
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert!(saved.contains("refresh = \"daily\""));
+    assert!(saved.contains("scanCollapsed = true"));
+    assert!(saved.contains("liveCollapsed = true"));
     assert_eq!(Settings::load(&path), s);
     std::fs::write(&path, "refresh = 7\n").unwrap();
     assert_eq!(Settings::load(&path), Settings::default());
