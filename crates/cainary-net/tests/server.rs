@@ -715,6 +715,48 @@ fn gzip_bodies_are_bounded_and_strict() {
 }
 
 #[test]
+fn a_gzip_body_of_empty_blocks_is_cut_off_by_the_decode_budget() {
+    // Request deadline well above the decoder's own budget, so the budget is what fires.
+    let (srv, out) = start_with(|c| c.tunables.request_deadline = Duration::from_secs(20));
+    let a = srv.addrs[0];
+    let bomb = formats::empty_block_bomb((16 << 20) - 64);
+    let t = Instant::now();
+    let r = post_with(
+        a,
+        "/v1/logs",
+        "Content-Type: application/json\r\nContent-Encoding: gzip\r\n",
+        &bomb,
+    )
+    .unwrap();
+    assert!(t.elapsed() < Duration::from_secs(5), "{:?}", t.elapsed());
+    assert_eq!(r.status, 413);
+    assert_eq!(
+        r.body,
+        r#"{"code":3,"message":"compressed body too costly to decompress"}"#
+    );
+
+    // Same body as protobuf answers with a Status message.
+    let r = post_with(
+        a,
+        "/v1/logs",
+        "Content-Type: application/x-protobuf\r\nContent-Encoding: gzip\r\n",
+        &bomb,
+    )
+    .unwrap();
+    assert_eq!(r.status, 413);
+    assert_eq!(
+        formats::status(&r.bytes),
+        (3, "compressed body too costly to decompress".to_string())
+    );
+
+    // The collector still serves.
+    let doc = logs_doc(vec![("event.name", "tool_result")]);
+    assert_eq!(post_json(a, "/v1/logs", &doc).status, 200);
+    assert_eq!(out.wait_for("batch", 1).len(), 1);
+    srv.shutdown();
+}
+
+#[test]
 fn browsers_and_rebinding_are_refused_before_any_body() {
     let (srv, _out) = start();
     let a = srv.addrs[0];

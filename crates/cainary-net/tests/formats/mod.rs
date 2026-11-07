@@ -80,6 +80,18 @@ pub fn gzip(data: &[u8]) -> Vec<u8> {
     e.finish().unwrap()
 }
 
+/// A valid gzip stream of `len` bytes that decodes to nothing, made of millions of empty
+/// deflate blocks: tiny on the wire, but every block costs the decoder real time.
+pub fn empty_block_bomb(len: usize) -> Vec<u8> {
+    let mut v = vec![0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff];
+    while v.len() < len {
+        v.extend([0x02, 0x08, 0x20, 0x80, 0x00]);
+    }
+    v.extend([0x03, 0x00]);
+    v.extend([0u8; 8]);
+    v
+}
+
 pub fn variants(p: &Payload) -> Vec<Variant> {
     let fixture = |ext: &str| read(&format!("tests/fixtures/otlp/{}.{ext}", p.name));
     let v = |label: &str,

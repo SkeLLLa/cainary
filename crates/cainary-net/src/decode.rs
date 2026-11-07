@@ -7,7 +7,8 @@ use crate::otlp::{self, Signal};
 use crate::otlp_pb;
 use flate2::bufread::MultiGzDecoder;
 use serde_json::Value;
-use std::io::Read;
+use std::io::{self, BufRead, Read};
+use std::time::{Duration, Instant};
 
 pub const PROTOBUF: &str = "application/protobuf";
 pub const X_PROTOBUF: &str = "application/x-protobuf";
@@ -81,39 +82,85 @@ pub fn content(head: &Head) -> Result<(Format, Encoding), Reject> {
     Ok((format, encoding))
 }
 
-/// Every gzip member, at most `max` bytes out. Allocation stops at `max + 1`, so a bomb costs
-/// what the cap does.
-fn gunzip(body: &[u8], max: usize) -> Result<Vec<u8>, Reject> {
+/// The most CPU time one body may take to gunzip, on top of the request deadline.
+const DECODE_BUDGET: Duration = Duration::from_secs(2);
+/// The compressed bytes handed to the decoder per read, so the clock is looked at often.
+const PACE: usize = 64 * 1024;
+const COSTLY: &str = "compressed body too costly to decompress";
+
+/// The compressed body in small pieces that fail with `TimedOut` once `until` has passed. Bytes
+/// that inflate to nothing (millions of empty deflate blocks) cost time but make no output, so
+/// the output cap alone never stops them.
+struct Paced<'a> {
+    rest: &'a [u8],
+    until: Instant,
+}
+
+impl BufRead for Paced<'_> {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        if Instant::now() >= self.until {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        Ok(&self.rest[..self.rest.len().min(PACE)])
+    }
+    fn consume(&mut self, n: usize) {
+        self.rest = &self.rest[n..];
+    }
+}
+
+impl Read for Paced<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = {
+            let have = self.fill_buf()?;
+            let n = have.len().min(buf.len());
+            buf[..n].copy_from_slice(&have[..n]);
+            n
+        };
+        self.consume(n);
+        Ok(n)
+    }
+}
+
+/// Every gzip member, at most `max` bytes out and until `deadline` (or the decode budget). The
+/// output grows chunk by chunk, so a bomb costs what the cap does.
+fn gunzip(body: &[u8], max: usize, deadline: Instant) -> Result<Vec<u8>, Reject> {
+    let until = deadline.min(Instant::now() + DECODE_BUDGET);
+    let mut dec = MultiGzDecoder::new(Paced { rest: body, until });
     let mut out = Vec::new();
-    let mut dec = MultiGzDecoder::new(body).take(max as u64 + 1);
-    if dec.read_to_end(&mut out).is_err() {
-        return reject(400, "invalid gzip body");
+    let mut chunk = [0u8; PACE];
+    loop {
+        match dec.read(&mut chunk) {
+            Ok(0) => return Ok(out),
+            Ok(n) if out.len() + n > max => return reject(413, "decompressed body too large"),
+            Ok(n) => out.extend_from_slice(&chunk[..n]),
+            Err(e) if e.kind() == io::ErrorKind::TimedOut => return reject(413, COSTLY),
+            Err(_) => return reject(400, "invalid gzip body"),
+        }
     }
-    if out.len() > max {
-        return reject(413, "decompressed body too large");
-    }
-    Ok(out)
 }
 
 /// The OTLP/JSON document in `body`, whatever its format and encoding. `max` bounds the
-/// decompressed size.
+/// decompressed size, and `deadline` the time spent on it.
 pub fn document(
     signal: Signal,
     format: Format,
     encoding: Encoding,
     body: &[u8],
     max: usize,
+    deadline: Instant,
 ) -> Result<Value, Reject> {
     let unzipped;
     let body = match encoding {
         Encoding::Identity => body,
         Encoding::Gzip => {
-            unzipped = gunzip(body, max)?;
+            unzipped = gunzip(body, max, deadline)?;
             &unzipped
         }
     };
     match format {
         Format::Json => otlp::parse(body).or_else(|m| reject(400, &m)),
+        // Transcoding is bounded in work, but not by the clock.
+        Format::Protobuf(_) if Instant::now() >= deadline => reject(413, COSTLY),
         Format::Protobuf(_) => {
             otlp_pb::to_json(signal, body).or_else(|e| reject(e.status, e.message))
         }
@@ -235,7 +282,61 @@ mod tests {
     const MAX: usize = 16 * 1024 * 1024;
 
     fn doc(format: Format, encoding: Encoding, body: &[u8], max: usize) -> Result<Value, Reject> {
-        document(Signal::Logs, format, encoding, body, max)
+        document(
+            Signal::Logs,
+            format,
+            encoding,
+            body,
+            max,
+            Instant::now() + Duration::from_secs(60),
+        )
+    }
+
+    /// A valid gzip stream of `blocks` empty deflate blocks: no output, a lot of work.
+    fn empty_blocks(len: usize) -> Vec<u8> {
+        let mut v = vec![0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff];
+        while v.len() < len {
+            v.extend([0x02, 0x08, 0x20, 0x80, 0x00]);
+        }
+        v.extend([0x03, 0x00]);
+        v.extend([0u8; 8]);
+        v
+    }
+
+    #[test]
+    fn empty_blocks_are_valid_but_cost_time() {
+        // Small enough to finish: really gzip, really empty.
+        let small = empty_blocks(64 << 10);
+        let mut out = Vec::new();
+        MultiGzDecoder::new(&small[..])
+            .read_to_end(&mut out)
+            .unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn a_spent_deadline_stops_the_decoder() {
+        let bomb = empty_blocks(MAX);
+        let t = Instant::now();
+        let r = document(
+            Signal::Logs,
+            Format::Json,
+            Encoding::Gzip,
+            &bomb,
+            MAX,
+            t + Duration::from_millis(50),
+        );
+        assert_eq!(err(r), (413, COSTLY.to_string()));
+        assert!(t.elapsed() < Duration::from_secs(2), "{:?}", t.elapsed());
+        // Already spent: nothing is decoded, protobuf included.
+        let past = Instant::now();
+        for (f, e, body) in [
+            (Format::Json, Encoding::Gzip, gz(DOC)),
+            (Format::Protobuf(X_PROTOBUF), Encoding::Identity, Vec::new()),
+        ] {
+            let r = document(Signal::Logs, f, e, &body, MAX, past);
+            assert_eq!(err(r), (413, COSTLY.to_string()));
+        }
     }
 
     #[test]

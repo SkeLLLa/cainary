@@ -1163,7 +1163,14 @@ fn request<S: Wire>(reader: &mut BufReader<Guarded<S>>, sh: &Shared) -> Next {
         Err(HttpError::Eof) => return Next::Close { linger: false },
     };
     // Decompression and transcoding stay inside the job permit, like the parse before them.
-    let doc = match decode::document(signal, format, encoding, &body, sh.t.limits.max_body) {
+    let doc = match decode::document(
+        signal,
+        format,
+        encoding,
+        &body,
+        sh.t.limits.max_body,
+        deadline,
+    ) {
         Ok(d) => d,
         Err(rej) => return deny!(rej.status, &rej.message),
     };
