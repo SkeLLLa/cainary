@@ -504,6 +504,7 @@ fn check_tls_paths(srcs: &[Src]) -> Vec<String> {
 const NET_DEPS: &[&str] = &[
     "cainary-core",
     "cainary-sig",
+    "flate2",
     "libc",
     "rcgen",
     "rustls",
@@ -630,15 +631,22 @@ const CORE_ALLOWED: &[&str] = &[
     "zmij",
 ];
 
-/// Packages only `cainary-net` may use (`regex` and its closure, which includes `aho-corasick`): in the lock, but never in the
+/// Packages only `cainary-net` may use (`regex` and its closure, which includes `aho-corasick`, and
+/// `flate2` for gzip request bodies with its `miniz_oxide`, `adler2`, `simd-adler32`, `crc32fast` and `cfg-if`): in the lock, but never in the
 /// dependency closure of `cainary` or `cainary-core`. `memchr` is already in the core's closure
 /// through `serde_json`, so it isn't here.
 const NET_ONLY: &[&str] = &[
+    "adler2",
     "aho-corasick",
     "cainary-net",
+    "cfg-if",
+    "crc32fast",
+    "flate2",
+    "miniz_oxide",
     "regex",
     "regex-automata",
     "regex-syntax",
+    "simd-adler32",
 ];
 
 /// Packages only the `tls` feature of `cainary-net` may use (design §16.5): rustls with the ring
@@ -652,7 +660,6 @@ const TLS_ONLY: &[&str] = &[
     "autocfg",
     "bit-vec",
     "cc",
-    "cfg-if",
     "data-encoding",
     "der-parser",
     "displaydoc",

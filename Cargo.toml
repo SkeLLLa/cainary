@@ -27,6 +27,8 @@ toml = "1.1"
 # Tilde: cainary-core uses plist::stream, which may break between minor versions.
 plist = { version = "~1.10.3", features = ["enable_unstable_features_that_may_break_with_minor_version_bumps"] }
 libc = { version = "0.2", default-features = false }
+# Only cainary-net, always on (gzip OTLP request bodies, pure Rust via miniz_oxide; no zlib/C).
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 # Only cainary-net, only under its non-default `tls` feature (the endpoint takeover, design §16):
 # rustls with the ring provider (never aws-lc-rs) and rcgen for the ephemeral CA and leaves.
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }

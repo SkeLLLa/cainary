@@ -161,7 +161,8 @@ formatter elsewhere), no `regex` in the core or CLI (substring and token checks)
 parses `Cargo.lock` and fails if a package outside an allowlist appears, so adding a crate is a
 visible, reviewed change. `regex` pulls in `regex-automata`, `regex-syntax` and `aho-corasick`
 (the direct `aho-corasick` use was dropped after a timing test, §12.5); with `cainary-net` itself
-they are the `NET_ONLY` set. `memchr` is also a dependency of those, but it is already in the
+they are the `NET_ONLY` set, together with `flate2` (gzip request bodies, pure Rust through
+`miniz_oxide`) and its closure `adler2`, `simd-adler32`, `crc32fast` and `cfg-if`. `memchr` is also a dependency of those, but it is already in the
 core's closure through `serde_json`, so it is not net-only. Guard 4 requires the lock to stay
 inside the allowlist **and** the dependency closure of `cainary` and `cainary-core` to miss every
 `NET_ONLY`, `TLS_ONLY` or `SIG_ONLY` package, so the collector and signature primitives can't
@@ -977,7 +978,8 @@ state.
      `libc::` only in `harness/fs.rs`.
   4. `Cargo.lock` packages ⊆ the allowlist, which includes `CORE_ALLOWED` (the core's
      closure), `NET_ONLY` (`cainary-net`, `regex`, `regex-automata`, `regex-syntax`,
-     `aho-corasick`) and `TLS_ONLY` (`rustls`, `ring`, `rcgen`, `rustls-webpki`, `rustls-pki-types`
+     `aho-corasick`, plus `flate2`, `miniz_oxide`, `adler2`, `simd-adler32`, `crc32fast` and `cfg-if` for
+     gzip request bodies) and `TLS_ONLY` (`rustls`, `ring`, `rcgen`, `rustls-webpki`, `rustls-pki-types`
      and the rest of their closure, including the optional `x509-parser` family the lock lists for
      rcgen; no `aws-lc-rs`), and `SIG_ONLY` (`cainary-sig`). The **dependency closure** of
      `cainary` and `cainary-core` (walked through `[[package]].dependencies` in `Cargo.lock`) must
