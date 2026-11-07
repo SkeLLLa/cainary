@@ -50,7 +50,8 @@ member_names() { # MANIFEST
 # without a `source =` line. Third-party packages are never matched. Fails if the bumped count
 # is not the member count plus the extras present.
 bump_lock() { # MANIFEST LOCKFILE [EXTRA_NAMES]
-    names="$(member_names "$1" | tr '\n' ' ')"
+    names="$(member_names "$1")" || exit 1
+    names="$(echo "$names" | tr '\n' ' ')"
     expected="$(echo "$names" | wc -w | tr -d ' ')"
     awk -v v="$VERSION" -v names="$names" -v extras="${3:-}" '
         function flush() {
@@ -100,7 +101,8 @@ if [ -f linux/Cargo.toml ]; then
     grep -qx "version = \"$VERSION\"" linux/Cargo.toml
 
     if [ -f linux/Cargo.lock ]; then
-        bump_lock linux/Cargo.toml linux/Cargo.lock "$(member_names Cargo.toml | tr '\n' ' ')"
+        root_names="$(member_names Cargo.toml)" || exit 1
+        bump_lock linux/Cargo.toml linux/Cargo.lock "$(echo "$root_names" | tr '\n' ' ')"
     fi
 fi
 
