@@ -30,6 +30,10 @@ pub mod qobject {
         fn retry(self: Pin<&mut CollectorController>);
 
         #[qinvokable]
+        #[cxx_name = "openPrivilegedPort"]
+        fn open_privileged_port(self: Pin<&mut CollectorController>);
+
+        #[qinvokable]
         fn clear(self: Pin<&mut CollectorController>);
 
         #[qinvokable]
@@ -94,6 +98,10 @@ impl qobject::CollectorController {
 
     fn retry(self: Pin<&mut Self>) {
         controller::send(AppMessage::Command(AppCommand::RetryCollector));
+    }
+
+    fn open_privileged_port(self: Pin<&mut Self>) {
+        controller::send(AppMessage::Command(AppCommand::OpenPrivilegedPort));
     }
 
     fn clear(self: Pin<&mut Self>) {

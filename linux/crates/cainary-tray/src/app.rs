@@ -9,7 +9,9 @@ use cainary_tray_dbus::filemanager::file_uri;
 use cainary_tray_dbus::{self, Notification, Options as BusOptions, Service, TrayUpdate, UiEvent};
 use cainary_tray_model::collector::TrustAction;
 use cainary_tray_model::notify_plan::Planned;
-use cainary_tray_model::runner::{self, Client, Output, StreamHandle, StreamMsg};
+use cainary_tray_model::portaccess::{self, Access, Hold, Launch, Release};
+use cainary_tray_model::privport::{self, PrivState};
+use cainary_tray_model::runner::{self, Client, Output, Reserved, StreamHandle, StreamMsg};
 use cainary_tray_model::schedule::Scheduler;
 use cainary_tray_model::settings::{CollectorSettings, Refresh, Settings};
 use cainary_tray_model::store::{Notifier, ScanState, Store, StoreEvent, Trigger};
@@ -232,6 +234,7 @@ pub fn run(options: &crate::Options) -> Result<i32, String> {
         notifications_available,
         file_chooser_available,
         collector_path,
+        options.dev,
     ) {
         Ok(worker) => worker,
         Err(error) => {
@@ -361,6 +364,7 @@ fn spawn_controller(
     notifications_available: bool,
     file_chooser_available: bool,
     collector_path: Option<PathBuf>,
+    dev: bool,
 ) -> std::io::Result<JoinHandle<()>> {
     std::thread::Builder::new()
         .name("cainary-controller".into())
@@ -372,6 +376,7 @@ fn spawn_controller(
                 bus_commands.clone(),
                 Arc::clone(&settings),
                 messages.clone(),
+                dev,
             );
             collector_runtime.restart(lock(&settings).collector.clone());
             collector_runtime.request_trust_action(TrustAction::Status);
@@ -410,6 +415,13 @@ fn spawn_controller(
                             file_chooser_available,
                         );
                     }
+                    AppMessage::PrivilegeAssessed { port, seq, state } => {
+                        collector_runtime.finish_assessment(port, seq, state);
+                    }
+                    AppMessage::PortOpened { port, result } => {
+                        collector_runtime.finish_open(port, result);
+                    }
+                    AppMessage::HoldExpired { token } => collector_runtime.hold_expired(token),
                     AppMessage::CollectorTrustFinished { action, result } => {
                         collector_runtime.finish_trust_action(action, result);
                     }
@@ -620,8 +632,10 @@ fn handle_command(
             request_collector_log_file(bus_commands, messages);
         }
         AppCommand::RetryCollector => {
+            collector_runtime.forget_assessment();
             collector_runtime.restart(lock(settings).collector.clone());
         }
+        AppCommand::OpenPrivilegedPort => collector_runtime.open_privileged_port(),
         AppCommand::ClearCollector => {
             collector_runtime.model.clear();
             collector_runtime.publish();
@@ -1008,6 +1022,26 @@ struct CollectorRuntime {
     trust_preview: Option<collector::TrustResultLine>,
     trust_result: Option<collector::TrustResultLine>,
     refresh_status_after_busy: bool,
+    /// A development checkout: the port helper is installed by hand.
+    dev: bool,
+    /// The collector is switched on, and the port it listens on (from the last `restart`).
+    enabled: bool,
+    port: u16,
+    port_needs_root: bool,
+    /// Loopback sockets the root helper reserved, for one port. Closed (dropped) when the
+    /// collector is switched off, the port changes, it fails to start, or the tray quits.
+    hold: Hold<Reserved>,
+    /// Said while the port is held: only IPv4 could be reserved.
+    hold_notice: Option<String>,
+    /// Bumped whenever the hold changes hands, so a stale expiry timer does nothing.
+    hold_token: u64,
+    /// What the helper probe found for `port`, or `None` while not looked at or running.
+    assessed: Option<PrivState>,
+    assess_seq: u64,
+    /// The authentication prompt for `port` is open.
+    opening: bool,
+    /// Why the last attempt to open the port failed.
+    open_error: Option<String>,
 }
 
 impl CollectorRuntime {
@@ -1016,6 +1050,7 @@ impl CollectorRuntime {
         bus_commands: Option<Sender<cainary_tray_dbus::Command>>,
         settings: Arc<Mutex<Settings>>,
         messages: Sender<AppMessage>,
+        dev: bool,
     ) -> Self {
         Self {
             model: collector::Model::default(),
@@ -1032,18 +1067,43 @@ impl CollectorRuntime {
             trust_preview: None,
             trust_result: None,
             refresh_status_after_busy: false,
+            dev,
+            enabled: false,
+            port: 0,
+            port_needs_root: false,
+            hold: Hold::default(),
+            hold_notice: None,
+            hold_token: 0,
+            assessed: None,
+            assess_seq: 0,
+            opening: false,
+            open_error: None,
         }
     }
 
     fn restart(&mut self, preferences: CollectorSettings) {
         self.stop_child();
         self.generation = self.generation.wrapping_add(1);
+        self.hold_token = self.hold_token.wrapping_add(1);
         self.model = collector::Model::default();
+        self.port = portaccess::effective_port(&preferences);
+        self.enabled = preferences.enabled;
+        self.port_needs_root = privport::needs_privilege(self.port);
+        let problem = preferences.problem();
+        // The child is gone, so the tray's copy of the sockets is the last one: whatever the
+        // new settings don't ask for is closed now.
+        let wanted = (self.enabled && problem.is_none()).then_some(self.port);
+        self.release_unless(wanted);
+        if self.port_needs_root && !self.hold.holds(self.port) {
+            self.assess(self.port);
+        } else if !self.port_needs_root {
+            self.assessed = None;
+        }
         if !preferences.enabled {
             self.publish();
             return;
         }
-        if let Some(problem) = preferences.problem() {
+        if let Some(problem) = problem {
             self.model.problem(problem.code, problem.message);
             self.publish();
             return;
@@ -1053,7 +1113,29 @@ impl CollectorRuntime {
             self.publish();
             return;
         };
-        let args = match collector::child_args(&preferences) {
+        // Starting never asks for the privilege: that is the "Open port N" click.
+        let inherit = match portaccess::launch_plan(
+            self.enabled,
+            self.port_needs_root,
+            self.hold.holds(self.port),
+        ) {
+            Launch::NeedsOpen => {
+                self.model.blocked(
+                    "port-privileged",
+                    self.port,
+                    portaccess::needs_message(self.port),
+                );
+                self.publish();
+                return;
+            }
+            Launch::Disabled => return,
+            Launch::Run { inherit } => inherit,
+        };
+        let inherited = match self.hold.get(self.port).filter(|_| inherit) {
+            Some(reserved) => reserved.raw_fds(),
+            None => Vec::new(),
+        };
+        let mut args = match collector::child_args(&preferences) {
             Ok(args) => args.into_iter().map(Into::into).collect::<Vec<_>>(),
             Err(error) => {
                 self.model.failed(error);
@@ -1061,6 +1143,7 @@ impl CollectorRuntime {
                 return;
             }
         };
+        args.extend(runner::listen_fd_args(inherited.len()));
         let config = match collector::config_stdin(&preferences) {
             Ok(config) => config,
             Err(error) => {
@@ -1071,15 +1154,16 @@ impl CollectorRuntime {
         };
         self.model.starting();
         self.publish();
-        let mut stream = match runner::spawn_stream(binary, &args, collector::MAX_LINE) {
-            Ok(stream) => stream,
-            Err(error) => {
-                self.model
-                    .failed(format!("Couldn't start collector: {error:?}"));
-                self.publish();
-                return;
-            }
-        };
+        let mut stream =
+            match runner::spawn_stream_with_fds(binary, &args, collector::MAX_LINE, &inherited) {
+                Ok(stream) => stream,
+                Err(error) => {
+                    self.model
+                        .failed(format!("Couldn't start collector: {error:?}"));
+                    self.publish();
+                    return;
+                }
+            };
         if let Err(error) = stream.write_stdin(&config) {
             stream.stop(Duration::from_secs(2));
             self.model
@@ -1144,12 +1228,188 @@ impl CollectorRuntime {
         }
     }
 
+    /// The tray is quitting: stops the collector, then gives the port back.
     fn stop(&mut self) {
         self.stop_child();
         if !matches!(self.model.state, collector::State::Off) {
             self.model.stopped("Stopped");
             self.publish();
         }
+        self.release_hold(Release::Quit);
+    }
+
+    fn running(&self) -> bool {
+        self.stream.is_some()
+            && matches!(
+                self.model.state,
+                collector::State::Starting | collector::State::Listening
+            )
+    }
+
+    fn release_hold(&mut self, why: Release) {
+        if self.hold.release(why).is_some() {
+            self.hold_released();
+        }
+    }
+
+    /// Closes the held sockets unless they are for `wanted`.
+    fn release_unless(&mut self, wanted: Option<u16>) {
+        if self.hold.keep_only(wanted).is_some() {
+            self.hold_released();
+        }
+    }
+
+    fn hold_released(&mut self) {
+        self.hold_notice = None;
+        self.hold_token = self.hold_token.wrapping_add(1);
+    }
+
+    /// A stopped collector keeps its port for a while (a retry reuses it without asking), but
+    /// not for ever.
+    fn arm_hold_expiry(&mut self) {
+        if self.hold.port().is_none() {
+            return;
+        }
+        self.hold_token = self.hold_token.wrapping_add(1);
+        let token = self.hold_token;
+        let messages = self.messages.clone();
+        let _ = std::thread::Builder::new()
+            .name("cainary-hold-expiry".into())
+            .spawn(move || {
+                std::thread::sleep(portaccess::STOPPED_HOLD);
+                let _ = messages.try_send(AppMessage::HoldExpired { token });
+            });
+    }
+
+    fn hold_expired(&mut self, token: u64) {
+        if token == self.hold_token && !self.running() && self.hold.port().is_some() {
+            self.release_hold(Release::Expired);
+            self.publish();
+        }
+    }
+
+    /// The next `restart` looks for the helper again.
+    fn forget_assessment(&mut self) {
+        self.assessed = None;
+    }
+
+    /// Looks for the helper for `port` on a worker thread, unless that was already done.
+    fn assess(&mut self, port: u16) {
+        if matches!(
+            self.assessed,
+            Some(PrivState::Ready { .. } | PrivState::Mismatch { .. })
+        ) {
+            return;
+        }
+        self.assessed = None;
+        self.assess_seq = self.assess_seq.wrapping_add(1);
+        let seq = self.assess_seq;
+        let messages = self.messages.clone();
+        let spawned = std::thread::Builder::new()
+            .name("cainary-port-helper".into())
+            .spawn(move || {
+                let state = privport::assess(port, false, runner::probe_version);
+                let _ = messages.try_send(AppMessage::PrivilegeAssessed { port, seq, state });
+            });
+        if spawned.is_err() {
+            self.assessed = Some(PrivState::NoHelper("couldn't start a thread".into()));
+        }
+    }
+
+    fn finish_assessment(&mut self, port: u16, seq: u64, state: PrivState) {
+        if seq != self.assess_seq || port != self.port {
+            return;
+        }
+        self.assessed = Some(state);
+        self.publish();
+    }
+
+    /// "Open port N": asks the root helper, on a worker thread, for the loopback sockets. The
+    /// only place that does; nothing else ever shows the authentication prompt.
+    fn open_privileged_port(&mut self) {
+        let port = self.port;
+        if self.opening || !self.enabled || !self.port_needs_root || self.hold.holds(port) {
+            return;
+        }
+        let helper = match &self.assessed {
+            Some(PrivState::Ready { helper } | PrivState::Mismatch { helper, .. }) => {
+                helper.clone()
+            }
+            _ => return,
+        };
+        self.opening = true;
+        self.open_error = None;
+        self.publish();
+        let messages = self.messages.clone();
+        let spawned = std::thread::Builder::new()
+            .name("cainary-open-port".into())
+            .spawn(move || {
+                let result = runner::bind_privileged(&helper, port, runner::BIND_DEADLINE);
+                let _ = messages.try_send(AppMessage::PortOpened { port, result });
+            });
+        if spawned.is_err() {
+            self.opening = false;
+            self.open_error = Some(format!("Couldn't open port {port}"));
+            self.publish();
+        }
+    }
+
+    fn finish_open(&mut self, port: u16, result: Result<Reserved, runner::BindError>) {
+        self.opening = false;
+        if port != self.port || !self.enabled {
+            // The user moved on while the prompt was open: the sockets close with `result`.
+            self.publish();
+            return;
+        }
+        match result {
+            Ok(reserved) => {
+                self.hold_notice = reserved.warning.clone();
+                self.hold.keep(port, reserved);
+                self.hold_token = self.hold_token.wrapping_add(1);
+                self.open_error = None;
+                let preferences = lock(&self.settings).collector.clone();
+                self.restart(preferences);
+            }
+            Err(error) => {
+                let (short, detail) = portaccess::bind_failure(&error, port);
+                if let Some(detail) = detail {
+                    eprintln!("cainary-tray: opening port {port}: {detail}");
+                }
+                // The helper may have changed since it was looked at: look again.
+                if !matches!(
+                    error,
+                    runner::BindError::Dismissed
+                        | runner::BindError::NotAuthorized
+                        | runner::BindError::TimedOut
+                        | runner::BindError::Helper(privport::HelperError::PortInUse)
+                ) {
+                    self.assessed = None;
+                    self.assess(port);
+                }
+                self.open_error = Some(short);
+                self.publish();
+            }
+        }
+    }
+
+    /// The `privilege` object of the collector view.
+    fn privilege_view(&self) -> portaccess::PrivilegeView {
+        let access = if !self.port_needs_root {
+            Access::NotNeeded
+        } else {
+            self.assessed.as_ref().map_or(Access::Checking, Access::of)
+        };
+        portaccess::view(&portaccess::Inputs {
+            port: self.port,
+            access: &access,
+            held: self.hold.holds(self.port),
+            running: self.running(),
+            enabled: self.enabled,
+            opening: self.opening,
+            dev: self.dev,
+            error: self.open_error.as_deref(),
+            notice: self.hold_notice.as_deref(),
+        })
     }
 
     fn handle_stream_queue(&mut self, generation: u64, mailbox: Arc<CollectorMailbox>) {
@@ -1192,6 +1452,7 @@ impl CollectorRuntime {
                 }
                 if stop {
                     self.stop_child();
+                    self.arm_hold_expiry();
                 }
                 if tls_hello {
                     self.request_trust_action(TrustAction::Status);
@@ -1202,33 +1463,28 @@ impl CollectorRuntime {
             StreamMsg::Fault(reason) => {
                 self.model.failed(format!("Stopped: {reason}"));
                 self.stop_child();
+                self.arm_hold_expiry();
                 self.publish();
             }
             StreamMsg::Exited { code, stderr_tail } => {
-                self.model.set_stderr_tail(
-                    stderr_tail
-                        .lines()
-                        .map(safe_output_line)
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                );
+                let tail = stderr_tail
+                    .lines()
+                    .map(strings::safe_line)
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 if let Some(mailbox) = self.mailbox.take() {
                     mailbox.close();
                 }
                 self.stream.take();
-                if matches!(
-                    self.model.state,
-                    collector::State::Starting | collector::State::Listening
-                ) {
-                    let stderr = stderr_tail.lines().next().unwrap_or_default();
-                    let reason = if !stderr.is_empty() {
-                        format!("Stopped: {}", safe_output_line(stderr))
-                    } else if let Some(code) = code.filter(|code| *code != 0) {
-                        format!("Stopped: collector exited with status {code}")
-                    } else {
-                        "Stopped".into()
-                    };
-                    self.model.stopped(reason);
+                // Before `hello` it never started: give the port back so the page offers to
+                // open it afresh. After `hello` it crashed or was stopped: keep the port for a
+                // retry, for a while.
+                let startup_failed = self.model.hello.is_none();
+                self.model.exited(code, &tail);
+                if startup_failed {
+                    self.release_hold(Release::StartupFailed);
+                } else {
+                    self.arm_hold_expiry();
                 }
                 self.publish();
             }
@@ -1273,6 +1529,10 @@ impl CollectorRuntime {
                     "noWriteAvailable": !no_write_command.is_empty(),
                     "noWriteCommand": no_write_command,
                 }),
+            );
+            object.insert(
+                "privilege".into(),
+                serde_json::to_value(self.privilege_view()).unwrap_or_default(),
             );
         }
         let Ok(json) = serde_json::to_string(&value) else {
@@ -1395,24 +1655,6 @@ impl CollectorRuntime {
         }
         self.publish();
     }
-}
-
-fn safe_output_line(text: &str) -> String {
-    let mut safe = String::with_capacity(text.len());
-    for ch in text.chars() {
-        let code = ch as u32;
-        if code <= 0x1f
-            || (0x7f..=0x9f).contains(&code)
-            || (0x202a..=0x202e).contains(&code)
-            || (0x2066..=0x2069).contains(&code)
-            || matches!(code, 0x200e | 0x200f | 0x061c)
-        {
-            safe.push_str(&format!("\\u{{{code:04X}}}"));
-        } else {
-            safe.push(ch);
-        }
-    }
-    safe
 }
 
 struct AppNotifier {

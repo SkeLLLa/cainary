@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import QtQuick.Window
 import ua.SkeLLLa.cAInary
 import "components"
+import "components/style.js" as Style
 
 // Live › OTel collector: a header with the on/off switch, then Feed, Red flags and Setup tabs.
 ColumnLayout {
@@ -80,6 +81,18 @@ ColumnLayout {
             Accessible.name: qsTr("Collector enabled")
             onToggled: settings.change(next => { next.enabled = checked; })
         }
+    }
+
+    Label {
+        visible: root.collector.statusLine.length > 0
+        text: root.collector.statusLine
+        textFormat: Text.PlainText
+        color: root.collector.view.failure ? Style.warningColor(palette.window.hslLightness < 0.5) : palette.placeholderText
+        elide: Text.ElideRight
+        Layout.fillWidth: true
+        Layout.leftMargin: 12
+        Layout.rightMargin: 12
+        Layout.bottomMargin: 8
     }
 
     TabBar {

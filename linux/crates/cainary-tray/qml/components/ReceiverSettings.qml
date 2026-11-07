@@ -8,6 +8,8 @@ ColumnLayout {
     id: root
 
     required property CollectorSettingsModel model
+    property var privilege: ({ state: "none" })
+    readonly property string access: privilege.state || "none"
 
     RowLayout {
         visible: !root.model.value.tls
@@ -20,6 +22,11 @@ ColumnLayout {
             onValueModified: root.model.change(next => { next.port = value; })
         }
         Item { Layout.fillWidth: true }
+    }
+    PrivilegedPortNote {
+        visible: !root.model.value.tls && root.access !== "none"
+        privilege: root.privilege
+        Layout.fillWidth: true
     }
     Label {
         visible: root.model.value.tls

@@ -50,6 +50,20 @@ ScrollView {
         width: root.availableWidth - 24
         spacing: 12
 
+        CollectorFailure {
+            failure: root.collector.view.failure
+            privilege: root.collector.view.privilege
+            effectivePort: root.model.value.tls ? root.model.value.tls_port : root.model.value.port
+            onAddHostRequested: takeover.addHostAndFocus()
+            onTryPortRequested: port => root.model.change(next => {
+                if (next.tls)
+                    next.tls_port = port;
+                else
+                    next.port = port;
+            })
+            Layout.fillWidth: true
+        }
+
         GroupBox {
             visible: root.collector.view.stderrTail.length > 0
             title: qsTr("Collector listen error (copyable)")
@@ -112,7 +126,11 @@ ScrollView {
                         onClicked: CollectorController.copyText(root.collector.view.endpoint)
                     }
                 }
-                ReceiverSettings { model: root.model; Layout.fillWidth: true }
+                ReceiverSettings {
+                    model: root.model
+                    privilege: root.collector.privilegedFailure ? ({ state: "none" }) : root.collector.view.privilege
+                    Layout.fillWidth: true
+                }
             }
         }
 
@@ -144,7 +162,18 @@ ScrollView {
             Layout.fillWidth: true
             ColumnLayout {
                 anchors.fill: parent
-                TakeoverSettings { model: root.model; endpointHosts: root.endpointHosts; Layout.fillWidth: true }
+                TakeoverSettings {
+                    id: takeover
+                    model: root.model
+                    endpointHosts: root.endpointHosts
+                    privilege: root.collector.privilegedFailure ? ({ state: "none" }) : root.collector.view.privilege
+                    Layout.fillWidth: true
+                    onHostFocused: field => {
+                        const flick = root.contentItem;
+                        const y = field.mapToItem(flick.contentItem, 0, 0).y;
+                        flick.contentY = Math.max(0, Math.min(y - 80, flick.contentHeight - flick.height));
+                    }
+                }
                 SetupBlock {
                     visible: root.collector.view.takeover.length > 0
                     heading: qsTr("Hosts file and trust settings")

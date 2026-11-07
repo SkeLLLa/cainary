@@ -4,7 +4,8 @@ use std::sync::{Condvar, Mutex, OnceLock};
 use async_channel::Sender;
 use cainary_tray_dbus::UiEvent;
 use cainary_tray_model::collector::TrustAction;
-use cainary_tray_model::runner::StreamMsg;
+use cainary_tray_model::privport::PrivState;
+use cainary_tray_model::runner::{BindError, Reserved, StreamMsg};
 use cainary_tray_model::store::StoreEvent;
 
 static APP_MESSAGES: OnceLock<Sender<AppMessage>> = OnceLock::new();
@@ -108,6 +109,7 @@ pub enum AppCommand {
     SetCollector(String),
     ChooseCollectorLogFile,
     RetryCollector,
+    OpenPrivilegedPort,
     ClearCollector,
     CollectorTrust(TrustAction),
     CancelClaudeTrustPreview,
@@ -127,6 +129,22 @@ pub enum AppMessage {
     CollectorTrustFinished {
         action: TrustAction,
         result: Result<cainary_tray_model::runner::Output, String>,
+    },
+    /// The helper probe for a port below 1024 finished (on a worker thread).
+    PrivilegeAssessed {
+        port: u16,
+        seq: u64,
+        state: PrivState,
+    },
+    /// The authentication for opening a port finished. The sockets close with the message if
+    /// nothing wants them any more.
+    PortOpened {
+        port: u16,
+        result: Result<Reserved, BindError>,
+    },
+    /// A stopped collector has held its port for `STOPPED_HOLD`.
+    HoldExpired {
+        token: u64,
     },
     StopCollector(std::sync::mpsc::Sender<()>),
     Clipboard(String),

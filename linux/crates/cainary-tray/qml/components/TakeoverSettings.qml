@@ -11,8 +11,28 @@ ColumnLayout {
     required property CollectorSettingsModel model
     // Telemetry endpoint hosts from the latest scan, offered as one-click additions.
     property var endpointHosts: []
+    property var privilege: ({ state: "none" })
     readonly property bool dark: palette.window.hslLightness < 0.5
     readonly property color warning: Style.warningColor(dark)
+    // The host field that should take focus once the row for it exists.
+    property int focusIndex: -1
+
+    // A host field was focused (so the page can scroll to it).
+    signal hostFocused(Item field)
+
+    // Focuses the first empty host name, adding a row when there is none.
+    function addHostAndFocus() {
+        const hosts = root.model.value.tls_hosts;
+        const empty = hosts.findIndex(item => item === "");
+        if (empty >= 0 && hostRepeater.itemAt(empty)) {
+            hostRepeater.itemAt(empty).focusField();
+            return;
+        }
+        if (hosts.length >= 32)
+            return;
+        root.focusIndex = hosts.length;
+        root.model.change(next => { next.tls_hosts.push(""); });
+    }
 
     Switch {
         text: qsTr("Use HTTPS takeover")
@@ -38,8 +58,14 @@ ColumnLayout {
         }
         Item { Layout.fillWidth: true }
     }
+    PrivilegedPortNote {
+        visible: root.model.value.tls && (root.privilege.state || "none") !== "none"
+        privilege: root.privilege
+        Layout.fillWidth: true
+    }
     Label { text: qsTr("Host names"); font.weight: Font.DemiBold }
     Repeater {
+        id: hostRepeater
         model: root.model.value.tls_hosts
         delegate: ColumnLayout {
             id: host
@@ -47,9 +73,20 @@ ColumnLayout {
             required property var modelData
             enabled: root.model.value.tls
             Layout.fillWidth: true
+            function focusField() {
+                field.forceActiveFocus();
+                root.hostFocused(field);
+            }
+            Component.onCompleted: {
+                if (root.focusIndex === host.index) {
+                    root.focusIndex = -1;
+                    host.focusField();
+                }
+            }
             RowLayout {
                 Layout.fillWidth: true
                 TextField {
+                    id: field
                     text: host.modelData
                     placeholderText: qsTr("otel.example.com")
                     onEditingFinished: root.model.change(next => { next.tls_hosts[host.index] = text; })

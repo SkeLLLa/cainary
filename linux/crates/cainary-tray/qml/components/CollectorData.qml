@@ -6,6 +6,7 @@ import ua.SkeLLLa.cAInary
 QtObject {
     readonly property var view: {
         const trustDefaults = { busy: false, message: "", status: null, preview: null, result: null, noWriteAvailable: false, noWriteCommand: "" };
+        const privilegeDefaults = { state: "none", port: 0, heading: "", detail: "", warning: "", error: "", instructions: [], canOpen: false, busy: false };
         let value = {};
         try {
             value = JSON.parse(CollectorController.viewJson) || {};
@@ -30,7 +31,11 @@ QtObject {
             rows: value.rows || [],
             flagGroups: value.flagGroups || [],
             errors: value.errors || [],
-            trust: value.trust || trustDefaults
+            trust: value.trust || trustDefaults,
+            // Why the collector stopped on its own: { code, message, port }, else null.
+            failure: value.failure || null,
+            // What opening a port below 1024 needs; state "none" when it needs nothing.
+            privilege: value.privilege || privilegeDefaults
         };
     }
 
@@ -49,6 +54,18 @@ QtObject {
         case "failed": return qsTr("Failed");
         default: return qsTr("Off");
         }
+    }
+    // The failure box carries the "Open port N" action, so the port fields' own note stays out.
+    readonly property bool privilegedFailure: view.failure !== null
+        && (view.failure.code === "port-privileged" || view.failure.code === "listen-fd")
+        && view.privilege.state !== "none"
+    // One line for the page header: why the collector isn't running, or that it holds a port.
+    readonly property string statusLine: {
+        const p = view.privilege;
+        const reserved = p.state === "held-stopped" ? p.heading : "";
+        if (view.failure)
+            return reserved ? view.failure.message + " · " + reserved : view.failure.message;
+        return p.state === "held" ? p.heading : reserved;
     }
     // Red-flag hits: one per alert line, each with its own ×count.
     readonly property int flagCount: view.alerts.length

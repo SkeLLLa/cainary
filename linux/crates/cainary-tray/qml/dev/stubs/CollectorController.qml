@@ -8,6 +8,7 @@ QtObject {
     function show(name) { viewJson = S.collector(name); }
     function copyText(text) { console.info("copyText:", text); }
     function retry() {}
+    function openPrivilegedPort() { console.info("openPrivilegedPort"); }
     function clear() {}
     function previewClaudeTrust() {}
     function applyClaudeTrust() {}
