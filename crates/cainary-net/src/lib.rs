@@ -13,6 +13,7 @@ pub mod logfile;
 pub mod otlp;
 pub mod otlp_pb;
 pub mod output;
+pub mod peer;
 pub mod privdrop;
 pub mod queue;
 pub mod redflag;
