@@ -344,7 +344,7 @@ pub(super) fn claude_mode_locked(
                     l.message = format!("Claude Code already trusts the {mode} certificate.");
                     l
                 } else {
-                    claude_migrate(env, ca, &lock, &state, cs, &new_modes)
+                    claude_migrate(env, ca, lock, &state, cs, &new_modes)
                 }
             }
             None => Line::refused(t, NOT_YET),
@@ -428,7 +428,11 @@ fn claude_migrate(
     }
     let before = settings.snapshot.as_ref().map(|s| sha_of(&s.bytes));
     let was = old.written.clone();
+    // The backup restores the exact original bytes only if nothing else changed the file since
+    // cAInary's own edit; if it did, the record drops it and an undo puts back only the key.
+    let untouched = old.new_sha.is_some() && old.new_sha == before;
     let cs = ClaudeState {
+        backup: old.backup.clone().filter(|_| untouched),
         written: bundle_path.clone(),
         new_sha: Some(sha_of(new_text.as_bytes())),
         bundle_sha: Some(sha_of(bundle_text.as_bytes())),
@@ -2876,5 +2880,36 @@ mod tests {
         let (ok, _) = delete_ca(&mut fx);
         assert!(!ok);
         assert!(fx.ca_dir.join(CA_FILE).exists(), "the CA is kept");
+    }
+
+    #[test]
+    fn migration_after_user_edit_keeps_edit_on_undo() {
+        let fx = Fx::new("migrate-edit", "");
+        direct_record(&fx, OPUS);
+        // The user saves another key after cAInary's edit and before the migration.
+        let edited =
+            fx.read_settings()
+                .replacen("\"model\"", "\"theme\": \"dark\",\n  \"model\"", 1);
+        fs::write(fx.settings(), &edited).unwrap();
+        fs::write(fx.ca_dir.join(PROXY_CA_FILE), PROXY_CA).unwrap();
+        let env = fx.env();
+        let a = apply_mode(&env, Target::ClaudeCode, PROXY);
+        assert_eq!(a.action, Action::Applied, "{a:?}");
+        assert_eq!(claude_rec(&fx).backup, None, "the stale backup is dropped");
+        for m in [TAKEOVER, PROXY] {
+            assert_eq!(
+                undo_mode(&env, Target::ClaudeCode, m).action,
+                Action::Undone
+            );
+        }
+        let after = fx.read_settings();
+        assert!(
+            after.contains("\"theme\": \"dark\"") && !after.contains(KEY),
+            "{after}"
+        );
+        assert_eq!(
+            after,
+            OPUS.replacen("\"model\"", "\"theme\": \"dark\",\n  \"model\"", 1)
+        );
     }
 }
