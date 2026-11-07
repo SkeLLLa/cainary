@@ -27,6 +27,18 @@ pub mod qobject {
         fn copy_text(self: Pin<&mut CollectorController>, text: &QString);
 
         #[qinvokable]
+        #[cxx_name = "checkHosts"]
+        fn check_hosts(self: Pin<&mut CollectorController>);
+
+        #[qinvokable]
+        #[cxx_name = "editHosts"]
+        fn edit_hosts(self: Pin<&mut CollectorController>);
+
+        #[qinvokable]
+        #[cxx_name = "removeHostsLines"]
+        fn remove_hosts_lines(self: Pin<&mut CollectorController>);
+
+        #[qinvokable]
         fn retry(self: Pin<&mut CollectorController>);
 
         #[qinvokable]
@@ -94,6 +106,18 @@ impl qobject::CollectorController {
 
     fn copy_text(self: Pin<&mut Self>, text: &QString) {
         controller::send(AppMessage::Command(AppCommand::CopyText(text.to_string())));
+    }
+
+    fn check_hosts(self: Pin<&mut Self>) {
+        controller::send(AppMessage::Command(AppCommand::CheckHosts));
+    }
+
+    fn edit_hosts(self: Pin<&mut Self>) {
+        controller::send(AppMessage::Command(AppCommand::EditHosts));
+    }
+
+    fn remove_hosts_lines(self: Pin<&mut Self>) {
+        controller::send(AppMessage::Command(AppCommand::RemoveHostsLines));
     }
 
     fn retry(self: Pin<&mut Self>) {

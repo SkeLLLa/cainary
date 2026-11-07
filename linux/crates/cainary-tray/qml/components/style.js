@@ -21,6 +21,21 @@ function warningColor(dark) {
     return colors["medium"][dark ? 1 : 0];
 }
 
+function okColor(dark) {
+    return colors["ok"][dark ? 1 : 0];
+}
+
+function errorColor(dark) {
+    return colors["high"][dark ? 1 : 0];
+}
+
+function infoColor(dark) {
+    return colors["opted-out"][dark ? 1 : 0];
+}
+
+// Spacing steps shared by the setup components.
+const space = { xs: 4, s: 6, m: 8, l: 12, xl: 16 };
+
 // Opens a web link in the desktop's browser; anything else is ignored.
 function openExternal(url) {
     if (/^https?:\/\//i.test(url))

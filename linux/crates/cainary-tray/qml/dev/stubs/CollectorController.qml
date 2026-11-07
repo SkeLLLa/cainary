@@ -11,6 +11,9 @@ QtObject {
     function openPrivilegedPort() { console.info("openPrivilegedPort"); }
     function clear() {}
     function previewClaudeTrust() {}
+    function checkHosts() {}
+    function editHosts() {}
+    function removeHostsLines() {}
     function applyClaudeTrust() {}
     function cancelClaudeTrustPreview() {}
     function undoClaudeTrust() {}

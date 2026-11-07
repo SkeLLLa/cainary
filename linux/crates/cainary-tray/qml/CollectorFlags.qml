@@ -20,6 +20,22 @@ ColumnLayout {
     // Built in tray-model, newest group first.
     readonly property var groups: collector.view.flagGroups
 
+    // The rules editor: open when the user opened it, and by default while nothing matched.
+    // `showRules()` opens it for a notification or a link.
+    property var userRulesOpen: null
+    readonly property bool rulesExpanded: userRulesOpen !== null ? userRulesOpen : groups.length === 0
+    readonly property int presetCount: model.value.presets.length
+    readonly property int patternCount: model.value.patterns.length
+    readonly property string rulesSummary: {
+        const presets = presetCount === 1 ? qsTr("1 preset") : qsTr("%1 presets").arg(presetCount);
+        const patterns = patternCount === 1 ? qsTr("1 custom pattern") : qsTr("%1 custom patterns").arg(patternCount);
+        return qsTr("Rules: %1, %2").arg(presets).arg(patterns);
+    }
+
+    function showRules() {
+        userRulesOpen = true;
+    }
+
     spacing: 0
 
     CheckBox {
@@ -30,33 +46,8 @@ ColumnLayout {
         Layout.topMargin: 4
     }
 
-    // Compact empty state
-    ColumnLayout {
-        visible: flags.groups.length === 0
-        Layout.fillWidth: true
-        Layout.fillHeight: true
-        spacing: 6
-        Item { Layout.fillHeight: true }
-        Label {
-            text: qsTr("No red flags")
-            font.weight: Font.DemiBold
-            Layout.alignment: Qt.AlignHCenter
-        }
-        Label {
-            text: flags.collector.enabled
-                ? qsTr("Nothing matched the rules yet. Edit them in Setup.")
-                : qsTr("The collector is off.")
-            color: palette.placeholderText
-            wrapMode: Text.Wrap
-            horizontalAlignment: Text.AlignHCenter
-            Layout.fillWidth: true
-        }
-        Item { Layout.fillHeight: true }
-    }
-
     ScrollView {
         id: scroll
-        visible: flags.groups.length > 0
         Layout.fillWidth: true
         Layout.fillHeight: true
         contentWidth: availableWidth
@@ -65,6 +56,60 @@ ColumnLayout {
         ColumnLayout {
             width: scroll.availableWidth
             spacing: 8
+
+            // The rules summary and their editor.
+            RowLayout {
+                spacing: 8
+                Layout.fillWidth: true
+                Layout.leftMargin: 8
+                Layout.rightMargin: 8
+                Label {
+                    text: flags.rulesSummary
+                    textFormat: Text.PlainText
+                    wrapMode: Text.Wrap
+                    Layout.fillWidth: true
+                }
+                Button {
+                    text: qsTr("Edit rules")
+                    icon.source: Qt.resolvedUrl("icons/" + (flags.rulesExpanded ? "chevron-down" : "chevron-right") + ".svg")
+                    icon.color: palette.buttonText
+                    icon.width: 12
+                    icon.height: 12
+                    Accessible.role: Accessible.Button
+                    Accessible.description: flags.rulesExpanded ? qsTr("Expanded") : qsTr("Collapsed")
+                    onClicked: flags.userRulesOpen = !flags.rulesExpanded
+                }
+            }
+            RedFlagRules {
+                visible: flags.rulesExpanded
+                model: flags.model
+                showNotify: false
+                Layout.fillWidth: true
+                Layout.leftMargin: 8
+                Layout.rightMargin: 8
+            }
+
+            // Compact empty state
+            ColumnLayout {
+                visible: flags.groups.length === 0
+                spacing: 6
+                Layout.fillWidth: true
+                Layout.topMargin: 12
+                Label {
+                    text: qsTr("No red flags")
+                    font.weight: Font.DemiBold
+                    Layout.alignment: Qt.AlignHCenter
+                }
+                Label {
+                    text: flags.collector.enabled
+                        ? qsTr("Nothing matched the rules yet.")
+                        : qsTr("The collector is off.")
+                    color: palette.placeholderText
+                    wrapMode: Text.Wrap
+                    horizontalAlignment: Text.AlignHCenter
+                    Layout.fillWidth: true
+                }
+            }
 
             Repeater {
                 id: repeater

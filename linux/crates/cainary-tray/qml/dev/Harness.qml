@@ -19,6 +19,8 @@ Item {
     readonly property var filters: args.filter(x => !x.startsWith("--"))
     // --width=N: resize the window (e.g. 640, the narrowest Details allows).
     readonly property int width_: parseInt((args.find(x => x.startsWith("--width=")) || "--width=0").slice(8))
+    // --height=N: likewise, to see a long page without scrolling.
+    readonly property int height_: parseInt((args.find(x => x.startsWith("--height=")) || "--height=0").slice(9))
     readonly property var shots: S.scenarios.filter(s =>
         filters.length === 0 || filters.some(f => s.name.indexOf(f) >= 0))
     property int i: 0
@@ -32,9 +34,25 @@ Item {
             w.present();
         if (width_ > 0)
             w.width = width_;
+        if (height_ > 0)
+            w.height = height_;
+        if (s.dark || args.indexOf("--dark") >= 0)
+            darken(w);
         w.show();
         w.requestActivate();
         return w;
+    }
+
+    // A dark palette on the window (children inherit it), for scenarios flagged dark and --dark.
+    function darken(w) {
+        w.palette.window = "#232629";
+        w.palette.windowText = "#eff0f1";
+        w.palette.base = "#1b1e20";
+        w.palette.text = "#eff0f1";
+        w.palette.button = "#31363b";
+        w.palette.buttonText = "#eff0f1";
+        w.palette.placeholderText = "#9ea4aa";
+        w.palette.link = "#3daee9";
     }
 
     // An ApplicationWindow's root item has no QML engine to grab with, so the header, content

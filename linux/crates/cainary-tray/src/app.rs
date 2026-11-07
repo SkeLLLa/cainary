@@ -8,6 +8,10 @@ use async_channel::{Receiver, Sender};
 use cainary_tray_dbus::filemanager::file_uri;
 use cainary_tray_dbus::{self, Notification, Options as BusOptions, Service, TrayUpdate, UiEvent};
 use cainary_tray_model::collector::TrustAction;
+use cainary_tray_model::hostcheck::{self, HostCheck};
+use cainary_tray_model::hostsedit::{self, HostsHelperState, HostsOp};
+use cainary_tray_model::hostsfile::{self, HostsFile};
+use cainary_tray_model::hostsview::{self, Edit, EditResult, HostsFileView};
 use cainary_tray_model::notify_plan::Planned;
 use cainary_tray_model::portaccess::{self, Access, Hold, Launch, Release};
 use cainary_tray_model::privport::{self, PrivState};
@@ -119,6 +123,10 @@ pub fn run(options: &crate::Options) -> Result<i32, String> {
     let autostart_path = autostart::default_path();
     if let Some(path) = autostart_path.as_deref() {
         loaded_settings.launch_at_login = autostart::is_enabled(path);
+    }
+    // The collector (and so the HTTPS takeover) starts only when asked, unless the user opted in.
+    if !loaded_settings.collector.start_at_launch {
+        loaded_settings.collector.enabled = false;
     }
     let settings = Arc::new(Mutex::new(loaded_settings));
     let initial_settings = lock(&settings).clone();
@@ -421,6 +429,18 @@ fn spawn_controller(
                     AppMessage::PortOpened { port, result } => {
                         collector_runtime.finish_open(port, result);
                     }
+                    AppMessage::HostsChecked { seq, results } => {
+                        collector_runtime.finish_host_check(seq, results);
+                    }
+                    AppMessage::HostsFileRead { seq, file } => {
+                        collector_runtime.finish_hosts_file(seq, file);
+                    }
+                    AppMessage::HostsHelperAssessed { seq, state } => {
+                        collector_runtime.finish_hosts_helper(seq, state);
+                    }
+                    AppMessage::HostsEdited { op, hosts, outcome } => {
+                        collector_runtime.finish_hosts_edit(op, &hosts, outcome);
+                    }
                     AppMessage::HoldExpired { token } => collector_runtime.hold_expired(token),
                     AppMessage::CollectorTrustFinished { action, result } => {
                         collector_runtime.finish_trust_action(action, result);
@@ -635,6 +655,9 @@ fn handle_command(
             collector_runtime.forget_assessment();
             collector_runtime.restart(lock(settings).collector.clone());
         }
+        AppCommand::CheckHosts => collector_runtime.check_hosts_again(),
+        AppCommand::EditHosts => collector_runtime.edit_hosts(false),
+        AppCommand::RemoveHostsLines => collector_runtime.edit_hosts(true),
         AppCommand::OpenPrivilegedPort => collector_runtime.open_privileged_port(),
         AppCommand::ClearCollector => {
             collector_runtime.model.clear();
@@ -1038,6 +1061,19 @@ struct CollectorRuntime {
     /// What the helper probe found for `port`, or `None` while not looked at or running.
     assessed: Option<PrivState>,
     assess_seq: u64,
+    /// The takeover host lookups, and which request the running one answers.
+    host_check: HostCheck,
+    host_check_seq: u64,
+    /// What `/etc/hosts` says about those names, and which read the running one answers.
+    hosts_file: Option<HostsFile>,
+    hosts_file_seq: u64,
+    /// What the hosts helper looked like when last looked at (`None`: not yet, or looking).
+    hosts_helper: Option<HostsHelperState>,
+    hosts_helper_seq: u64,
+    /// An edit of `/etc/hosts` is waiting for the authentication and the helper.
+    hosts_edit: Edit,
+    /// What the last edit came to, until the next edit, the next Check or a restart.
+    hosts_result: Option<EditResult>,
     /// The authentication prompt for `port` is open.
     opening: bool,
     /// Why the last attempt to open the port failed.
@@ -1076,6 +1112,14 @@ impl CollectorRuntime {
             hold_token: 0,
             assessed: None,
             assess_seq: 0,
+            host_check: HostCheck::default(),
+            host_check_seq: 0,
+            hosts_file: None,
+            hosts_file_seq: 0,
+            hosts_helper: None,
+            hosts_helper_seq: 0,
+            hosts_edit: Edit::Idle,
+            hosts_result: None,
             opening: false,
             open_error: None,
         }
@@ -1086,6 +1130,13 @@ impl CollectorRuntime {
         self.generation = self.generation.wrapping_add(1);
         self.hold_token = self.hold_token.wrapping_add(1);
         self.model = collector::Model::default();
+        self.host_check_seq = self.host_check_seq.wrapping_add(1);
+        self.host_check = HostCheck::default();
+        self.hosts_file_seq = self.hosts_file_seq.wrapping_add(1);
+        self.hosts_file = None;
+        self.hosts_result = None;
+        // The model is empty now: no names, but the file and the helper are still worth a look.
+        self.refresh_hosts();
         self.port = portaccess::effective_port(&preferences);
         self.enabled = preferences.enabled;
         self.port_needs_root = privport::needs_privilege(self.port);
@@ -1217,6 +1268,207 @@ impl CollectorRuntime {
                 self.publish();
             }
         }
+    }
+
+    /// The Check button: forgets the last edit's note, then looks at everything again.
+    fn check_hosts_again(&mut self) {
+        if self.hosts_edit == Edit::Idle {
+            self.hosts_result = None;
+        }
+        self.check_hosts();
+    }
+
+    /// Looks at `/etc/hosts` and the hosts helper (on worker threads). It needs no host names:
+    /// with none, a block of cAInary's own is still found, so it can be removed while the
+    /// collector is off. Never asks for anything.
+    fn refresh_hosts(&mut self) {
+        let hosts = self.model.view().tls_hosts;
+        self.read_hosts_file(hosts);
+        self.assess_hosts_helper();
+    }
+
+    /// `refresh_hosts`, and a lookup of the hosts of the running TLS hello (none: no lookup).
+    fn check_hosts(&mut self) {
+        self.refresh_hosts();
+        let hosts = self.model.view().tls_hosts;
+        if hosts.is_empty() {
+            return;
+        }
+        if self.host_check.running {
+            return;
+        }
+        self.host_check_seq = self.host_check_seq.wrapping_add(1);
+        let seq = self.host_check_seq;
+        let messages = self.messages.clone();
+        let spawned = std::thread::Builder::new()
+            .name("cainary-host-check".into())
+            .spawn(move || {
+                let results = hostcheck::check(&hosts);
+                let _ = messages.try_send(AppMessage::HostsChecked { seq, results });
+            });
+        if spawned.is_ok() {
+            self.host_check.running = true;
+            self.publish();
+        }
+    }
+
+    /// Reads and analyzes `/etc/hosts` for `hosts` on a worker thread (unprivileged).
+    fn read_hosts_file(&mut self, hosts: Vec<String>) {
+        self.hosts_file_seq = self.hosts_file_seq.wrapping_add(1);
+        let seq = self.hosts_file_seq;
+        let messages = self.messages.clone();
+        let _ = std::thread::Builder::new()
+            .name("cainary-hosts-read".into())
+            .spawn(move || {
+                let file = hostsfile::read(&hosts);
+                let _ = messages.try_send(AppMessage::HostsFileRead { seq, file });
+            });
+    }
+
+    fn finish_hosts_file(&mut self, seq: u64, file: HostsFile) {
+        if seq != self.hosts_file_seq {
+            return;
+        }
+        self.hosts_file = Some(file);
+        self.publish();
+    }
+
+    /// Looks for the hosts helper on a worker thread, unless one was already found.
+    fn assess_hosts_helper(&mut self) {
+        if matches!(
+            self.hosts_helper,
+            Some(HostsHelperState::Ready { .. } | HostsHelperState::Mismatch { .. })
+        ) {
+            return;
+        }
+        self.hosts_helper = None;
+        self.hosts_helper_seq = self.hosts_helper_seq.wrapping_add(1);
+        let seq = self.hosts_helper_seq;
+        let messages = self.messages.clone();
+        let spawned = std::thread::Builder::new()
+            .name("cainary-hosts-edit".into())
+            .spawn(move || {
+                let state = hostsedit::assess(runner::probe_version);
+                let _ = messages.try_send(AppMessage::HostsHelperAssessed { seq, state });
+            });
+        if spawned.is_err() {
+            self.hosts_helper = Some(HostsHelperState::NoHelper("couldn't start a thread".into()));
+        }
+    }
+
+    fn finish_hosts_helper(&mut self, seq: u64, state: HostsHelperState) {
+        if seq != self.hosts_helper_seq {
+            return;
+        }
+        self.hosts_helper = Some(state);
+        self.publish();
+    }
+
+    /// The `hostsFile` object of the collector view.
+    fn hosts_view(&self, hosts: &[String]) -> HostsFileView {
+        let helper = self
+            .hosts_helper
+            .as_ref()
+            .map(hostsview::Helper::from)
+            .unwrap_or_default();
+        hostsview::view(&hostsview::Inputs {
+            hosts,
+            file: self.hosts_file.as_ref(),
+            helper: &helper,
+            edit: self.hosts_edit,
+            result: self.hosts_result.as_ref(),
+        })
+    }
+
+    /// "Add to /etc/hosts…" (`clear` false) or "Remove from /etc/hosts…": asks the hosts helper,
+    /// on a worker thread, for the one edit the view offers. Only a click gets here; nothing else
+    /// ever shows this authentication prompt. Nothing is retried or rolled back afterwards.
+    fn edit_hosts(&mut self, clear: bool) {
+        let hosts = self.model.view().tls_hosts;
+        let view = self.hosts_view(&hosts);
+        if !(if clear {
+            view.can_remove
+        } else {
+            view.can_edit
+        }) {
+            return;
+        }
+        let helper = match &self.hosts_helper {
+            Some(
+                HostsHelperState::Ready { helper } | HostsHelperState::Mismatch { helper, .. },
+            ) => helper.clone(),
+            _ => return,
+        };
+        let op = if clear {
+            HostsOp::Clear
+        } else {
+            match HostsOp::set(&hosts) {
+                Ok(op) => op,
+                Err(_) => return,
+            }
+        };
+        let word = op.word();
+        self.hosts_edit = if clear { Edit::Removing } else { Edit::Adding };
+        self.hosts_result = None;
+        self.publish();
+        let messages = self.messages.clone();
+        let names = hosts.clone();
+        let spawned = std::thread::Builder::new()
+            .name("cainary-edit-hosts".into())
+            .spawn(move || {
+                let outcome = runner::edit_hosts(&helper, &op, runner::HOSTS_DEADLINE);
+                let _ = messages.try_send(AppMessage::HostsEdited {
+                    op: word,
+                    hosts: names,
+                    outcome,
+                });
+            });
+        if let Err(error) = spawned {
+            self.finish_hosts_edit(
+                word,
+                &hosts,
+                runner::HostsEditOutcome::NotRun(runner::HostsNotRun::Spawn(error.to_string())),
+            );
+        }
+    }
+
+    /// Whatever the outcome (an uncertain one included): look at the file and the resolver again.
+    /// No retry, no rollback.
+    fn finish_hosts_edit(
+        &mut self,
+        op: &'static str,
+        hosts: &[String],
+        outcome: runner::HostsEditOutcome,
+    ) {
+        self.hosts_edit = Edit::Idle;
+        // The helper may have changed under us (or never answered): look at it again.
+        if matches!(
+            outcome,
+            runner::HostsEditOutcome::Uncertain(_)
+                | runner::HostsEditOutcome::NotRun(
+                    runner::HostsNotRun::Spawn(_) | runner::HostsNotRun::NotTrusted(_)
+                )
+        ) {
+            self.hosts_helper = None;
+        }
+        // An add that finished after the names changed says nothing about the new names. The
+        // file is read again either way.
+        let stale = op == "set" && hosts != self.model.view().tls_hosts.as_slice();
+        self.hosts_result = (!stale).then(|| hostsview::result_for(op, &outcome));
+        self.host_check.running = false;
+        self.check_hosts();
+        self.publish();
+    }
+
+    fn finish_host_check(&mut self, seq: u64, results: Vec<hostcheck::HostResult>) {
+        if seq != self.host_check_seq {
+            return;
+        }
+        self.host_check = HostCheck {
+            running: false,
+            results,
+        };
+        self.publish();
     }
 
     fn stop_child(&mut self) {
@@ -1455,6 +1707,8 @@ impl CollectorRuntime {
                     self.arm_hold_expiry();
                 }
                 if tls_hello {
+                    self.host_check.running = false;
+                    self.check_hosts();
                     self.request_trust_action(TrustAction::Status);
                 } else {
                     self.publish();
@@ -1508,6 +1762,7 @@ impl CollectorRuntime {
 
     fn publish(&self) {
         let view = self.model.view();
+        let hosts_file = self.hosts_view(&view.tls_hosts);
         let ca_path = self
             .trust_status
             .as_ref()
@@ -1533,6 +1788,14 @@ impl CollectorRuntime {
             object.insert(
                 "privilege".into(),
                 serde_json::to_value(self.privilege_view()).unwrap_or_default(),
+            );
+            object.insert(
+                "hostsFile".into(),
+                serde_json::to_value(&hosts_file).unwrap_or_default(),
+            );
+            object.insert(
+                "hostCheck".into(),
+                serde_json::to_value(&self.host_check).unwrap_or_default(),
             );
         }
         let Ok(json) = serde_json::to_string(&value) else {

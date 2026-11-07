@@ -3,33 +3,24 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import ua.SkeLLLa.cAInary
 
-// The collector's plain receiver: port and where batches go besides the UI.
+// Received data: where batches go besides the UI window.
 ColumnLayout {
     id: root
 
     required property CollectorSettingsModel model
     property var privilege: ({ state: "none" })
-    readonly property string access: privilege.state || "none"
+    // Shows the plain port too, as the page does today. The new Setup page sets this to false.
+    property bool showPort: true
 
-    RowLayout {
-        visible: !root.model.value.tls
-        Label { text: qsTr("Port") }
-        SpinBox {
-            from: 1
-            to: 65535
-            value: Math.max(1, root.model.value.port || 4318)
-            editable: true
-            onValueModified: root.model.change(next => { next.port = value; })
-        }
-        Item { Layout.fillWidth: true }
-    }
-    PrivilegedPortNote {
-        visible: !root.model.value.tls && root.access !== "none"
+    // The plain port moves to the "Point agents here" section; until the page does that it stays here.
+    ReceiverPort {
+        visible: root.showPort && !root.model.value.tls
+        model: root.model
         privilege: root.privilege
         Layout.fillWidth: true
     }
     Label {
-        visible: root.model.value.tls
+        visible: root.showPort && root.model.value.tls
         text: qsTr("The HTTPS takeover below sets the port while it is on.")
         color: palette.placeholderText
         wrapMode: Text.Wrap
@@ -38,13 +29,13 @@ ColumnLayout {
 
     ButtonGroup { id: logChoice }
     RadioButton {
-        text: qsTr("Show in UI only")
+        text: qsTr("Show in this window only")
         ButtonGroup.group: logChoice
         checked: !root.model.value.log_to_file
         onToggled: if (checked) root.model.change(next => { next.log_to_file = false; })
     }
     RadioButton {
-        text: qsTr("Also save to:")
+        text: qsTr("Also save to a file")
         ButtonGroup.group: logChoice
         checked: root.model.value.log_to_file
         onToggled: if (checked) root.model.change(next => { next.log_to_file = true; })

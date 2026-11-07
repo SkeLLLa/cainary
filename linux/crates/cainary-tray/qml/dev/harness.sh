@@ -1,6 +1,6 @@
 #!/bin/sh
 # Render the QML windows offscreen against dev/SampleView.js without the Rust app.
-# Usage: qml/dev/harness.sh [-o outdir] [--live] [--width=N] [scenario-filter...]
+# Usage: qml/dev/harness.sh [-o outdir] [--live] [--width=N] [--height=N] [--dark] [scenario-filter...]
 #   QT_QUICK_CONTROLS_STYLE=org.kde.desktop renders with Breeze instead of the default style.
 #   Filters are substrings of fixtures::scenarios() names (none = all); PNGs land in outdir
 #   (default /tmp/cainary-qml-harness). --live opens the first match in a real window under

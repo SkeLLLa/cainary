@@ -7,6 +7,9 @@ QtObject {
     readonly property var view: {
         const trustDefaults = { busy: false, message: "", status: null, preview: null, result: null, noWriteAvailable: false, noWriteCommand: "" };
         const privilegeDefaults = { state: "none", port: 0, heading: "", detail: "", warning: "", error: "", instructions: [], canOpen: false, busy: false };
+        const hostsFileDefaults = { helper: "checking", helperNote: "", block: "unknown", conflicts: [], reserved: [], unsupported: null, error: "", tooMany: false, canEdit: false, canRemove: false, busy: false, edit: "idle", result: null };
+        const hostCheckDefaults = { running: false, results: [] };
+        const guideDefaults = { warnings: [], steps: [], undo: { title: "", lines: [] }, footer: [] };
         let value = {};
         try {
             value = JSON.parse(CollectorController.viewJson) || {};
@@ -21,6 +24,13 @@ QtObject {
             codex: value.codex || [],
             notes: value.notes || [],
             takeover: value.takeover || [],
+            // The takeover text split into warnings, steps, undo and footer (tray-model).
+            takeoverGuide: value.takeoverGuide ? {
+                warnings: value.takeoverGuide.warnings || [],
+                steps: value.takeoverGuide.steps || [],
+                undo: value.takeoverGuide.undo || guideDefaults.undo,
+                footer: value.takeoverGuide.footer || []
+            } : guideDefaults,
             mode: value.mode || "receiver",
             tlsHosts: value.tlsHosts || [],
             caPath: value.caPath || "",
@@ -35,7 +45,11 @@ QtObject {
             // Why the collector stopped on its own: { code, message, port }, else null.
             failure: value.failure || null,
             // What opening a port below 1024 needs; state "none" when it needs nothing.
-            privilege: value.privilege || privilegeDefaults
+            privilege: value.privilege || privilegeDefaults,
+            // Whether the takeover host names resolve to this computer: { running, results: [{ host, state, address, message }] }.
+            hostCheck: value.hostCheck ? { running: !!value.hostCheck.running, results: value.hostCheck.results || [] } : hostCheckDefaults,
+            // The /etc/hosts state and the one-click edit (tray-model hostsview).
+            hostsFile: value.hostsFile ? Object.assign({}, hostsFileDefaults, value.hostsFile) : hostsFileDefaults
         };
     }
 
@@ -59,6 +73,11 @@ QtObject {
     readonly property bool privilegedFailure: view.failure !== null
         && (view.failure.code === "port-privileged" || view.failure.code === "listen-fd")
         && view.privilege.state !== "none"
+    // The failure when its fix is a step of the takeover checklist (host names or port), else null.
+    readonly property var hostFailure: view.failure !== null
+        && (view.failure.code === "tls-no-host" || view.failure.code === "tls-bad-host") ? view.failure : null
+    readonly property var portFailure: view.failure !== null
+        && ["port-privileged", "listen-fd", "port-in-use"].includes(view.failure.code) ? view.failure : null
     // One line for the page header: why the collector isn't running, or that it holds a port.
     readonly property string statusLine: {
         const p = view.privilege;

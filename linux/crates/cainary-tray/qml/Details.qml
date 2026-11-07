@@ -327,9 +327,10 @@ ApplicationWindow {
 
                         contentItem: RowLayout {
                             spacing: 8
-                            Label {
+                            GlyphIcon {
                                 visible: item.isSection || item.isNotInstalled
-                                text: item.modelData.expanded ? "▾" : "▸"
+                                glyph: item.modelData.expanded ? "chevron-down" : "chevron-right"
+                                size: 14
                                 color: item.palette.placeholderText
                                 Layout.preferredWidth: 14
                             }
@@ -345,17 +346,18 @@ ApplicationWindow {
                                     name: item.modelData.row ? item.modelData.row.name : ""
                                     installed: item.modelData.row ? item.modelData.row.installed : true
                                 }
-                                Label {
+                                GlyphIcon {
                                     visible: item.modelData.kind === "changes" || item.modelData.kind === "sources"
                                     anchors.centerIn: parent
-                                    text: item.modelData.kind === "changes" ? "±" : "☰"
+                                    glyph: item.modelData.kind === "changes" ? "changes" : "checklist"
+                                    size: 18
                                     color: item.highlighted ? item.palette.highlightedText : item.palette.placeholderText
                                 }
                                 StatusDot {
                                     visible: item.modelData.kind === "collector"
                                     anchors.centerIn: parent
                                     sourceState: win.collectorData ? win.collectorData.state : "off"
-                                    size: 10
+                                    size: 12
                                 }
                             }
                             Label {
@@ -413,7 +415,16 @@ ApplicationWindow {
                     }
                     contentItem: RowLayout {
                         spacing: 8
-                        Label { text: "⚙"; color: settingsRow.highlighted ? settingsRow.palette.highlightedText : settingsRow.palette.placeholderText }
+                        Item {
+                            implicitWidth: 20
+                            implicitHeight: 20
+                            GlyphIcon {
+                                anchors.centerIn: parent
+                                glyph: "settings"
+                                size: 18
+                                color: settingsRow.highlighted ? settingsRow.palette.highlightedText : settingsRow.palette.placeholderText
+                            }
+                        }
                         Label {
                             text: qsTr("Settings")
                             color: settingsRow.highlighted ? settingsRow.palette.highlightedText : settingsRow.palette.text

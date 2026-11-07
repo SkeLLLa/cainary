@@ -109,6 +109,11 @@ pub enum AppCommand {
     SetCollector(String),
     ChooseCollectorLogFile,
     RetryCollector,
+    CheckHosts,
+    /// "Add to /etc/hosts…": the one place that asks the hosts helper to `set`.
+    EditHosts,
+    /// "Remove from /etc/hosts…": likewise for `clear`.
+    RemoveHostsLines,
     OpenPrivilegedPort,
     ClearCollector,
     CollectorTrust(TrustAction),
@@ -141,6 +146,30 @@ pub enum AppMessage {
     PortOpened {
         port: u16,
         result: Result<Reserved, BindError>,
+    },
+    /// The takeover host lookups finished (on a worker thread).
+    HostsChecked {
+        seq: u64,
+        results: Vec<cainary_tray_model::hostcheck::HostResult>,
+    },
+    /// `/etc/hosts` was read (on a worker thread) for these names.
+    HostsFileRead {
+        seq: u64,
+        file: cainary_tray_model::hostsfile::HostsFile,
+    },
+    /// The hosts helper was looked at (on a worker thread).
+    HostsHelperAssessed {
+        seq: u64,
+        state: cainary_tray_model::hostsedit::HostsHelperState,
+    },
+    /// The authentication and the hosts helper finished (on a worker thread). `op` is
+    /// `HostsOp::word()`.
+    HostsEdited {
+        op: &'static str,
+        /// The names the edit was asked for (an add of other names than the current ones is
+        /// dropped).
+        hosts: Vec<String>,
+        outcome: cainary_tray_model::runner::HostsEditOutcome,
     },
     /// A stopped collector has held its port for `STOPPED_HOLD`.
     HoldExpired {

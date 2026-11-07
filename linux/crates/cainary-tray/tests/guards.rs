@@ -63,6 +63,31 @@ const WRITE_FILES: &[&str] = &[
     "crates/tray-model/src/autostart.rs",
 ];
 
+/// First-party crates allowed only under `[dev-dependencies]`: `cainary-net` feeds the takeover
+/// guide drift test the collector's real takeover text.
+const DEV_ONLY_DEPENDENCIES: &[&str] = &["cainary-net"];
+
+/// Modules allowed to name `std::net`, for address types and the host check's resolver lookup
+/// only; sockets stay forbidden everywhere (`SOCKET_MARKERS`).
+const NET_TYPE_FILES: &[&str] = &[
+    "crates/tray-model/src/hostcheck.rs",
+    "crates/tray-model/src/hostsfile.rs",
+];
+
+const SOCKET_MARKERS: &[&str] = &["TcpStream", "TcpListener", "UdpSocket", "SocketAddr::"];
+
+/// Modules allowed `OpenOptions` for a read-only open (non-blocking, for `/etc/hosts`); any
+/// write, create, append or truncate flag in them still fails.
+const READ_OPEN_FILES: &[&str] = &["crates/tray-model/src/hostsfile.rs"];
+
+const READ_OPEN_WRITE_FLAGS: &[&str] = &[
+    ".write(true)",
+    ".append(",
+    ".create(",
+    ".create_new(",
+    ".truncate(",
+];
+
 const WRITE_MARKERS: &[&str] = &[
     "OpenOptions::new",
     "DirBuilder::new",
@@ -301,6 +326,20 @@ fn manifest_dependencies(manifest: &Value) -> Vec<String> {
         .collect()
 }
 
+/// Dependencies outside `[dev-dependencies]`, including target-specific tables.
+fn non_dev_dependencies(manifest: &Value) -> Vec<String> {
+    let mut scopes = vec![manifest];
+    if let Some(targets) = manifest.get("target").and_then(Value::as_table) {
+        scopes.extend(targets.values());
+    }
+    scopes
+        .into_iter()
+        .flat_map(|scope| ["dependencies", "build-dependencies"].map(|key| scope.get(key)))
+        .filter_map(|table| table.and_then(Value::as_table))
+        .flat_map(|table| table.keys().cloned())
+        .collect()
+}
+
 fn denied(name: &str) -> bool {
     DENIED_PACKAGES.iter().any(|prefix| {
         name == *prefix || name.starts_with(&format!("{prefix}-")) || name.starts_with(prefix)
@@ -321,8 +360,11 @@ fn guard_l1_direct_dependencies_are_allowlisted() {
         let path = dir.join("Cargo.toml");
         let manifest: Value = toml::from_str(&fs::read_to_string(&path).expect("read manifest"))
             .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()));
+        let non_dev = non_dev_dependencies(&manifest);
         for dependency in manifest_dependencies(&manifest) {
-            if !DIRECT_DEPENDENCIES.contains(&dependency.as_str()) {
+            let dev_only = DEV_ONLY_DEPENDENCIES.contains(&dependency.as_str())
+                && !non_dev.contains(&dependency);
+            if !DIRECT_DEPENDENCIES.contains(&dependency.as_str()) && !dev_only {
                 unexpected.push(format!("{}: {dependency}", path.display()));
             }
         }
@@ -391,9 +433,19 @@ fn guard_l3_process_network_writes_and_scanning_paths_are_confined() {
     let mut process_creations = Vec::new();
     for source in sources() {
         let compact = source.code.split_whitespace().collect::<Vec<_>>().join(" ");
-        if compact.contains("std::net") || compact.contains("std::{net") {
+        let names_net = compact.contains("std::net") || compact.contains("std::{net");
+        if names_net && !NET_TYPE_FILES.contains(&source.path.as_str()) {
             violations.push(format!("{}: std::net usage", source.path));
         }
+        for marker in SOCKET_MARKERS {
+            if compact.contains(marker) {
+                violations.push(format!("{}: socket API {marker:?}", source.path));
+            }
+        }
+        let read_open = READ_OPEN_FILES.contains(&source.path.as_str())
+            && !READ_OPEN_WRITE_FLAGS
+                .iter()
+                .any(|flag| compact.contains(flag));
         if compact.contains("Command as") {
             violations.push(format!("{}: Command imported under an alias", source.path));
         }
@@ -422,6 +474,14 @@ fn guard_l3_process_network_writes_and_scanning_paths_are_confined() {
             }
         }
         if !WRITE_FILES.iter().any(|path| *path == source.path) {
+            // A read-only `OpenOptions` open and the `is_symlink()` query are no writes; every
+            // other marker still counts.
+            let compact = compact.replace("is_symlink(", "");
+            let compact = if read_open {
+                compact.replace("OpenOptions", "")
+            } else {
+                compact
+            };
             if compact.contains("std::fs as") || imports_fs_write(&compact) {
                 violations.push(format!(
                     "{}: filesystem write function imported from std::fs",
@@ -465,10 +525,12 @@ fn guard_l3_process_network_writes_and_scanning_paths_are_confined() {
 
 const RUNNER: &str = "crates/tray-model/src/runner.rs";
 const PRIVPORT: &str = "crates/tray-model/src/privport.rs";
+const HOSTSEDIT: &str = "crates/tray-model/src/hostsedit.rs";
 const FAKE_PKEXEC: &str = "crates/tray-model/src/bin/fake-pkexec.rs";
 
-/// Privileged-port plumbing stays where it can be reviewed: pkexec and descriptor passing only in
-/// the runner (and the test fake), the helper's and its policy's install paths only in privport.rs.
+/// Privileged-helper plumbing stays where it can be reviewed: pkexec and descriptor passing only in
+/// the runner (and the test fake), each helper's and its policy's install paths only in its own
+/// module (privport.rs for the bind helper, hostsedit.rs for the hosts helper).
 #[test]
 fn guard_l3b_privileged_port_plumbing_is_confined() {
     // Where each token may appear in production code.
@@ -479,9 +541,13 @@ fn guard_l3b_privileged_port_plumbing_is_confined() {
         ("SCM_RIGHTS", &[RUNNER, FAKE_PKEXEC]),
         ("socketpair", &[RUNNER, FAKE_PKEXEC]),
         ("--disable-internal-agent", &[RUNNER, FAKE_PKEXEC]),
-        ("libexec/cainary", &[PRIVPORT]),
-        ("polkit-1/actions", &[PRIVPORT]),
+        ("libexec/cainary", &[PRIVPORT, HOSTSEDIT]),
+        ("polkit-1/actions", &[PRIVPORT, HOSTSEDIT]),
         ("cainary-bind-helper", &[PRIVPORT, FAKE_PKEXEC]),
+        ("cainary-hosts-helper", &[HOSTSEDIT, FAKE_PKEXEC]),
+        ("ua.SkeLLLa.cAInary.edit-hosts", &[HOSTSEDIT]),
+        ("ua.SkeLLLa.cAInary.hosts", &[HOSTSEDIT]),
+        ("ua.SkeLLLa.cAInary.bind-loopback-port", &[PRIVPORT]),
     ];
     let mut violations = Vec::new();
     let mut argv_sites = 0;
@@ -509,6 +575,29 @@ fn guard_l3b_privileged_port_plumbing_is_confined() {
                     source.path
                 ));
             }
+            // The hosts edit has its own single argv builder, built on the same prefix.
+            let flat = code.split_whitespace().collect::<Vec<_>>().join(" ");
+            if !flat.contains(
+                "fn hosts_pkexec_args(helper: &std::path::Path, op: &HostsOp) -> Vec<OsString>",
+            ) {
+                violations.push(format!(
+                    "{}: the hosts pkexec argv must come from `hosts_pkexec_args`",
+                    source.path
+                ));
+            }
+            if flat.matches(".args(hosts_pkexec_args(").count() != 1 {
+                violations.push(format!(
+                    "{}: the hosts edit must start pkexec with exactly `.args(hosts_pkexec_args(…))`",
+                    source.path
+                ));
+            }
+            if flat.matches("pkexec_prefix(").count() != 3 {
+                // The definition, `pkexec_args` and `hosts_pkexec_args`: no other argv start.
+                violations.push(format!(
+                    "{}: `pkexec_prefix` must be used by `pkexec_args` and `hosts_pkexec_args` only",
+                    source.path
+                ));
+            }
         }
     }
     // The test-only entry points are defined once, behind the test cfg, and used nowhere else.
@@ -519,6 +608,9 @@ fn guard_l3b_privileged_port_plumbing_is_confined() {
     for (name, signature) in [
         ("bind_privileged_with", "pub fn bind_privileged_with("),
         ("assess_in", "pub fn assess_in("),
+        ("edit_hosts_with", "pub fn edit_hosts_with("),
+        ("assess_hosts_in", "pub fn assess_hosts_in("),
+        ("verify_hosts_in", "pub fn verify_hosts_in("),
     ] {
         let uses: usize = all.iter().map(|code| code.matches(name).count()).sum();
         let gated = all.iter().any(|code| {
@@ -536,6 +628,24 @@ fn guard_l3b_privileged_port_plumbing_is_confined() {
         violations.push(format!(
             "{RUNNER}: the pkexec argv must be spelled once, found {argv_sites}"
         ));
+    }
+    // The trust root is `/` and uid 0 in production: a `TrustEnv` is built by hand only in
+    // privport.rs (and tests, which are not scanned); the two helper modules ask for `system()`.
+    for source in sources() {
+        if source.code.contains("TrustEnv {") && source.path != PRIVPORT {
+            violations.push(format!(
+                "{}: a TrustEnv literal outside {PRIVPORT}",
+                source.path
+            ));
+        }
+        if source.code.contains("TrustEnv::system()")
+            && ![PRIVPORT, HOSTSEDIT].contains(&source.path.as_str())
+        {
+            violations.push(format!(
+                "{}: TrustEnv::system() outside privport.rs and hostsedit.rs",
+                source.path
+            ));
+        }
     }
     assert!(
         violations.is_empty(),

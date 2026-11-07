@@ -93,6 +93,17 @@ ColumnLayout {
                     onClicked: page.collectorSetupRequested()
                 }
             }
+            CheckBox {
+                text: qsTr("Start the collector when cAInary starts")
+                checked: collector.value.start_at_launch
+                onToggled: collector.change(next => { next.start_at_launch = checked; })
+            }
+            Label {
+                text: qsTr("Off: the collector and the HTTPS takeover stay off until you turn them on.")
+                color: page.palette.placeholderText
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
+            }
         }
     }
 

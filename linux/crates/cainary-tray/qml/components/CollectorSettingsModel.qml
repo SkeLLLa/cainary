@@ -7,14 +7,15 @@ QtObject {
     id: root
 
     readonly property var value: {
-        const defaults = { enabled: false, port: 4318, tls: false, tls_port: 8443, tls_hosts: [], log_to_file: false, log_path: "", presets: [], notify: true, patterns: [], patternErrors: [], tlsHostErrors: [], overLimit: false, logPathSuggestion: "" };
+        const defaults = { enabled: false, start_at_launch: false, port: 4318, tls: false, tls_port: 443, tls_hosts: [], log_to_file: false, log_path: "", presets: [], notify: true, patterns: [], patternErrors: [], tlsHostErrors: [], overLimit: false, logPathSuggestion: "" };
         try {
             const v = JSON.parse(SettingsController.collectorJson);
             return {
                 enabled: v.enabled === true,
+                start_at_launch: v.start_at_launch === true,
                 port: v.port || 4318,
                 tls: v.tls === true,
-                tls_port: v.tls_port || 8443,
+                tls_port: v.tls_port || 443,
                 tls_hosts: v.tls_hosts || [],
                 log_to_file: v.log_to_file === true,
                 log_path: v.log_path || "",
