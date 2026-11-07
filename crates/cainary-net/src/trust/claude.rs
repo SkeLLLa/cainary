@@ -10,11 +10,11 @@ use super::files::{
 };
 use super::state::{
     ClaudeState, Pending, PendingKind, Rec, Refused, State, Use, check_owned, delete_owned,
-    publish_bundle, read_state, reconcile, save_state,
+    publish_bundle, read_state, rebuild, reconcile, save_state,
 };
 use super::{
-    Action, BUSY, CLAUDE_BUNDLE, Env, KEY, Line, Mode, NEWER, ORG_NOTE, RESTART, TAKEOVER, Target,
-    dir_error, hook, lock_wait, now_string, stamp, with_shell,
+    Action, BUSY, CLAUDE_BUNDLE, Env, KEY, Line, MODES, Mode, NEWER, ORG_NOTE, RESTART, TAKEOVER,
+    Target, dir_error, hook, lock_wait, now_string, stamp, with_shell,
 };
 use crate::jsonedit::{self, EditError};
 use crate::tls::ca_file::{CA_FILE, CaDir};
@@ -176,37 +176,141 @@ pub fn claude_code(env: &Env<'_>, mode: Mode) -> Line {
             Ok(None) => nothing_changed(t),
             Err(_) => dir_error(t, "collector certificate", &env.ca_dir),
         },
-        Mode::Apply { dry_run: false } | Mode::Undo { dry_run: false } => {
-            let undo = matches!(mode, Mode::Undo { .. });
-            let ca = if undo {
-                match CaDir::open_existing(&env.ca_dir) {
-                    Ok(Some(c)) => c,
-                    Ok(None) => return nothing_changed(t),
-                    Err(_) => return dir_error(t, "collector certificate", &env.ca_dir),
-                }
-            } else {
-                match open_ca_dir(env, t) {
-                    Ok(c) => c,
-                    Err(l) => return *l,
-                }
-            };
-            let lock = match lock_trust(&ca, lock_wait()) {
-                Ok(Some(l)) => l,
-                Ok(None) => return Line::refused(t, BUSY),
-                Err(_) => return Line::refused(t, "The trust lock could not be taken."),
-            };
-            if read_state(&ca).newer {
-                return Line::refused(t, NEWER);
-            }
-            let note = recover(env, &ca, &lock);
-            let line = if undo {
-                claude_undo(env, false, &ca, Some(&lock))
-            } else {
-                claude_apply(env, false, Some(&ca), Some(&lock))
-            };
-            prefixed(note, line)
-        }
+        Mode::Apply { dry_run: false } => super::apply_mode(env, t, TAKEOVER),
+        Mode::Undo { dry_run: false } => super::undo_mode(env, t, TAKEOVER),
     }
+}
+
+const NOT_YET: &str = "Adding a second mode to this Claude Code setup isn't supported yet.";
+
+/// The registry-ordered mode set after adding (or, with `undo`, removing) `mode`.
+pub(super) fn modes_with(cur: &[String], mode: &str, undo: bool) -> Vec<String> {
+    MODES
+        .iter()
+        .filter(|(m, _)| {
+            if *m == mode {
+                !undo
+            } else {
+                cur.iter().any(|c| c == m)
+            }
+        })
+        .map(|(m, _)| (*m).to_string())
+        .collect()
+}
+
+/// Why a rebuild wrote nothing, as text for `target`.
+fn rebuild_refusal(target: Target, r: Refused) -> String {
+    let (what, foreign) = match target {
+        Target::ClaudeCode => ("Claude Code", FOREIGN_BUNDLE),
+        Target::Codex => ("Codex", super::codex::FOREIGN_BUNDLE),
+    };
+    match r {
+        Refused::Foreign => foreign.to_string(),
+        Refused::Uncertain => UNCERTAIN.to_string(),
+        Refused::Crashed => "(simulated crash)".to_string(),
+        Refused::MissingCa(m) => {
+            format!("The {m} certificate is missing; the {what} bundle was left as it is.")
+        }
+        Refused::NoSource => {
+            format!("The files the {what} bundle is made from can't be read; it was left as it is.")
+        }
+        Refused::Failed => format!("The {what} bundle could not be written."),
+    }
+}
+
+/// Rebuilds a target's bundle for `new_modes` and records it. No settings are touched.
+pub(super) fn rebuild_modes(
+    env: &Env<'_>,
+    ca: &CaDir,
+    state: &mut State,
+    target: Target,
+    new_modes: &[String],
+) -> Result<(), Box<Line>> {
+    rebuild(env, ca, state, target, new_modes)
+        .map_err(|r| Box::new(Line::refused(target, rebuild_refusal(target, r))))?;
+    save_state(ca, state).map_err(|_| {
+        Box::new(Line::refused(
+            target,
+            "The bundle was changed, but its record could not be saved. Run cainary-otel-debug --trust-status to finish it.",
+        ))
+    })
+}
+
+/// `--trust claude-code` for one mode: take the lock, settle what an earlier run left, then
+/// change the mode set. Only removing the last mode (or the first apply) touches the settings.
+pub(super) fn claude_mode(env: &Env<'_>, mode: &str, undo: bool) -> Line {
+    let t = Target::ClaudeCode;
+    if !MODES.iter().any(|(m, _)| *m == mode) {
+        return Line::refused(t, "Unknown trust mode.");
+    }
+    let ca = if undo {
+        match CaDir::open_existing(&env.ca_dir) {
+            Ok(Some(c)) => c,
+            Ok(None) => return nothing_changed(t),
+            Err(_) => return dir_error(t, "collector certificate", &env.ca_dir),
+        }
+    } else {
+        match open_ca_dir(env, t) {
+            Ok(c) => c,
+            Err(l) => return *l,
+        }
+    };
+    let lock = match lock_trust(&ca, lock_wait()) {
+        Ok(Some(l)) => l,
+        Ok(None) => return Line::refused(t, BUSY),
+        Err(_) => return Line::refused(t, "The trust lock could not be taken."),
+    };
+    if read_state(&ca).newer {
+        return Line::refused(t, NEWER);
+    }
+    let note = recover(env, &ca, &lock);
+    let mut state = read_state(&ca);
+    let bundle_here = ca.path().join(CLAUDE_BUNDLE).display().to_string();
+    let line = match state.claude.clone().filter(|c| c.written == bundle_here) {
+        // The settings already point at the owned bundle: a mode change is a bundle rebuild.
+        Some(cs) => {
+            let has = cs.modes.iter().any(|m| m == mode);
+            let new_modes = modes_with(&cs.modes, mode, undo);
+            let mut l = Line::new(t, Action::Already, "");
+            l.settings_path = Some(cs.settings_path.clone());
+            l.key = Some(KEY);
+            l.bundle_path = Some(bundle_here);
+            if undo && !has {
+                nothing_changed(t)
+            } else if undo && new_modes.is_empty() {
+                claude_undo(env, false, &ca, Some(&lock))
+            } else if !undo && has && mode == TAKEOVER {
+                claude_apply(env, false, Some(&ca), Some(&lock))
+            } else if !undo && has {
+                l.message = format!("Claude Code already trusts the {mode} certificate.");
+                l
+            } else {
+                match rebuild_modes(env, &ca, &mut state, t, &new_modes) {
+                    Ok(()) if undo => {
+                        l.action = Action::Undone;
+                        l.message = format!(
+                            "Claude Code no longer trusts the {mode} certificate once it is restarted."
+                        );
+                        l
+                    }
+                    Ok(()) => {
+                        l.action = Action::Applied;
+                        l.message = format!(
+                            "Claude Code will trust the {mode} certificate once it is restarted."
+                        );
+                        l
+                    }
+                    Err(r) => *r,
+                }
+            }
+        }
+        // No record, or a direct-path one (always `[takeover]`).
+        None if mode == TAKEOVER && undo => claude_undo(env, false, &ca, Some(&lock)),
+        None if mode == TAKEOVER => claude_apply(env, false, Some(&ca), Some(&lock)),
+        None if undo => nothing_changed(t),
+        None => Line::refused(t, NOT_YET),
+    };
+    prefixed(note, line)
 }
 
 fn nothing_changed(t: Target) -> Line {
@@ -973,6 +1077,7 @@ pub(super) fn recover(env: &Env<'_>, ca: &CaDir, _lock: &TrustLock) -> Option<St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tls::ca_file::PROXY_CA_FILE;
     use crate::trust::bundle::*;
     use crate::trust::files::*;
     use crate::trust::tests::*;
@@ -1949,5 +2054,236 @@ mod tests {
             "Restored your previous Claude Code setting. Restart Claude Code for it to take effect."
         );
         assert!(!u.message.contains("before applying"));
+    }
+
+    // ── mode changes ──
+    const PROXY_CA: &str = "-----BEGIN CERTIFICATE-----\nUFJPWFktQ0E=\n-----END CERTIFICATE-----\n";
+
+    fn both() -> Vec<String> {
+        vec![TAKEOVER.to_string(), PROXY.to_string()]
+    }
+
+    /// The proxy CA file exists and the existing records are enabled for both modes.
+    pub(in crate::trust) fn enable_proxy(fx: &Fx) {
+        fs::write(fx.ca_dir.join(PROXY_CA_FILE), PROXY_CA).unwrap();
+        let ca = CaDir::open_existing(&fx.ca_dir).unwrap().unwrap();
+        let mut st = read_state(&ca);
+        if let Some(c) = st.claude.as_mut() {
+            c.modes = both();
+        }
+        if let Some(c) = st.codex.as_mut() {
+            c.modes = both();
+        }
+        save_state(&ca, &st).unwrap();
+    }
+
+    fn user_bundle(fx: &Fx) {
+        fx.roots();
+        let m = fx.base.join("mine.pem");
+        fs::write(&m, ROOT_A).unwrap();
+        fx.write_settings(&format!("{{\"env\":{{\"{KEY}\":\"{}\"}}}}\n", m.display()));
+    }
+
+    fn certs_of(fx: &Fx, name: &str) -> Vec<String> {
+        pem_certs(&fs::read_to_string(fx.ca_dir.join(name)).unwrap())
+    }
+
+    fn state_modes(fx: &Fx) -> Value {
+        let v: Value = serde_json::from_slice(&state_bytes(fx).unwrap()).unwrap();
+        json!([v["claudeCode"]["modes"], v["codex"]["modes"]])
+    }
+
+    #[test]
+    fn undo_one_mode_keeps_other() {
+        let fx = Fx::new("undo-one", "");
+        user_bundle(&fx);
+        let env = fx.env();
+        assert_eq!(
+            apply_mode(&env, Target::ClaudeCode, TAKEOVER).action,
+            Action::Applied
+        );
+        assert_eq!(
+            apply_mode(&env, Target::Codex, TAKEOVER).action,
+            Action::Applied
+        );
+        enable_proxy(&fx);
+        let (settings, baks) = (fx.read_settings(), fx.baks());
+        let u = undo_mode(&env, Target::ClaudeCode, TAKEOVER);
+        assert_eq!(u.action, Action::Undone, "{u:?}");
+        assert_eq!(certs_of(&fx, CLAUDE_BUNDLE), [ROOT_A, PROXY_CA]);
+        let u = undo_mode(&env, Target::Codex, TAKEOVER);
+        assert_eq!(u.action, Action::Undone, "{u:?}");
+        assert_eq!(
+            certs_of(&fx, CODEX_BUNDLE),
+            [ROOT_A, ROOT_B, ROOT_C, PROXY_CA]
+        );
+        assert_eq!(state_modes(&fx), json!([["proxy"], ["proxy"]]));
+        assert_eq!(fx.read_settings(), settings, "no settings transaction");
+        assert_eq!(fx.baks(), baks, "no new backup");
+        // The mode that is gone has nothing left to undo.
+        for t in [Target::ClaudeCode, Target::Codex] {
+            assert_eq!(undo_mode(&env, t, TAKEOVER).action, Action::NothingToUndo);
+        }
+    }
+
+    #[test]
+    fn undo_last_mode_restores_bytes() {
+        let fx = Fx::new("undo-last", "");
+        user_bundle(&fx);
+        let original = fx.read_settings();
+        let env = fx.env();
+        assert_eq!(
+            apply_mode(&env, Target::ClaudeCode, TAKEOVER).action,
+            Action::Applied
+        );
+        assert_eq!(
+            apply_mode(&env, Target::Codex, TAKEOVER).action,
+            Action::Applied
+        );
+        enable_proxy(&fx);
+        for t in [Target::ClaudeCode, Target::Codex] {
+            assert_eq!(undo_mode(&env, t, PROXY).action, Action::Undone);
+            let u = undo_mode(&env, t, TAKEOVER);
+            assert_eq!(u.action, Action::Undone, "{u:?}");
+        }
+        assert_eq!(fx.read_settings(), original);
+        assert!(!fx.ca_dir.join(CLAUDE_BUNDLE).exists());
+        assert!(!fx.ca_dir.join(CODEX_BUNDLE).exists());
+        let st = read_state(&CaDir::open_existing(&fx.ca_dir).unwrap().unwrap());
+        assert!(st.claude.is_none() && st.codex.is_none());
+    }
+
+    #[test]
+    fn switch_modes_keeps_user_certs() {
+        let fx = Fx::new("switch", "");
+        user_bundle(&fx);
+        fs::write(fx.ca_dir.join(PROXY_CA_FILE), PROXY_CA).unwrap();
+        let env = fx.env();
+        assert_eq!(
+            apply_mode(&env, Target::ClaudeCode, TAKEOVER).action,
+            Action::Applied
+        );
+        assert_eq!(
+            apply_mode(&env, Target::Codex, TAKEOVER).action,
+            Action::Applied
+        );
+        for t in [Target::ClaudeCode, Target::Codex] {
+            let a = apply_mode(&env, t, PROXY);
+            assert_eq!(a.action, Action::Applied, "{a:?}");
+            assert_eq!(apply_mode(&env, t, PROXY).action, Action::Already);
+        }
+        assert_eq!(certs_of(&fx, CLAUDE_BUNDLE), [ROOT_A, CA1, PROXY_CA]);
+        assert_eq!(
+            state_modes(&fx),
+            json!([["takeover", "proxy"], ["takeover", "proxy"]])
+        );
+        for t in [Target::ClaudeCode, Target::Codex] {
+            assert_eq!(undo_mode(&env, t, TAKEOVER).action, Action::Undone);
+        }
+        assert_eq!(certs_of(&fx, CLAUDE_BUNDLE), [ROOT_A, PROXY_CA]);
+        for t in [Target::ClaudeCode, Target::Codex] {
+            assert_eq!(apply_mode(&env, t, TAKEOVER).action, Action::Applied);
+        }
+        assert_eq!(certs_of(&fx, CLAUDE_BUNDLE), [ROOT_A, CA1, PROXY_CA]);
+        assert_eq!(
+            certs_of(&fx, CODEX_BUNDLE),
+            [ROOT_A, ROOT_B, ROOT_C, CA1, PROXY_CA]
+        );
+    }
+
+    #[test]
+    fn undo_mode_crash_after_publish_commits_modes() {
+        for target in [Target::ClaudeCode, Target::Codex] {
+            let fx = Fx::new(&format!("undo-crash-{}", target.as_str()), "");
+            user_bundle(&fx);
+            let env = fx.env();
+            assert_eq!(apply_mode(&env, target, TAKEOVER).action, Action::Applied);
+            enable_proxy(&fx);
+            stop_at("after-bundle-publish");
+            let u = undo_mode(&env, target, TAKEOVER);
+            clear_hooks();
+            assert_eq!(u.action, Action::Refused, "{u:?}");
+            // The next run settles it from the file's hash: modes committed, not foreign.
+            let s = status(&fx);
+            for o in s["owned"].as_array().unwrap() {
+                assert_eq!(o["foreign"], false, "{o}");
+            }
+            let name = if target == Target::Codex {
+                CODEX_BUNDLE
+            } else {
+                CLAUDE_BUNDLE
+            };
+            let key = if target == Target::Codex {
+                "codex"
+            } else {
+                "claudeCode"
+            };
+            let v: Value = serde_json::from_slice(&state_bytes(&fx).unwrap()).unwrap();
+            assert_eq!(v[key]["modes"], json!(["proxy"]), "{v}");
+            assert_eq!(
+                v[key]["bundleSha"],
+                sha_of(&fs::read(fx.ca_dir.join(name)).unwrap())
+            );
+            // A later refresh keeps the undo: the takeover CA is not added back.
+            fs::write(fx.ca_dir.join(CA_FILE), CA2).unwrap();
+            assert!(refresh(&env).is_empty());
+            assert_eq!(
+                certs_of(&fx, name).last().map(String::as_str),
+                Some(PROXY_CA)
+            );
+            assert!(!certs_of(&fx, name).iter().any(|c| c == CA1 || c == CA2));
+        }
+    }
+
+    #[test]
+    fn foreign_bundle_refuses_mode_change() {
+        for target in [Target::ClaudeCode, Target::Codex] {
+            let fx = Fx::new(&format!("foreign-mode-{}", target.as_str()), "");
+            user_bundle(&fx);
+            let env = fx.env();
+            assert_eq!(apply_mode(&env, target, TAKEOVER).action, Action::Applied);
+            fs::write(fx.ca_dir.join(PROXY_CA_FILE), PROXY_CA).unwrap();
+            let name = if target == Target::Codex {
+                CODEX_BUNDLE
+            } else {
+                CLAUDE_BUNDLE
+            };
+            fs::write(fx.ca_dir.join(name), "someone else's file").unwrap();
+            let (settings, state) = (fx.read_settings(), state_bytes(&fx));
+            let a = apply_mode(&env, target, PROXY);
+            assert_eq!(a.action, Action::Refused, "{a:?}");
+            assert!(
+                a.message.contains("changed since cAInary wrote it"),
+                "{a:?}"
+            );
+            assert_eq!(
+                fs::read(fx.ca_dir.join(name)).unwrap(),
+                b"someone else's file"
+            );
+            assert_eq!(fx.read_settings(), settings);
+            assert_eq!(state_bytes(&fx), state);
+        }
+    }
+
+    #[test]
+    fn a_direct_path_claude_record_takes_no_second_mode_yet() {
+        let fx = Fx::new("direct-two", "");
+        assert_eq!(apply(&fx).action, Action::Applied);
+        fs::write(fx.ca_dir.join(PROXY_CA_FILE), PROXY_CA).unwrap();
+        let settings = fx.read_settings();
+        let a = apply_mode(&fx.env(), Target::ClaudeCode, PROXY);
+        assert_eq!(a.action, Action::Refused);
+        assert!(a.message.contains("isn't supported yet"));
+        assert_eq!(fx.read_settings(), settings);
+        assert_eq!(
+            undo_mode(&fx.env(), Target::ClaudeCode, PROXY).action,
+            Action::NothingToUndo
+        );
+        // Undoing the takeover is the full undo.
+        assert_eq!(
+            undo_mode(&fx.env(), Target::ClaudeCode, TAKEOVER).action,
+            Action::Undone
+        );
+        assert!(!fx.settings().exists());
     }
 }

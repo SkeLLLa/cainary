@@ -1,13 +1,15 @@
 //! The Codex target: a combined certificate bundle and the command that uses it. Nothing in
 //! Codex's own configuration is touched.
 
-use super::bundle::{bundle, collector_ca, system_roots};
-use super::claude::recover;
+use super::bundle::{bundle, collector_ca, mode_cas, system_roots};
+use super::claude::{modes_with, rebuild_modes, recover};
 use super::files::{Replace, lock_trust, read_in, unlink_unchanged};
 use super::state::{
     CodexState, Owned, Rec, Refused, check_owned, publish_bundle, read_state, save_state,
 };
-use super::{Action, BUSY, CODEX_BUNDLE, Env, Line, NEWER, TAKEOVER, Target, dir_error, lock_wait};
+use super::{
+    Action, BUSY, CODEX_BUNDLE, Env, Line, MODES, NEWER, TAKEOVER, Target, dir_error, lock_wait,
+};
 use crate::setup::quote;
 use crate::tls::ca_file::CaDir;
 
@@ -16,11 +18,24 @@ pub(super) fn codex_command(path: &str) -> String {
 }
 
 const UNRECORDED_BUNDLE: &str = "A Codex certificate bundle exists that cAInary has no record of creating; leaving it untouched.";
-const FOREIGN_BUNDLE: &str =
+pub(super) const FOREIGN_BUNDLE: &str =
     "The Codex certificate bundle was changed since cAInary wrote it; leaving it untouched.";
 
 pub fn codex(env: &Env<'_>, undo: bool) -> Line {
+    if undo {
+        super::undo_mode(env, Target::Codex, TAKEOVER)
+    } else {
+        super::apply_mode(env, Target::Codex, TAKEOVER)
+    }
+}
+
+/// `--trust codex` for one mode: add it to the bundle, or remove it (the last one removes the
+/// bundle).
+pub(super) fn codex_mode(env: &Env<'_>, mode: &str, undo: bool) -> Line {
     let t = Target::Codex;
+    if !MODES.iter().any(|(m, _)| *m == mode) {
+        return Line::refused(t, "Unknown trust mode.");
+    }
     let ca_dir = match if undo {
         CaDir::open_existing(&env.ca_dir)
     } else {
@@ -56,6 +71,35 @@ pub fn codex(env: &Env<'_>, undo: bool) -> Line {
         Some(c) => Rec::of(c.bundle_sha.as_deref()),
         None => Rec::None,
     };
+    let cur = state.codex.as_ref().map(|c| c.modes.clone());
+    let new_modes = modes_with(cur.as_deref().unwrap_or_default(), mode, undo);
+    let has = cur.as_ref().is_some_and(|m| m.iter().any(|x| x == mode));
+    if undo && cur.is_some() && !has {
+        return Line::new(
+            t,
+            Action::NothingToUndo,
+            format!("Codex doesn't trust the {mode} certificate."),
+        );
+    }
+    // Changing the mode set of a bundle cAInary already owns is a rebuild, not a first apply.
+    if cur.is_some() && (undo && !new_modes.is_empty() || !undo && !has) {
+        let mut l = Line::new(t, Action::Applied, "");
+        if let Err(r) = rebuild_modes(env, &ca_dir, &mut state, t, &new_modes) {
+            return *r;
+        }
+        l.bundle_path = Some(path.clone());
+        l.command = Some(codex_command(&path));
+        if undo {
+            l.action = Action::Undone;
+            l.message = format!(
+                "Codex no longer trusts the {mode} certificate when started with this command."
+            );
+        } else {
+            l.message =
+                format!("Codex will trust the {mode} certificate when started with this command.");
+        }
+        return l;
+    }
     if undo {
         let c = check_owned(&ca_dir, CODEX_BUNDLE, &rec);
         match c.owned {
@@ -93,7 +137,13 @@ pub fn codex(env: &Env<'_>, undo: bool) -> Line {
         l.bundle_path = Some(path);
         return l;
     }
-    let ca = match collector_ca(&ca_dir) {
+    let cas = if new_modes == [TAKEOVER] {
+        collector_ca(&ca_dir).map(|c| vec![c])
+    } else {
+        mode_cas(&ca_dir, &new_modes)
+            .map_err(|_| "The certificate of a trust mode is missing, so a bundle can't be made.")
+    };
+    let cas = match cas {
         Ok(c) => c,
         Err(m) => return Line::refused(t, m),
     };
@@ -103,7 +153,7 @@ pub fn codex(env: &Env<'_>, undo: bool) -> Line {
             "No system certificate bundle was found, so a combined bundle can't be made.",
         );
     };
-    let text = bundle(&roots, std::slice::from_ref(&ca));
+    let text = bundle(&roots, &cas);
     let same = matches!(read_in(&ca_dir, CODEX_BUNDLE), Ok(Some(b)) if b == text.as_bytes());
     let sha = match publish_bundle(
         &ca_dir,
@@ -140,7 +190,7 @@ pub fn codex(env: &Env<'_>, undo: bool) -> Line {
     state.codex = Some(CodexState {
         bundle_path: path.clone(),
         bundle_sha: Some(sha),
-        modes: vec![TAKEOVER.to_string()],
+        modes: new_modes,
     });
     state.clear_journal(CODEX_BUNDLE);
     if save_state(&ca_dir, &state).is_err() {

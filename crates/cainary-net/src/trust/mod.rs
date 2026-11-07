@@ -514,6 +514,22 @@ pub fn refresh(env: &Env<'_>) -> Vec<String> {
     warnings
 }
 
+/// Adds `mode` to `target`'s trust (the CLI's `--trust X` is this with `TAKEOVER`).
+pub(crate) fn apply_mode(env: &Env<'_>, target: Target, mode: &str) -> Line {
+    match target {
+        Target::ClaudeCode => claude::claude_mode(env, mode, false),
+        Target::Codex => codex::codex_mode(env, mode, false),
+    }
+}
+
+/// Removes `mode` from `target`'s trust; the last mode undoes the target completely.
+pub(crate) fn undo_mode(env: &Env<'_>, target: Target, mode: &str) -> Line {
+    match target {
+        Target::ClaudeCode => claude::claude_mode(env, mode, true),
+        Target::Codex => codex::codex_mode(env, mode, true),
+    }
+}
+
 /// For the tests and the CLI: the time stamp used in backup names.
 pub fn backup_stamp(t: SystemTime) -> String {
     stamp(&cainary_core::value::rfc3339(t))
