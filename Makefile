@@ -3,7 +3,7 @@
 .DEFAULT_GOAL := help
 PHONY_RELEASE := release otel-debug linux-build-release linux-run-release
 .PHONY: help build test test-tls fmt lint lint-actions check-rust check core-universal app bundle ui-test scan publish-check clean \
-	linux linux-cli linux-build linux-test linux-fmt linux-lint linux-check linux-ui-test linux-run $(PHONY_RELEASE)
+	linux linux-cli linux-helper linux-build linux-test linux-fmt linux-lint linux-check linux-ui-test linux-run $(PHONY_RELEASE)
 
 # cargo needs a writable CARGO_HOME. Normally that is the existing CARGO_HOME or ~/.cargo and
 # nothing changes. When that directory cannot be written (the agent sandbox), use
@@ -65,6 +65,7 @@ help:
 	@echo "  bundle          assemble dist/cAInary.app and zip it"
 	@echo "  linux           Linux release artifacts in dist/ (LINUX_FORMATS=tar,deb,rpm; default tar)"
 	@echo "  linux-cli       static musl cainary and cainary-otel-debug for LINUX_ARCH (default: this machine)"
+	@echo "  linux-helper    static musl cainary-bind-helper; prints the admin install and uninstall commands"
 	@echo "  linux-build     debug build of the Qt tray app (linux/)"
 	@echo "  linux-test      tray tests under dbus-run-session, QT_QPA_PLATFORM=offscreen"
 	@echo "  linux-fmt       cargo fmt for linux/ (in place)"
@@ -176,7 +177,23 @@ bundle: $(BUNDLE_DEPS)
 # The CLI and the debug collector are static musl from the root workspace; it runs on any distro. The tray app links the
 # distro's Qt 6, so it is built on (or in a container of) the distro it ships for.
 linux-cli:
-	$(CARGO_CMD) build $(MANIFEST) --release --locked --target $(LINUX_CLI_TARGET) -p cainary -p cainary-net --features cainary-net/tls
+	$(CARGO_CMD) build $(MANIFEST) --release --locked --target $(LINUX_CLI_TARGET) -p cainary -p cainary-net -p cainary-bind-helper --features cainary-net/tls
+
+# The root helper for low ports (docs/linux.md). Builds it and PRINTS the admin commands; nothing
+# here installs anything or runs sudo. The commands are fish-compatible.
+HELPER_BIN = $(CURDIR)/target/$(LINUX_CLI_TARGET)/release/cainary-bind-helper
+HELPER_POLICY = $(CURDIR)/packaging/linux/polkit/ua.SkeLLLa.cAInary.local.policy
+linux-helper:
+	$(CARGO_CMD) build $(MANIFEST) --release --locked --target $(LINUX_CLI_TARGET) -p cainary-bind-helper
+	@echo ""
+	@echo "Built $(HELPER_BIN)"
+	@echo "Install as an administrator (not run for you):"
+	@echo "  sudo install -d -m 0755 -o root -g root /usr/local/libexec/cainary"
+	@echo "  sudo install -m 0755 -o root -g root $(HELPER_BIN) /usr/local/libexec/cainary/cainary-bind-helper"
+	@echo "  sudo install -m 0644 -o root -g root $(HELPER_POLICY) /usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.local.policy"
+	@echo "Uninstall:"
+	@echo "  sudo rm /usr/local/libexec/cainary/cainary-bind-helper /usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.local.policy"
+	@echo "  sudo rmdir /usr/local/libexec/cainary"
 
 linux-build:
 	$(CARGO_CMD) build $(LINUX_MANIFEST) --workspace
@@ -269,7 +286,7 @@ endif
 
 # Release binaries from this checkout, for trying a build without installing it.
 release:
-	$(CARGO_CMD) build $(MANIFEST) --release --locked -p cainary -p cainary-net --features cainary-net/tls
+	$(CARGO_CMD) build $(MANIFEST) --release --locked -p cainary -p cainary-net -p cainary-bind-helper --features cainary-net/tls
 
 OTEL_DEBUG_ARGS ?=
 # Only the collector writes to stdout, so `--json` output can be piped.

@@ -1,0 +1,20 @@
+[package]
+name = "cainary-bind-helper"
+description = "Root helper: binds a privileged loopback port and hands the listening sockets to the tray"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+# Installed by an administrator, never from crates.io.
+publish = false
+
+[[bin]]
+name = "cainary-bind-helper"
+path = "src/main.rs"
+
+[dependencies]
+libc.workspace = true

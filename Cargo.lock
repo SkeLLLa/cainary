@@ -80,6 +80,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cainary-bind-helper"
+version = "0.5.2"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "cainary-core"
 version = "0.5.2"
 dependencies = [

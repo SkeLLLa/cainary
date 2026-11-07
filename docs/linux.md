@@ -400,6 +400,45 @@ The tray looks for the collector binary in this order: `CAINARY_OTEL_DEBUG` in d
 next to `cainary-tray`, then `/usr/bin/cainary-otel-debug`. It never searches `PATH`. Packaged
 Linux builds include the binary.
 
+### Privileged ports (root helper)
+
+Ports below 1024 (443 for HTTPS) need a privileged bind. `cainary-bind-helper` is a small
+root helper for that, run only through `pkexec`; it is never setuid and has no file capabilities.
+It binds `127.0.0.1:N` and `[::1]:N` (`IPV6_V6ONLY`, `SO_REUSEADDR` only) and hands the listening
+sockets to the tray, which passes them on to the collector. The helper reads and writes no files,
+runs nothing and reads only `PKEXEC_UID` from the environment.
+
+It runs as `cainary-bind-helper --port N` with `N` in 1–1023 and a `SOCK_SEQPACKET` socket as its
+stdout; it refuses unless it is root, `PKEXEC_UID` is canonical decimal, and the socket's peer is
+that user. It sends one datagram with the sockets as `SCM_RIGHTS` and exits:
+
+```
+cainary-bind-helper/1 ok <port> <count> <version>[ ipv6-unavailable]
+cainary-bind-helper/1 error <token>
+```
+
+`count` is 2, or 1 with the `ipv6-unavailable` warning when IPv6 or `::1` is not available.
+Tokens: `bad-args`, `not-pkexec`, `bad-channel`, `port-in-use` (also when only `[::1]` is taken),
+`bind-failed`. Exit status: 0 ok, 2 refused precondition, 1 bind or send failure.
+`cainary-bind-helper --version` prints `cainary-bind-helper <version> protocol 1` and needs no
+privilege.
+
+Packages install the helper in `/usr/libexec/cainary/` with the polkit policy
+`packaging/linux/polkit/ua.SkeLLLa.cAInary.policy` (action
+`ua.SkeLLLa.cAInary.bind-loopback-port`, `auth_admin` for active sessions only). For a local
+build, `mise run linux:helper` builds the static helper and prints these commands (it never runs
+them); it uses `/usr/local/libexec/cainary/` and the `.local` policy
+(`ua.SkeLLLa.cAInary.bind-loopback-port.local`), whose `exec.path` is that location:
+
+```fish
+sudo install -d -m 0755 -o root -g root /usr/local/libexec/cainary
+sudo install -m 0755 -o root -g root (pwd)/target/(uname -m)-unknown-linux-musl/release/cainary-bind-helper /usr/local/libexec/cainary/cainary-bind-helper
+sudo install -m 0644 -o root -g root (pwd)/packaging/linux/polkit/ua.SkeLLLa.cAInary.local.policy /usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.local.policy
+# uninstall
+sudo rm /usr/local/libexec/cainary/cainary-bind-helper /usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.local.policy
+sudo rmdir /usr/local/libexec/cainary
+```
+
 ## 11. Logs
 
 The tray keeps an in-memory activity log (`tray-model/src/logbook.rs`) for the Logs view. It is

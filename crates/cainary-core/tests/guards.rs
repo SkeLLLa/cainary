@@ -187,6 +187,13 @@ fn in_net(rel: &str) -> bool {
     rel.starts_with(NET_SRC)
 }
 
+const HELPER_SRC: &str = "cainary-bind-helper/src/";
+
+/// The root bind helper has its own, stricter rules (`check_helper_source`).
+fn in_helper(rel: &str) -> bool {
+    rel.starts_with(HELPER_SRC)
+}
+
 fn in_harness(rel: &str) -> bool {
     rel.starts_with("cainary-core/src/harness/")
 }
@@ -237,7 +244,7 @@ fn banned_std_modules(code: &str) -> Vec<String> {
 fn check_guard1(srcs: &[Src]) -> Vec<String> {
     let mut bad = Vec::new();
     for s in srcs {
-        if in_harness(&s.rel) || s.rel == CLI_MAIN || in_net(&s.rel) {
+        if in_harness(&s.rel) || s.rel == CLI_MAIN || in_net(&s.rel) || in_helper(&s.rel) {
             continue;
         }
         for hit in banned_std_modules(&s.code) {
@@ -263,7 +270,7 @@ const WRITE_SHAPED: [&str; 10] = [
 fn check_guard2(srcs: &[Src]) -> Vec<String> {
     let mut bad = Vec::new();
     for s in srcs {
-        if in_net(&s.rel) {
+        if in_net(&s.rel) || in_helper(&s.rel) {
             continue;
         }
         let code = squash(&s.code);
@@ -295,7 +302,8 @@ fn check_guard3(srcs: &[Src]) -> Vec<String> {
                 spawns.push((s.rel.clone(), near.contains("/usr/sbin/scutil")));
             }
         }
-        if s.rel != FS_RS && !net_libc_ok(&s.rel) && s.code.contains("libc::") {
+        if s.rel != FS_RS && !net_libc_ok(&s.rel) && !in_helper(&s.rel) && s.code.contains("libc::")
+        {
             bad.push(format!("{}: libc:: outside harness/fs.rs", s.rel));
         }
     }
@@ -669,15 +677,19 @@ const TLS_ONLY: &[&str] = &[
 /// read-only core or CLI.
 const SIG_ONLY: &[&str] = &["cainary-sig"];
 
+/// The root bind helper: in the lock, but never in the closure of `cainary` or `cainary-core`.
+const HELPER_ONLY: &[&str] = &["cainary-bind-helper"];
+
 /// Closure rules: a named package set, and the roots whose dependency closure must not touch it.
 const CLOSURE_RULES: &[(&str, &[&str], &[&str])] = &[
     ("NET_ONLY", NET_ONLY, &["cainary", "cainary-core"]),
     ("TLS_ONLY", TLS_ONLY, &["cainary", "cainary-core"]),
     ("SIG_ONLY", SIG_ONLY, &["cainary", "cainary-core"]),
+    ("HELPER_ONLY", HELPER_ONLY, &["cainary", "cainary-core"]),
 ];
 
 /// Every set the lock may draw from.
-const ALLOWED_SETS: &[&[&str]] = &[CORE_ALLOWED, NET_ONLY, TLS_ONLY, SIG_ONLY];
+const ALLOWED_SETS: &[&[&str]] = &[CORE_ALLOWED, NET_ONLY, TLS_ONLY, SIG_ONLY, HELPER_ONLY];
 
 fn lock_packages(lock: &str) -> Vec<String> {
     let v: toml::Value = toml::from_str(lock).expect("Cargo.lock parses as TOML");
@@ -830,6 +842,354 @@ fn sig_manifest_has_no_dependencies_and_is_not_publishable() {
     let manifest = fs::read_to_string(crates_dir().join("cainary-sig/Cargo.toml"))
         .expect("read cainary-sig manifest");
     assert_clean("cainary-sig manifest", check_sig_manifest(&manifest));
+}
+
+/// Identifiers the root helper may not use: no process creation, no file access, no environment
+/// beyond the one `PKEXEC_UID` read, no `SO_REUSEPORT`. Anything starting with `exec` is banned too.
+const HELPER_BANNED_IDENTS: &[&str] = &[
+    "Command",
+    "File",
+    "OpenOptions",
+    "fork",
+    "vfork",
+    "spawn",
+    "system",
+    "popen",
+    "open",
+    "openat",
+    "creat",
+    "read",
+    "write",
+    "unlink",
+    "rename",
+    "mkdir",
+    "getenv",
+    "environ",
+    "setenv",
+    "SO_REUSEPORT",
+];
+
+/// H1: the helper source (`cainary-bind-helper/src/`).
+fn check_helper_source(srcs: &[Src]) -> Vec<String> {
+    let mut bad = Vec::new();
+    for s in srcs.iter().filter(|s| in_helper(&s.rel)) {
+        let code = squash(&s.code);
+        for hit in banned_std_modules(&s.code) {
+            if hit != "std::process" && hit != "std::{process}" && hit != "std::env" {
+                bad.push(format!("{}: {hit} in the helper", s.rel));
+            }
+        }
+        for t in idents(&code) {
+            if HELPER_BANNED_IDENTS.contains(&t) || t.starts_with("exec") {
+                bad.push(format!("{}: banned identifier `{t}` in the helper", s.rel));
+            }
+        }
+        let vars = code.matches("env::var").count();
+        let pkexec = code.matches("env::var(\"PKEXEC_UID\")").count();
+        if vars != pkexec || pkexec > 1 {
+            bad.push(format!(
+                "{}: the helper may read only PKEXEC_UID, once (`env::var` x{vars})",
+                s.rel
+            ));
+        }
+    }
+    bad
+}
+
+/// H2: the helper manifest declares only `libc` (in any dependency table) and `publish = false`.
+fn check_helper_manifest(manifest: &str) -> Vec<String> {
+    let Ok(v) = toml::from_str::<toml::Value>(manifest) else {
+        return vec!["cainary-bind-helper/Cargo.toml does not parse".to_string()];
+    };
+    let mut tables: Vec<(String, &toml::Value)> = Vec::new();
+    for t in ["dependencies", "dev-dependencies", "build-dependencies"] {
+        if let Some(d) = v.get(t) {
+            tables.push((t.to_string(), d));
+        }
+    }
+    if let Some(targets) = v.get("target").and_then(|t| t.as_table()) {
+        for (cfg, body) in targets {
+            for t in ["dependencies", "dev-dependencies", "build-dependencies"] {
+                if let Some(d) = body.get(t) {
+                    tables.push((format!("target.{cfg}.{t}"), d));
+                }
+            }
+        }
+    }
+    let mut bad = Vec::new();
+    for (table, deps) in tables {
+        for name in deps.as_table().into_iter().flat_map(|t| t.keys()) {
+            if name != "libc" {
+                bad.push(format!(
+                    "cainary-bind-helper [{table}]: `{name}` is not allowed, only libc"
+                ));
+            }
+        }
+    }
+    if v.get("package").and_then(|p| p.get("publish")) != Some(&toml::Value::Boolean(false)) {
+        bad.push("cainary-bind-helper must set `publish = false`".to_string());
+    }
+    bad
+}
+
+/// H3: `cainary-bind-helper` reaches only `libc` in the lock.
+fn check_helper_closure(lock: &str) -> Vec<String> {
+    closure(&lock_graph(lock), "cainary-bind-helper")
+        .into_iter()
+        .filter(|n| n != "cainary-bind-helper" && n != "libc")
+        .map(|n| format!("Cargo.lock: cainary-bind-helper reaches `{n}`, not just libc"))
+        .collect()
+}
+
+const POLICY_ID: &str = "ua.SkeLLLa.cAInary.bind-loopback-port";
+const POLICY_PATH: &str = "/usr/libexec/cainary/cainary-bind-helper";
+const POLICY_LOCAL_PATH: &str = "/usr/local/libexec/cainary/cainary-bind-helper";
+
+/// The text of every `<tag …>text</tag>` in `xml`.
+fn xml_tags(xml: &str, tag: &str) -> Vec<String> {
+    let (open, close) = (format!("<{tag}"), format!("</{tag}>"));
+    let mut out = Vec::new();
+    let mut rest = xml;
+    while let Some(i) = rest.find(&open) {
+        let after = &rest[i + open.len()..];
+        let Some(gt) = after.find('>') else { break };
+        let Some(end) = after.find(&close) else { break };
+        if gt < end {
+            out.push(after[gt + 1..end].trim().to_string());
+        }
+        rest = &after[end + close.len()..];
+    }
+    out
+}
+
+/// H4: the two polkit policies are well formed, use `no`/`no`/`auth_admin`, name the exact action
+/// and `exec.path`, and differ from each other only in those two values.
+fn check_policies(packaged: &str, local: &str) -> Vec<String> {
+    let mut bad = Vec::new();
+    for (name, text, id, path) in [
+        ("packaged", packaged, POLICY_ID.to_string(), POLICY_PATH),
+        (
+            "local",
+            local,
+            format!("{POLICY_ID}.local"),
+            POLICY_LOCAL_PATH,
+        ),
+    ] {
+        let opens = text.matches("<action ").count();
+        if opens != 1 || text.matches("</action>").count() != 1 || !text.contains("<policyconfig>")
+        {
+            bad.push(format!(
+                "{name} policy: not exactly one <action> in a <policyconfig>"
+            ));
+        }
+        if !text.contains(&format!("<action id=\"{id}\">")) {
+            bad.push(format!("{name} policy: action id must be {id}"));
+        }
+        let paths: Vec<String> = text
+            .match_indices("<annotate key=\"org.freedesktop.policykit.exec.path\">")
+            .map(|(i, m)| {
+                let rest = &text[i + m.len()..];
+                rest[..rest.find('<').unwrap_or(0)].to_string()
+            })
+            .collect();
+        if paths != [path] {
+            bad.push(format!(
+                "{name} policy: exec.path must be {path}, found {paths:?}"
+            ));
+        }
+        for (tag, want) in [
+            ("allow_any", "no"),
+            ("allow_inactive", "no"),
+            ("allow_active", "auth_admin"),
+        ] {
+            if xml_tags(text, tag) != [want] {
+                bad.push(format!("{name} policy: <{tag}> must be exactly {want}"));
+            }
+        }
+        for tag in ["description", "message"] {
+            if xml_tags(text, tag).len() != 1 {
+                bad.push(format!("{name} policy: needs exactly one <{tag}>"));
+            }
+        }
+    }
+    let normalized = local
+        .replace(&format!("{POLICY_ID}.local"), POLICY_ID)
+        .replace(POLICY_LOCAL_PATH, POLICY_PATH);
+    if normalized != packaged {
+        bad.push("the policies differ in more than the action id and exec.path".to_string());
+    }
+    bad
+}
+
+#[test]
+fn helper_source_stays_inside_its_powers() {
+    assert_clean("helper source", check_helper_source(&sources()));
+}
+
+#[test]
+fn helper_manifest_is_libc_only_and_not_publishable() {
+    let manifest = fs::read_to_string(crates_dir().join("cainary-bind-helper/Cargo.toml"))
+        .expect("read cainary-bind-helper manifest");
+    assert_clean("helper manifest", check_helper_manifest(&manifest));
+}
+
+#[test]
+fn helper_reaches_only_libc_in_the_lock() {
+    let lock = fs::read_to_string(crates_dir().join("../Cargo.lock")).expect("read Cargo.lock");
+    assert_clean("helper closure", check_helper_closure(&lock));
+}
+
+#[test]
+fn polkit_policies_match_and_are_strict() {
+    let dir = crates_dir().join("../packaging/linux/polkit");
+    let read = |f: &str| fs::read_to_string(dir.join(f)).expect("read policy");
+    assert_clean(
+        "polkit policies",
+        check_policies(
+            &read("ua.SkeLLLa.cAInary.policy"),
+            &read("ua.SkeLLLa.cAInary.local.policy"),
+        ),
+    );
+}
+
+mod helper_fires {
+    use super::*;
+
+    fn helper(code: &str) -> Vec<Src> {
+        vec![Src {
+            rel: format!("{HELPER_SRC}helper.rs"),
+            code: production_code(code),
+            raw: code.to_string(),
+        }]
+    }
+
+    #[test]
+    fn source_bans_fire() {
+        for code in [
+            "use std::process::Command;",
+            "let f = std::fs::read(p);",
+            "use std::fs as disk;",
+            "let f = File::open(p);",
+            "let o = OpenOptions::new();",
+            "libc::execve(a, b, c);",
+            "libc::open(p, 0);",
+            "libc::fork();",
+            "libc::getenv(p);",
+            "let _ = std::env::var(\"HOME\");",
+            "let _ = std::env::vars();",
+            "let _ = std::env::var_os(\"PKEXEC_UID\");",
+            "let a = std::env::var(\"PKEXEC_UID\"); let b = std::env::var(\"PKEXEC_UID\");",
+            "libc::setsockopt(fd, 1, libc::SO_REUSEPORT, p, 4);",
+            "use std::net::TcpStream;",
+        ] {
+            assert!(!check_helper_source(&helper(code)).is_empty(), "{code}");
+        }
+    }
+
+    #[test]
+    fn source_allows_what_it_needs() {
+        let ok = "use std::process::exit;\nlet u = std::env::var(\"PKEXEC_UID\");\nlet a = std::env::args_os();\nlibc::sendmsg(c, m, 0);\n// File::open is banned here\n#[cfg(test)]\nmod tests { use std::fs; }";
+        assert!(check_helper_source(&helper(ok)).is_empty());
+        // Guards 1 to 3 leave the helper to H1; other crates are not H1's business.
+        assert!(check_guard1(&helper("use std::process::exit;")).is_empty());
+        let mut s = helper("libc::socket(1, 2, 0);");
+        s.extend(src_at(PLATFORM_RS, "Command::new(\"/usr/sbin/scutil\");"));
+        assert!(check_guard3(&s).is_empty());
+        assert!(
+            check_helper_source(&src_at("cainary-core/src/a.rs", "std::fs::read(p);")).is_empty()
+        );
+    }
+
+    fn src_at(rel: &str, code: &str) -> Vec<Src> {
+        vec![Src {
+            rel: rel.to_string(),
+            code: production_code(code),
+            raw: code.to_string(),
+        }]
+    }
+
+    #[test]
+    fn manifest_fires() {
+        let ok =
+            "[package]\nname = \"h\"\npublish = false\n[dependencies]\nlibc.workspace = true\n";
+        assert!(check_helper_manifest(ok).is_empty());
+        for bad in [
+            "[package]\npublish = false\n[dependencies]\nserde = \"1\"\n",
+            "[package]\npublish = false\n[dev-dependencies]\ntempfile = \"3\"\n",
+            "[package]\npublish = false\n[build-dependencies]\ncc = \"1\"\n",
+            "[package]\npublish = false\n[target.'cfg(unix)'.dependencies]\nnix = \"0.29\"\n",
+        ] {
+            assert!(!check_helper_manifest(bad).is_empty(), "{bad}");
+        }
+        for no_publish in [
+            "[package]\nname = \"h\"\n",
+            "[package]\npublish = true\n",
+            "[package]\npublish.workspace = true\n",
+        ] {
+            assert!(
+                check_helper_manifest(no_publish)
+                    .iter()
+                    .any(|b| b.contains("publish")),
+                "{no_publish}"
+            );
+        }
+    }
+
+    #[test]
+    fn closure_fires() {
+        let lock = "[[package]]\nname = \"cainary\"\nversion = \"1\"\ndependencies = [\"cainary-core\"]\n\n\
+            [[package]]\nname = \"cainary-core\"\nversion = \"1\"\n\n\
+            [[package]]\nname = \"cainary-bind-helper\"\nversion = \"1\"\ndependencies = [\"libc 0.2.1\"]\n\n\
+            [[package]]\nname = \"libc\"\nversion = \"0.2.1\"\n";
+        assert!(check_guard4(lock).is_empty());
+        assert!(check_helper_closure(lock).is_empty());
+        let more = lock.replace("[\"libc 0.2.1\"]", "[\"libc 0.2.1\", \"serde\"]");
+        assert!(!check_helper_closure(&more).is_empty());
+        let core = lock.replace(
+            "name = \"cainary-core\"\nversion = \"1\"\n",
+            "name = \"cainary-core\"\nversion = \"1\"\ndependencies = [\"cainary-bind-helper\"]\n",
+        );
+        let bad = check_guard4(&core);
+        assert!(
+            bad.iter()
+                .any(|b| b.contains("`cainary` reaches `cainary-bind-helper`")),
+            "{bad:?}"
+        );
+    }
+
+    fn policies() -> (String, String) {
+        let dir = crates_dir().join("../packaging/linux/polkit");
+        let read = |f: &str| fs::read_to_string(dir.join(f)).expect("read policy");
+        (
+            read("ua.SkeLLLa.cAInary.policy"),
+            read("ua.SkeLLLa.cAInary.local.policy"),
+        )
+    }
+
+    #[test]
+    fn policies_fire() {
+        let (p, l) = policies();
+        assert!(check_policies(&p, &l).is_empty());
+        for (from, to) in [
+            ("<allow_active>auth_admin", "<allow_active>yes"),
+            ("<allow_active>auth_admin", "<allow_active>auth_admin_keep"),
+            ("<allow_any>no", "<allow_any>auth_admin"),
+            ("<allow_inactive>no", "<allow_inactive>auth_admin"),
+        ] {
+            assert!(
+                !check_policies(&p.replace(from, to), &l.replace(from, to)).is_empty(),
+                "{to}"
+            );
+        }
+        // Wrong or drifting exec.path or action id, in either file.
+        assert!(!check_policies(&p.replace(POLICY_PATH, "/tmp/x"), &l).is_empty());
+        assert!(!check_policies(&p, &l.replace(POLICY_LOCAL_PATH, POLICY_PATH)).is_empty());
+        assert!(!check_policies(&p, &l.replace(".local\"", "\"")).is_empty());
+        // The two files may differ only in id and path.
+        let tweaked = l.replace("Reserve", "Grab");
+        assert!(!check_policies(&p, &tweaked).is_empty());
+        assert!(!check_policies("<policyconfig>", &l).is_empty());
+    }
 }
 
 // `.append(`/`.truncate(` are matched with their `bool` argument so `Vec::append` and

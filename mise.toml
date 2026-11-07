@@ -132,6 +132,10 @@ run = "make linux-fmt"
 description = "Static musl cainary for this machine's architecture (LINUX_ARCH=... to override)"
 run = "make linux-cli"
 
+[tasks."linux:helper"]
+description = "Build the root bind helper for low ports and print (never run) the admin install and uninstall commands"
+run = "make -s linux-helper"
+
 [tasks."linux:package"]
 description = "Linux release artifacts in dist/: tarball, .deb and .rpm for this machine"
 # Through mbx like everything else here: its release builds are stripped on Linux (unlike

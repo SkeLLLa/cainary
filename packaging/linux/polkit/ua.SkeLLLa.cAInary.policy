@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD polkit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
+<policyconfig>
+  <vendor>cAInary</vendor>
+  <vendor_url>https://github.com/SkeLLLa/cainary</vendor_url>
+
+  <action id="ua.SkeLLLa.cAInary.bind-loopback-port">
+    <description>Reserve a loopback port below 1024 for the cAInary collector</description>
+    <message>Authentication is required to let cAInary reserve a loopback network port below 1024 (127.0.0.1 and ::1 only)</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/cainary/cainary-bind-helper</annotate>
+  </action>
+</policyconfig>
