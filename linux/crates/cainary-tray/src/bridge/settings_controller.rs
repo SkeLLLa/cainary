@@ -3,7 +3,7 @@ use std::pin::Pin;
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::QString;
 
-use crate::controller::{self, AppCommand, AppMessage};
+use crate::controller::{self, AppCommand, AppMessage, SidebarSection};
 use crate::ui;
 
 #[cxx_qt::bridge]
@@ -94,6 +94,14 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "chooseCollectorLogFile"]
         fn choose_collector_log_file(self: Pin<&mut SettingsController>);
+
+        #[qinvokable]
+        #[cxx_name = "setSidebarCollapsed"]
+        fn set_sidebar_collapsed(
+            self: Pin<&mut SettingsController>,
+            section: &QString,
+            collapsed: bool,
+        );
 
         #[qsignal]
         #[cxx_name = "refreshChanged"]
@@ -279,5 +287,17 @@ impl qobject::SettingsController {
 
     fn choose_collector_log_file(self: Pin<&mut Self>) {
         controller::send(AppMessage::Command(AppCommand::ChooseCollectorLogFile));
+    }
+
+    fn set_sidebar_collapsed(self: Pin<&mut Self>, section: &QString, collapsed: bool) {
+        let section = match section.to_string().as_str() {
+            "scan" => SidebarSection::Scan,
+            "live" => SidebarSection::Live,
+            _ => return,
+        };
+        controller::send(AppMessage::Command(AppCommand::SetSidebarCollapsed {
+            section,
+            collapsed,
+        }));
     }
 }

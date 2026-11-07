@@ -24,7 +24,7 @@ pub mod qobject {
         #[qml_singleton]
         #[qproperty(QString, view_json, cxx_name = "viewJson")]
         #[qproperty(QString, static_json, cxx_name = "staticJson")]
-        // Kept for the Settings window's separate CLI scanner row.
+        // Used by the Settings destination's CLI scanner row.
         #[qproperty(QString, cli_version, cxx_name = "cliVersion")]
         // Where the popup is placed: "layer-shell", "x11" or "decorated". Fixed at startup.
         #[qproperty(QString, placement, READ, CONSTANT)]
@@ -92,9 +92,6 @@ pub mod qobject {
         #[qsignal]
         #[cxx_name = "detailsRequested"]
         fn details_requested(self: Pin<&mut AppController>, selection: &QString);
-        #[qsignal]
-        #[cxx_name = "settingsRequested"]
-        fn settings_requested(self: Pin<&mut AppController>);
         #[qsignal]
         #[cxx_name = "aboutRequested"]
         fn about_requested(self: Pin<&mut AppController>);
@@ -173,7 +170,7 @@ impl qobject::AppController {
     }
 
     fn show_settings(mut self: Pin<&mut Self>) {
-        self.as_mut().settings_requested();
+        self.as_mut().details_requested(&QString::from(":settings"));
     }
 
     fn show_about(mut self: Pin<&mut Self>) {

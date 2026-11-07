@@ -30,6 +30,9 @@ pub mod qobject {
         fn retry(self: Pin<&mut CollectorController>);
 
         #[qinvokable]
+        fn clear(self: Pin<&mut CollectorController>);
+
+        #[qinvokable]
         #[cxx_name = "previewClaudeTrust"]
         fn preview_claude_trust(self: Pin<&mut CollectorController>);
 
@@ -91,6 +94,10 @@ impl qobject::CollectorController {
 
     fn retry(self: Pin<&mut Self>) {
         controller::send(AppMessage::Command(AppCommand::RetryCollector));
+    }
+
+    fn clear(self: Pin<&mut Self>) {
+        controller::send(AppMessage::Command(AppCommand::ClearCollector));
     }
 
     fn preview_claude_trust(self: Pin<&mut Self>) {

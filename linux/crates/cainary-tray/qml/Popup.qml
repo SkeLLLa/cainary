@@ -16,6 +16,7 @@ Window {
     // Parsed AppController.viewJson / staticJson, set by Main.qml.
     property var view: null
     property var st: null
+    property CollectorData collectorData: null
 
     readonly property var v: view
     readonly property bool failedOnly: v !== null && AppController.phase === "failed"
@@ -318,6 +319,48 @@ Window {
                             row: modelData
                             Layout.fillWidth: true
                             onClicked: win.openSelection(modelData.id)
+                        }
+                    }
+                    ItemDelegate {
+                        id: collectorRow
+                        visible: win.collectorData !== null && win.collectorData.enabled
+                        Layout.fillWidth: true
+                        Accessible.name: qsTr("OTel collector, %1, %2 red flags")
+                            .arg(win.collectorData ? win.collectorData.stateText : qsTr("Off"))
+                            .arg(win.collectorData ? win.collectorData.flagCount : 0)
+                        onClicked: win.openSelection(win.collectorData.flagCount > 0
+                            ? ":collector:flags" : ":collector:feed")
+                        background: Rectangle {
+                            color: collectorRow.highlighted ? collectorRow.palette.highlight
+                                   : collectorRow.hovered ? Qt.alpha(collectorRow.palette.highlight, 0.12) : "transparent"
+                            radius: 4
+                        }
+                        contentItem: RowLayout {
+                            spacing: 10
+                            StatusDot {
+                                sourceState: win.collectorData ? win.collectorData.state : "off"
+                                size: 10
+                            }
+                            ColumnLayout {
+                                spacing: 0
+                                Layout.fillWidth: true
+                                Label {
+                                    text: qsTr("OTel collector")
+                                    font.weight: Font.Medium
+                                    Layout.fillWidth: true
+                                }
+                                Label {
+                                    text: win.collectorData
+                                        ? win.collectorData.stateText
+                                            + (win.collectorData.flagCount > 0
+                                                ? qsTr(" · ⚑ %1 red flags").arg(win.collectorData.flagCount) : "")
+                                        : ""
+                                    font.pointSize: Application.font.pointSize * 0.85
+                                    color: frame.palette.placeholderText
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                            }
                         }
                     }
 

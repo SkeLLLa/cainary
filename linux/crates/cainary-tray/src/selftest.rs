@@ -99,17 +99,12 @@ pub fn run() -> Result<i32, String> {
 fn show(scenario: &Scenario, last_view: &mut String) {
     app::publish_view_state(last_view, &scenario.state, &scenario.settings, false);
     app::sync_settings(&scenario.settings, "", false, false);
-    if scenario.selection == ":collector" {
-        let collector = fixtures::collector_sample();
-        ui::collector(move |controller| controller.apply(&collector));
-    } else if scenario.selection == ":collector:trust-preview" {
-        let collector = fixtures::collector_trust_preview_sample();
+    if let Some(collector) = scenario.collector() {
         ui::collector(move |controller| controller.apply(&collector));
     }
     match scenario.window {
         "popup" => ui::app(|controller| controller.popup_requested(0, 0, &QString::default())),
         "details" => ui::show_details(scenario.selection.to_owned()),
-        "settings" => ui::show_settings(),
         _ => ui::show_about(),
     }
 }

@@ -38,7 +38,7 @@ pub fn mark_ready() {
     UI_READY.store(true, Ordering::Release);
 }
 
-/// Both controllers exist and `Main.qml` finished creating its windows.
+/// The app, settings and collector controllers exist and `Main.qml` finished creating its windows.
 pub fn ready() -> bool {
     APP.get().is_some()
         && SETTINGS.get().is_some()
@@ -67,13 +67,14 @@ pub fn collector(f: impl FnOnce(Pin<&mut CollectorController>) + Send + 'static)
     }
 }
 
-/// Opens the Details window on `selection` (an entry id, `:changes`, `:sources` or empty).
+/// Opens the Details window on `selection` (an entry id, `:changes`, `:sources`, `:settings` or empty).
 pub fn show_details(selection: String) {
     app(move |controller| controller.details_requested(&QString::from(selection)));
 }
 
+/// Opens the Details window at its Settings destination.
 pub fn show_settings() {
-    app(|controller| controller.settings_requested());
+    show_details(":settings".to_owned());
 }
 
 pub fn show_about() {

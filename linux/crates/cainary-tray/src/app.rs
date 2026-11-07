@@ -95,7 +95,7 @@ pub fn run(options: &crate::Options) -> Result<i32, String> {
     application.pin_mut().process_events();
     if !ui::ready() {
         return Err(format!(
-            "QML did not create the popup, details, settings and about windows. Qt messages: {}",
+            "QML did not create the popup, details and about windows. Qt messages: {}",
             ffi::cainary_messages()
         ));
     }
@@ -472,6 +472,25 @@ fn handle_command(
                 publish_view(store, settings);
             }
         }
+        AppCommand::SetSidebarCollapsed { section, collapsed } => {
+            let mut current = lock(settings);
+            let changed = match section {
+                controller::SidebarSection::Scan if current.scan_collapsed != collapsed => {
+                    current.scan_collapsed = collapsed;
+                    true
+                }
+                controller::SidebarSection::Live if current.live_collapsed != collapsed => {
+                    current.live_collapsed = collapsed;
+                    true
+                }
+                _ => false,
+            };
+            if changed {
+                save_settings(&current, settings_path);
+                drop(current);
+                publish_view(store, settings);
+            }
+        }
         AppCommand::SetRefresh(value) => {
             let Some(refresh) = parse_refresh(&value) else {
                 publish_settings(
@@ -602,6 +621,10 @@ fn handle_command(
         }
         AppCommand::RetryCollector => {
             collector_runtime.restart(lock(settings).collector.clone());
+        }
+        AppCommand::ClearCollector => {
+            collector_runtime.model.clear();
+            collector_runtime.publish();
         }
         AppCommand::CollectorTrust(action) => {
             collector_runtime.request_trust_action(action);

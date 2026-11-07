@@ -9,6 +9,8 @@ Menu {
 
     property bool canCopy: false
     property var support
+    // The popup keeps Settings; Details hides the item because Settings is already selected there.
+    property bool showSettings: true
     // Emitted before an item acts, so the popup can get out of the way.
     signal activated()
 
@@ -22,6 +24,7 @@ Menu {
     }
     MenuSeparator {}
     MenuItem {
+        visible: root.showSettings
         text: qsTr("Settings…")
         onTriggered: {
             root.activated();

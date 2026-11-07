@@ -17,7 +17,13 @@ const FILE: &str = concat!(
 fn render() -> String {
     let mut views = serde_json::Map::new();
     let mut statuses = serde_json::Map::new();
+    let mut collectors = serde_json::Map::new();
+    let mut list = Vec::new();
+    let mut collector_settings = serde_json::Map::new();
     for s in scenarios() {
+        list.push(
+            json!({"name": s.name, "window": s.window, "selection": s.selection, "dark": s.dark}),
+        );
         let built = view::build(
             &s.state,
             &s.settings,
@@ -28,6 +34,15 @@ fn render() -> String {
         let mut view = serde_json::from_str::<Value>(&built).unwrap();
         sanitize_sample_paths(&mut view);
         views.insert(s.name.into(), view);
+        if let Some(collector) = s.collector() {
+            let mut collector = serde_json::from_str::<Value>(&collector).unwrap();
+            sanitize_sample_paths(&mut collector);
+            collectors.insert(s.name.into(), collector);
+        }
+        collector_settings.insert(
+            s.name.into(),
+            serde_json::to_value(&s.settings.collector).unwrap(),
+        );
         let status = view::status(&s.state, |_| "14:05".into());
         statuses.insert(
             s.name.into(),
@@ -41,13 +56,28 @@ fn render() -> String {
          // Regenerate with UPDATE_SAMPLE_VIEW=1 cargo test -p cainary-tray-model --test sample_view.\n",
     );
     let pretty = |value: &Value| serde_json::to_string_pretty(value).unwrap();
+    writeln!(js, "var scenarios = {};", pretty(&Value::Array(list))).unwrap();
     writeln!(js, "var variants = {};", pretty(&Value::Object(views))).unwrap();
     writeln!(js, "var statuses = {};", pretty(&Value::Object(statuses))).unwrap();
+    writeln!(
+        js,
+        "var collectors = {};",
+        pretty(&Value::Object(collectors))
+    )
+    .unwrap();
+    writeln!(
+        js,
+        "var collectorSettingsData = {};",
+        pretty(&Value::Object(collector_settings))
+    )
+    .unwrap();
     writeln!(js, "var staticData = {};", pretty(&fixed)).unwrap();
     js.push_str(
         "\nfunction variant(name) { return JSON.stringify(variants[name]); }\n\
          function status(name) { return JSON.stringify(statuses[name]); }\n\
-         function staticJson() { return JSON.stringify(staticData); }\n",
+         function staticJson() { return JSON.stringify(staticData); }\n\
+         function collector(name) { return name in collectors ? JSON.stringify(collectors[name]) : \"\"; }\n\
+         function collectorSettings(name) { return JSON.stringify(collectorSettingsData[name] || {}); }\n",
     );
     js
 }

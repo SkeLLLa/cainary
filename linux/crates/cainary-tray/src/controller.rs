@@ -78,6 +78,12 @@ fn stream_message_bytes(message: &StreamMsg) -> usize {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum SidebarSection {
+    Scan,
+    Live,
+}
+
 #[derive(Debug)]
 pub enum AppCommand {
     Refresh,
@@ -89,6 +95,10 @@ pub enum AppCommand {
         finding_id: String,
     },
     SetNotInstalledExpanded(bool),
+    SetSidebarCollapsed {
+        section: SidebarSection,
+        collapsed: bool,
+    },
     SetRefresh(String),
     SetNotifications(bool),
     SetLaunchAtLogin(bool),
@@ -98,6 +108,7 @@ pub enum AppCommand {
     SetCollector(String),
     ChooseCollectorLogFile,
     RetryCollector,
+    ClearCollector,
     CollectorTrust(TrustAction),
     CancelClaudeTrustPreview,
     CopyText(String),
