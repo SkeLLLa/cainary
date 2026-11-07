@@ -1,8 +1,9 @@
 #!/bin/sh
 # Set the release version: [workspace.package] version in Cargo.toml (the single source), the
 # exact cainary-core requirement in [workspace.dependencies], and the workspace crates' entries
-# in Cargo.lock (every member, named in its own manifest). The Linux tray workspace follows: linux/Cargo.toml's [workspace.package]
-# version, its crates in linux/Cargo.lock, and a <release> entry in the AppStream metainfo.
+# in Cargo.lock (every member, named in its own manifest). The Linux tray workspace follows:
+# linux/Cargo.toml's [workspace.package] version, its crates and any root crate it depends on
+# by path in linux/Cargo.lock, and a <release> entry in the AppStream metainfo.
 # Used by .github/workflows/release.yml (through scripts/release-tree.sh).
 #
 # Usage: scripts/set-version.sh 1.2.3
@@ -32,31 +33,51 @@ awk -v v="$VERSION" '
 ' Cargo.toml > "$tmp"
 cat "$tmp" > Cargo.toml
 
-# Bump every workspace member's [[package]] entry in a lockfile: the version line right after its
-# `name = "..."`. The names come from the members' own manifests, so a new crate needs no edit
-# here; third-party packages are never matched. Fails if the bumped count differs from the
-# member count.
-bump_lock() { # MANIFEST LOCKFILE
+# Package names of a workspace's members, read from the members' own manifests, so a new crate
+# needs no edit here.
+member_names() { # MANIFEST
     base="$(dirname "$1")"
-    members="$(sed -n 's/^members *= *\[\(.*\)\].*/\1/p' "$1" | tr -d ' "' | tr ',' ' ')"
-    names=""
-    for m in $members; do
+    for m in $(sed -n 's/^members *= *\[\(.*\)\].*/\1/p' "$1" | tr -d ' "' | tr ',' ' '); do
         n="$(sed -n 's/^name *= *"\([^"]*\)".*/\1/p' "$base/$m/Cargo.toml" | head -n 1)"
         [ -n "$n" ] || { echo "no package name in $base/$m/Cargo.toml" >&2; exit 1; }
-        names="$names $n"
+        echo "$n"
     done
+}
+
+# Bump the [[package]] entries of a lockfile: the version line right after `name = "..."`, for
+# every member of MANIFEST, plus every EXTRA name (a path crate of another workspace, e.g. the
+# root crates the Linux tray depends on) that the lockfile has as a path package, meaning one
+# without a `source =` line. Third-party packages are never matched. Fails if the bumped count
+# is not the member count plus the extras present.
+bump_lock() { # MANIFEST LOCKFILE [EXTRA_NAMES]
+    names="$(member_names "$1" | tr '\n' ' ')"
     expected="$(echo "$names" | wc -w | tr -d ' ')"
-    awk -v v="$VERSION" -v names="$names" '
-        BEGIN { n = split(names, a, " "); for (i = 1; i <= n; i++) want[a[i]] = 1 }
-        /^name = "/ { name = $0; sub(/^name = "/, "", name); sub(/"$/, "", name); own = (name in want); print; next }
-        own && /^version = "/ { $0 = "version = \"" v "\""; own = 0; bumped++ }
-        { print }
-        END { print bumped + 0 > "/dev/stderr" }
+    awk -v v="$VERSION" -v names="$names" -v extras="${3:-}" '
+        function flush() {
+            if (blk == "") return
+            if (name in want || ((name in extra) && !has_source)) {
+                sub(/\nversion = "[^"]*"/, "\nversion = \"" v "\"", blk)
+                bumped++
+                if (!(name in want)) present++
+            }
+            printf "%s", blk
+            blk = ""
+        }
+        BEGIN {
+            n = split(names, a, " "); for (i = 1; i <= n; i++) want[a[i]] = 1
+            n = split(extras, a, " "); for (i = 1; i <= n; i++) extra[a[i]] = 1
+        }
+        /^\[\[package\]\]$/ { flush(); name = ""; has_source = 0 }
+        /^name = "/ { name = $0; sub(/^name = "/, "", name); sub(/"$/, "", name) }
+        /^source = / { has_source = 1 }
+        { blk = blk $0 "\n" }
+        END { flush(); print bumped + 0, present + 0 > "/dev/stderr" }
     ' "$2" > "$tmp" 2> "$tmp.count"
-    got="$(cat "$tmp.count")"
+    read -r got present < "$tmp.count"
     rm -f "$tmp.count"
+    expected=$((expected + present))
     if [ "$got" != "$expected" ]; then
-        echo "$2: bumped $got entries, expected $expected ($names )" >&2
+        echo "$2: bumped $got entries, expected $expected ($names)" >&2
         exit 1
     fi
     cat "$tmp" > "$2"
@@ -79,7 +100,7 @@ if [ -f linux/Cargo.toml ]; then
     grep -qx "version = \"$VERSION\"" linux/Cargo.toml
 
     if [ -f linux/Cargo.lock ]; then
-        bump_lock linux/Cargo.toml linux/Cargo.lock
+        bump_lock linux/Cargo.toml linux/Cargo.lock "$(member_names Cargo.toml | tr '\n' ' ')"
     fi
 fi
 
