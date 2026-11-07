@@ -198,6 +198,13 @@ pub(super) fn modes_with(cur: &[String], mode: &str, undo: bool) -> Vec<String> 
         .collect()
 }
 
+/// The refusal of every change while an earlier transaction can't be settled: nothing is touched.
+pub(super) fn still_recovering(why: &str) -> String {
+    format!(
+        "A previous trust change is still being recovered: {why}. Fix that first; nothing was changed."
+    )
+}
+
 fn relative_text(path: &str) -> String {
     format!("{path} is relative; set an absolute path to keep it")
 }
@@ -286,7 +293,10 @@ pub(super) fn claude_mode_locked(
     if read_state(ca).newer {
         return Line::refused(t, NEWER);
     }
-    let note = recover(env, ca, lock);
+    let note = match recover_outcome(env, ca, lock) {
+        Recovery::Resolved(n) => n,
+        Recovery::Pending(why) => return Line::refused(t, still_recovering(&why)),
+    };
     let mut state = read_state(ca);
     let bundle_here = ca.path().join(CLAUDE_BUNDLE).display().to_string();
     let line = match state.claude.clone().filter(|c| c.written == bundle_here) {
@@ -2911,5 +2921,83 @@ mod tests {
             after,
             OPUS.replacen("\"model\"", "\"theme\": \"dark\",\n  \"model\"", 1)
         );
+    }
+
+    /// A first Claude apply that crashed after the settings rename, whose settings can no longer
+    /// be read (so the transaction can't be settled).
+    fn stuck_pending(fx: &Fx) {
+        fx.write_settings(OPUS);
+        stop_at("after-rename");
+        let a = apply(fx);
+        clear_hooks();
+        assert_eq!(a.action, Action::Refused, "{a:?}");
+        let aside = fx.base.join("settings.aside");
+        fs::rename(fx.settings(), &aside).unwrap();
+        symlink(&aside, fx.settings()).unwrap();
+    }
+
+    #[test]
+    fn apply_refused_while_recovery_pending() {
+        let fa = Fx::new("pending-a", "");
+        stuck_pending(&fa);
+        let before = state_bytes(&fa);
+        // The user switches to another, readable config directory and applies there.
+        let fb = Fx::new("pending-b", "");
+        fb.write_settings(OPUS);
+        let env_b = Env {
+            harness: &fb.harness,
+            ca_dir: fa.ca_dir.clone(),
+        };
+        let a = claude_code(&env_b, Mode::Apply { dry_run: false });
+        assert_eq!(a.action, Action::Refused, "{a:?}");
+        assert!(
+            a.message
+                .starts_with("A previous trust change is still being recovered:")
+                && a.message.ends_with("Fix that first; nothing was changed."),
+            "{a:?}"
+        );
+        assert_eq!(fb.read_settings(), OPUS, "B is untouched");
+        assert_eq!(
+            state_bytes(&fa),
+            before,
+            "A's pending transaction is preserved"
+        );
+        let u = undo_mode(&env_b, Target::ClaudeCode, TAKEOVER);
+        assert_eq!(u.action, Action::Refused, "{u:?}");
+        assert_eq!(state_bytes(&fa), before);
+        // The status still reports it.
+        let s = status(&fa);
+        assert!(
+            s["note"].as_str().unwrap().contains("can't be inspected"),
+            "{s}"
+        );
+    }
+
+    #[test]
+    fn codex_apply_refused_while_recovery_pending() {
+        let fx = Fx::new("pending-codex", "");
+        fx.roots();
+        stuck_pending(&fx);
+        let before = state_bytes(&fx);
+        let a = codex(&fx.env(), false);
+        assert_eq!(a.action, Action::Refused, "{a:?}");
+        assert!(a.message.contains("still being recovered"), "{a:?}");
+        assert!(!fx.ca_dir.join(CODEX_BUNDLE).exists());
+        assert_eq!(state_bytes(&fx), before);
+        assert_eq!(codex(&fx.env(), true).action, Action::Refused);
+        assert_eq!(state_bytes(&fx), before);
+    }
+
+    #[test]
+    fn refresh_skips_while_recovery_pending() {
+        let fx = Fx::new("pending-refresh", "");
+        stuck_pending(&fx);
+        let before = state_bytes(&fx);
+        let w = refresh(&fx.env());
+        assert!(
+            w.iter().any(|m| m.contains("still being recovered")),
+            "{w:?}"
+        );
+        assert_eq!(state_bytes(&fx), before);
     }
 }

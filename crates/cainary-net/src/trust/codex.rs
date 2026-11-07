@@ -2,7 +2,7 @@
 //! Codex's own configuration is touched.
 
 use super::bundle::{bundle, collector_ca, mode_cas, system_roots};
-use super::claude::{modes_with, rebuild_modes, recover};
+use super::claude::{Recovery, modes_with, rebuild_modes, recover_outcome, still_recovering};
 use super::files::{Replace, TrustLock, lock_trust, read_in, unlink_unchanged};
 use super::state::{
     CodexState, Owned, Rec, Refused, check_owned, publish_bundle_modes, read_state, save_state,
@@ -71,7 +71,9 @@ pub(super) fn codex_mode_locked(
     let path = ca_dir.path().join(CODEX_BUNDLE).display().to_string();
     // Whatever an earlier run left unfinished (the Claude Code settings transaction first, then
     // bundle replacements) is settled before anything is checked or written.
-    let _ = recover(env, ca_dir, lock);
+    if let Recovery::Pending(why) = recover_outcome(env, ca_dir, lock) {
+        return Line::refused(t, still_recovering(&why));
+    }
     let mut state = read_state(ca_dir);
     if state.newer {
         return Line::refused(t, NEWER);

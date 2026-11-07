@@ -497,7 +497,11 @@ pub fn refresh(env: &Env<'_>) -> Vec<String> {
             ];
         }
     };
-    let _ = recover(env, &ca_dir, &_lock);
+    if let claude::Recovery::Pending(why) = claude::recover_outcome(env, &ca_dir, &_lock) {
+        return vec![format!(
+            "a previous trust change is still being recovered ({why}); the trust bundles were not refreshed"
+        )];
+    }
     let mut state = read_state(&ca_dir);
     if state.is_empty() {
         return warnings;

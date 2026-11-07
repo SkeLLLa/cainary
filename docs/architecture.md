@@ -1539,7 +1539,10 @@ bundles), `claude.rs` and `codex.rs` (the two targets).
   path is ignored: nothing is read, adopted or deleted (the status `note` says so). Every command
   (`--trust` for either target, the `--tls` refresh, `--trust-status`) first runs one recovery under
   the trust lock: the pending Claude Code settings transaction is resolved, and only then are
-  journal entries settled; if the transaction can't be resolved, the journal waits. A Claude Code
+  journal entries settled; if the transaction can't be resolved, the journal waits. While anything
+  is unresolved, every changing operation (apply or undo for either target, `--delete-ca`) is
+  refused with "A previous trust change is still being recovered" and touches nothing, the `--tls`
+  refresh warns and skips, and `--trust-status` reports the reason. A Claude Code
   bundle with no record is removed only when the settings are known not to point at it (absent, or
   parsed without the key naming it); if they can't be read or parsed, the bundle and its journal
   entry are kept and the `note` says so.
