@@ -20,7 +20,7 @@ publish = ["crates-io"]
 [workspace.dependencies]
 # Exact: the two crates are released together at one version (scripts/set-version.sh).
 cainary-core = { path = "crates/cainary-core", version = "=0.5.2" }
-cainary-sig = { path = "crates/cainary-sig", version = "=0.5.2" }
+cainary-sig = { path = "crates/cainary-sig" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 toml = "1.1"
