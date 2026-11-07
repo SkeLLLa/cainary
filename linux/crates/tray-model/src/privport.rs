@@ -9,8 +9,7 @@
 //! The two fixed install paths are the only places looked at: there is no environment override.
 
 use std::ffi::CString;
-use std::fs::File;
-use std::io::{self, Read};
+use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::path::{Component, Path, PathBuf};
 
@@ -161,7 +160,7 @@ fn fstat(fd: RawFd) -> Result<libc::stat, TrustError> {
 }
 
 /// Whether `name` in `dir` is a symlink, for a better message than "not a directory".
-fn is_symlink(dir: RawFd, name: &CString) -> bool {
+fn names_a_link(dir: RawFd, name: &CString) -> bool {
     // SAFETY: as above.
     let mut stat: libc::stat = unsafe { std::mem::zeroed() };
     let rc = unsafe { libc::fstatat(dir, name.as_ptr(), &mut stat, libc::AT_SYMLINK_NOFOLLOW) };
@@ -217,7 +216,7 @@ fn walk(env: &TrustEnv, path: &Path, kind: Leaf) -> Result<OwnedFd, TrustError> 
         ) {
             Ok(fd) => fd,
             Err(e) if e.raw_os_error() == Some(libc::ENOENT) => return Err(TrustError::Missing),
-            Err(_) if is_symlink(dir.as_raw_fd(), &c) => {
+            Err(_) if names_a_link(dir.as_raw_fd(), &c) => {
                 return untrusted(format!("{} is a symlink", walked.display()));
             }
             Err(e) => return untrusted(format!("{}: {e}", walked.display())),
@@ -294,15 +293,25 @@ pub fn check_helper(env: &TrustEnv, path: &Path) -> Result<(), TrustError> {
 /// The text of a trusted policy file (and so everything above it is trusted).
 pub fn read_policy(env: &TrustEnv, path: &Path) -> Result<String, TrustError> {
     let file = walk(env, path, Leaf::Policy)?;
-    let mut text = String::new();
-    File::from(file)
-        .take(POLICY_LIMIT + 1)
-        .read_to_string(&mut text)
-        .map_err(|e| TrustError::Untrusted(format!("can't read the policy: {e}")))?;
-    if text.len() as u64 > POLICY_LIMIT {
-        return untrusted("the policy file is too large");
+    let mut bytes = Vec::new();
+    let mut chunk = [0_u8; 4096];
+    loop {
+        // SAFETY: reads into a live buffer of the stated length from a descriptor we own.
+        let n = unsafe { libc::read(file.as_raw_fd(), chunk.as_mut_ptr().cast(), chunk.len()) };
+        match n {
+            0 => break,
+            n if n > 0 => bytes.extend_from_slice(&chunk[..n as usize]),
+            _ if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted => continue,
+            _ => {
+                let why = io::Error::last_os_error();
+                return untrusted(format!("can't read the policy: {why}"));
+            }
+        }
+        if bytes.len() as u64 > POLICY_LIMIT {
+            return untrusted("the policy file is too large");
+        }
     }
-    Ok(text)
+    String::from_utf8(bytes).or_else(|_| untrusted("the policy file isn't UTF-8"))
 }
 
 /// The text between `<tag>` and `</tag>` when the tag occurs exactly once, else `None`.

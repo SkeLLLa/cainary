@@ -233,6 +233,7 @@ name = "cainary-tray-model"
 version = "0.5.2"
 dependencies = [
  "cainary-sig",
+ "cainary-tray-model",
  "libc",
  "serde",
  "serde_json",

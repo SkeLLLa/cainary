@@ -8,7 +8,7 @@
 
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use crate::privport::{self, HelperError, Reply, ReplyError};
 use crate::report::{DecodeError, Report, SCHEMA};
 
 /// How long and how much the CLI may run and print.
@@ -162,6 +163,80 @@ pub fn spawn_stream(
     args: &[OsString],
     max_line: usize,
 ) -> Result<StreamHandle, RunError> {
+    spawn_stream_with_fds(program, args, max_line, &[])
+}
+
+/// The most descriptors [`spawn_stream_with_fds`] hands down (fds 3 to 10).
+pub const MAX_INHERITED_FDS: usize = 8;
+/// The temporaries are parked at or above this, clear of the targets 3, 4, ….
+const INHERIT_PARKING: libc::c_int = 100;
+
+/// `--listen-fd 3 [--listen-fd 4]` for the collector, one pair per inherited descriptor.
+pub fn listen_fd_args(count: usize) -> Vec<OsString> {
+    (0..count)
+        .flat_map(|i| {
+            [
+                OsString::from("--listen-fd"),
+                OsString::from((3 + i).to_string()),
+            ]
+        })
+        .collect()
+}
+
+/// `fcntl(F_DUPFD_CLOEXEC)` of `fd` to the first free descriptor at or above `min`.
+fn dup_cloexec_from(fd: RawFd, min: libc::c_int) -> io::Result<OwnedFd> {
+    // SAFETY: F_DUPFD_CLOEXEC on a descriptor number; the result is a new descriptor we own.
+    let new = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, min) };
+    if new < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        // SAFETY: fcntl returned a fresh descriptor.
+        Ok(unsafe { OwnedFd::from_raw_fd(new) })
+    }
+}
+
+/// Keeps descriptors 3, 4, … occupied while a child is spawned, so the pipe `std` uses to report
+/// an exec failure can't land on a number the child's `dup2` is about to overwrite. Best effort:
+/// another thread opening descriptors at the same moment can still take one.
+fn occupy_low_fds(count: usize) -> Vec<OwnedFd> {
+    let mut held = Vec::new();
+    // SAFETY: open of a constant path.
+    let null = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
+    if null < 0 {
+        return held;
+    }
+    // SAFETY: open returned a descriptor we own.
+    let null = unsafe { OwnedFd::from_raw_fd(null) };
+    for target in 3..3 + count as libc::c_int {
+        // SAFETY: F_GETFD only reads the flags.
+        if unsafe { libc::fcntl(target, libc::F_GETFD) } == -1
+            && let Ok(fd) = dup_cloexec_from(null.as_raw_fd(), target)
+        {
+            held.push(fd);
+        }
+    }
+    held
+}
+
+/// [`spawn_stream`], with `inherit` placed on descriptors 3, 4, … in the child (and nowhere
+/// else: every descriptor the tray holds is close-on-exec). The caller keeps its own copies.
+pub fn spawn_stream_with_fds(
+    program: &std::path::Path,
+    args: &[OsString],
+    max_line: usize,
+    inherit: &[RawFd],
+) -> Result<StreamHandle, RunError> {
+    if inherit.len() > MAX_INHERITED_FDS {
+        return Err(RunError::Spawn(io::Error::from(
+            io::ErrorKind::InvalidInput,
+        )));
+    }
+    // Duplicate before the fork so the child's dup2 targets (3, 4) can't be the sources.
+    let mut parked = Vec::with_capacity(inherit.len());
+    for fd in inherit {
+        parked.push(dup_cloexec_from(*fd, INHERIT_PARKING).map_err(RunError::Spawn)?);
+    }
+    let parked_raw: Vec<RawFd> = parked.iter().map(AsRawFd::as_raw_fd).collect();
     let parent = std::process::id() as libc::pid_t;
     let program = program.to_path_buf();
     let args = args.to_vec();
@@ -181,8 +256,9 @@ pub fn spawn_stream(
                 .stderr(Stdio::piped())
                 .env_remove("XDG_ACTIVATION_TOKEN")
                 .process_group(0);
-            // SAFETY: async-signal-safe calls only. PDEATHSIG is tied to this dedicated thread,
-            // which stays alive until the child has been waited for.
+            // SAFETY: async-signal-safe calls only (prctl, getppid, raise, dup2: no allocation,
+            // no locks). PDEATHSIG is tied to this dedicated thread, which stays alive until the
+            // child has been waited for.
             unsafe {
                 command.pre_exec(move || {
                     if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
@@ -191,10 +267,21 @@ pub fn spawn_stream(
                     if libc::getppid() != parent {
                         libc::raise(libc::SIGTERM);
                     }
+                    for (offset, source) in parked_raw.iter().enumerate() {
+                        if libc::dup2(*source, 3 + offset as libc::c_int) < 0 {
+                            return Err(io::Error::last_os_error());
+                        }
+                    }
                     Ok(())
                 });
             }
-            match command.spawn() {
+            let placeholders = occupy_low_fds(parked.len());
+            let spawned = command.spawn();
+            // The parent's temporaries and placeholders go as soon as the child exists.
+            drop(command);
+            drop(placeholders);
+            drop(parked);
+            match spawned {
                 Ok(child) => {
                     let pid = child.id() as libc::pid_t;
                     let _ = ready_tx.send(Ok(pid));
@@ -983,5 +1070,457 @@ impl Client {
             }
             _ => String::new(),
         }
+    }
+}
+
+// ---- privileged port reservation -------------------------------------------------------------
+
+/// The only program that may run the root helper.
+pub const PKEXEC: &str = "/usr/bin/pkexec";
+/// How long the user has to authenticate before the reservation is abandoned.
+pub const BIND_DEADLINE: Duration = Duration::from_secs(300);
+
+/// Loopback listeners the helper reserved, already checked against the port that was asked for.
+#[derive(Debug)]
+pub struct Reserved {
+    pub v4: OwnedFd,
+    pub v6: Option<OwnedFd>,
+    /// Set when only IPv4 was reserved, for the settings page.
+    pub warning: Option<String>,
+}
+
+impl Reserved {
+    /// The descriptors in `--listen-fd` order (IPv4 first).
+    pub fn raw_fds(&self) -> Vec<RawFd> {
+        let mut fds = vec![self.v4.as_raw_fd()];
+        fds.extend(self.v6.as_ref().map(AsRawFd::as_raw_fd));
+        fds
+    }
+}
+
+#[derive(Debug)]
+pub enum BindError {
+    /// pkexec couldn't be started.
+    Spawn(io::Error),
+    /// The authentication dialog was dismissed (pkexec exit 126).
+    Dismissed,
+    /// Not authorised, or no agent to ask (pkexec exit 127).
+    NotAuthorized,
+    /// Nobody authenticated in time, or the helper hung.
+    TimedOut,
+    /// The helper refused.
+    Helper(HelperError),
+    /// The helper speaks another protocol: it needs updating.
+    ProtocolMismatch(String),
+    /// What came back wasn't what was asked for; everything received was closed.
+    Rejected(String),
+    /// pkexec or the helper failed some other way.
+    Failed {
+        code: Option<i32>,
+        stderr_tail: String,
+    },
+}
+
+impl BindError {
+    /// One lowercase line for the settings page.
+    pub fn reason(&self) -> String {
+        match self {
+            Self::Spawn(e) => format!("couldn't start pkexec ({e})"),
+            Self::Dismissed => "the authentication dialog was dismissed".into(),
+            Self::NotAuthorized => "not authorized to reserve the port".into(),
+            Self::TimedOut => "timed out waiting for authentication".into(),
+            Self::Helper(HelperError::PortInUse) => "the port is already in use".into(),
+            Self::Helper(error) => format!("the port helper refused ({error:?})"),
+            Self::ProtocolMismatch(p) => {
+                format!("the port helper speaks protocol {p}; update the helper")
+            }
+            Self::Rejected(why) => format!("the port helper's answer was refused ({why})"),
+            Self::Failed { code, stderr_tail } => {
+                match stderr_tail.lines().map(str::trim).find(|l| !l.is_empty()) {
+                    Some(line) => format!("the port helper failed: {line}"),
+                    None => match code {
+                        Some(c) => format!("the port helper exited with code {c}"),
+                        None => "the port helper was stopped by a signal".into(),
+                    },
+                }
+            }
+        }
+    }
+}
+
+/// The whole pkexec command line after the program name, built in one place.
+fn pkexec_args(helper: &std::path::Path, port: u16) -> [OsString; 4] {
+    [
+        OsString::from("--disable-internal-agent"),
+        helper.as_os_str().to_owned(),
+        OsString::from("--port"),
+        OsString::from(port.to_string()),
+    ]
+}
+
+fn seqpacket_pair() -> io::Result<(OwnedFd, OwnedFd)> {
+    let mut fds = [0 as libc::c_int; 2];
+    // SAFETY: `fds` has room for the two descriptors socketpair writes.
+    let rc = unsafe {
+        libc::socketpair(
+            libc::AF_UNIX,
+            libc::SOCK_SEQPACKET | libc::SOCK_CLOEXEC,
+            0,
+            fds.as_mut_ptr(),
+        )
+    };
+    if rc != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: socketpair returned two new descriptors we own.
+    Ok(unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) })
+}
+
+/// Asks the root helper, through `pkexec`, to bind `127.0.0.1:port` and `[::1]:port` and hand the
+/// listening sockets back. Blocks for up to `deadline` (the user is typing a password), so call it
+/// on a worker thread. The helper's stdout is one end of a `SOCK_SEQPACKET` pair; its single reply
+/// carries the sockets as `SCM_RIGHTS`. Nothing is trusted: the reply is decoded strictly, every
+/// socket is checked here against the port that was asked for, and success needs both a valid
+/// reply and a clean exit. Whatever is rejected is closed.
+pub fn bind_privileged(
+    pkexec: &std::path::Path,
+    helper: &std::path::Path,
+    port: u16,
+    deadline: Duration,
+) -> Result<Reserved, BindError> {
+    if port == 0 {
+        return Err(BindError::Rejected("port 0".into()));
+    }
+    let (ours, theirs) = seqpacket_pair().map_err(BindError::Spawn)?;
+    let parent = std::process::id() as libc::pid_t;
+    let mut command = Command::new(pkexec);
+    command
+        .args(pkexec_args(helper, port))
+        .stdin(Stdio::null())
+        // std dup2s the helper end onto fd 1 in the child, which clears close-on-exec there only.
+        .stdout(Stdio::from(theirs))
+        .stderr(Stdio::piped())
+        .process_group(0);
+    // SAFETY: async-signal-safe calls only.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if libc::getppid() != parent {
+                libc::raise(libc::SIGTERM);
+            }
+            Ok(())
+        });
+    }
+    let spawned = command.spawn();
+    // Drops the parent's copy of the helper end: a dead child now shows up as a closed socket.
+    drop(command);
+    let mut child = spawned.map_err(BindError::Spawn)?;
+    exchange(&mut child, ours, port, deadline)
+}
+
+enum Received {
+    Nothing,
+    Closed,
+    Message(Result<Reserved, BindError>),
+}
+
+fn exchange(
+    child: &mut Child,
+    socket: OwnedFd,
+    port: u16,
+    deadline: Duration,
+) -> Result<Reserved, BindError> {
+    let mut socket = Some(socket);
+    let mut stderr = child.stderr.take();
+    if let Some(pipe) = &stderr {
+        set_nonblocking(pipe.as_raw_fd());
+    }
+    let mut tail = Vec::new();
+    let mut received: Option<Result<Reserved, BindError>> = None;
+    let until = Instant::now() + deadline;
+    loop {
+        let now = Instant::now();
+        if now >= until {
+            terminate(child, Duration::from_millis(500));
+            return Err(BindError::TimedOut);
+        }
+        let mut fds = Vec::with_capacity(2);
+        if let Some(sock) = &socket {
+            fds.push(libc::pollfd {
+                fd: sock.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            });
+        }
+        if let Some(pipe) = &stderr {
+            fds.push(libc::pollfd {
+                fd: pipe.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            });
+        }
+        let wait = (until - now).min(TICK);
+        if fds.is_empty() {
+            thread::sleep(wait);
+        } else {
+            let ms = wait.as_millis().clamp(1, i32::MAX as u128) as i32;
+            // SAFETY: `fds` holds valid pollfd entries for descriptors we own.
+            unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, ms) };
+        }
+        read_stream_stderr(&mut stderr, &mut tail);
+        if let Some(sock) = &socket {
+            match receive_reply(sock.as_raw_fd(), port) {
+                Received::Nothing => {}
+                Received::Closed => socket = None,
+                Received::Message(result) => {
+                    // One reply is all there is; closing now also drops anything queued behind it.
+                    socket = None;
+                    if matches!(
+                        result,
+                        Err(BindError::Rejected(_) | BindError::ProtocolMismatch(_))
+                    ) {
+                        kill_group(child, libc::SIGKILL);
+                        let _ = child.wait();
+                        return result;
+                    }
+                    received = Some(result);
+                }
+            }
+        }
+        if exited(child) {
+            if received.is_none()
+                && let Some(sock) = &socket
+                && let Received::Message(result) = receive_reply(sock.as_raw_fd(), port)
+            {
+                received = Some(result);
+            }
+            read_stream_stderr(&mut stderr, &mut tail);
+            kill_group(child, libc::SIGKILL);
+            let status = child.wait().map_err(BindError::Spawn)?;
+            let code = status.code();
+            return match (code, received) {
+                (Some(126), _) => Err(BindError::Dismissed),
+                (Some(127), _) => Err(BindError::NotAuthorized),
+                (_, Some(Err(error))) => Err(error),
+                (Some(0), Some(Ok(reserved))) => Ok(reserved),
+                (Some(0), None) => Err(BindError::Rejected(
+                    "the helper exited without a reply".into(),
+                )),
+                (_, _) => Err(BindError::Failed {
+                    code,
+                    stderr_tail: String::from_utf8_lossy(&tail).trim().to_owned(),
+                }),
+            };
+        }
+    }
+}
+
+/// Reads at most one datagram without blocking and judges it. Every descriptor that arrives is
+/// owned (and so closed on any rejection) before anything else is looked at.
+fn receive_reply(socket: RawFd, port: u16) -> Received {
+    let mut buffer = [0_u8; 256];
+    // Room for far more descriptors than the 2 allowed, so extras show up as extras (the kernel
+    // closes whatever doesn't fit and flags MSG_CTRUNC).
+    let mut control = [0_u64; 16];
+    let mut iov = libc::iovec {
+        iov_base: buffer.as_mut_ptr().cast(),
+        iov_len: buffer.len(),
+    };
+    // SAFETY: msghdr is plain data; the pointers set below outlive the call.
+    let mut message: libc::msghdr = unsafe { std::mem::zeroed() };
+    message.msg_iov = &mut iov;
+    message.msg_iovlen = 1;
+    message.msg_control = control.as_mut_ptr().cast();
+    message.msg_controllen = std::mem::size_of_val(&control) as _;
+    // SAFETY: `message` describes live buffers.
+    let n = unsafe {
+        libc::recvmsg(
+            socket,
+            &mut message,
+            libc::MSG_DONTWAIT | libc::MSG_CMSG_CLOEXEC,
+        )
+    };
+    if n < 0 {
+        return match io::Error::last_os_error().raw_os_error() {
+            Some(libc::EAGAIN | libc::EINTR) => Received::Nothing,
+            _ => Received::Closed,
+        };
+    }
+    if n == 0 {
+        return Received::Closed;
+    }
+    let mut fds: Vec<OwnedFd> = Vec::new();
+    let mut unexpected = false;
+    // SAFETY: the cmsg macros walk the control buffer the kernel just filled in.
+    unsafe {
+        let mut cmsg = libc::CMSG_FIRSTHDR(&message);
+        while !cmsg.is_null() {
+            let header = &*cmsg;
+            if header.cmsg_level == libc::SOL_SOCKET && header.cmsg_type == libc::SCM_RIGHTS {
+                let bytes = (header.cmsg_len as usize).saturating_sub(libc::CMSG_LEN(0) as usize);
+                let data = libc::CMSG_DATA(cmsg).cast::<libc::c_int>();
+                for i in 0..bytes / std::mem::size_of::<libc::c_int>() {
+                    fds.push(OwnedFd::from_raw_fd(data.add(i).read_unaligned()));
+                }
+            } else {
+                unexpected = true;
+            }
+            cmsg = libc::CMSG_NXTHDR(&message, cmsg);
+        }
+    }
+    let rejected = |why: &str| Received::Message(Err(BindError::Rejected(why.into())));
+    if message.msg_flags & libc::MSG_TRUNC != 0 {
+        return rejected("the reply was truncated");
+    }
+    if message.msg_flags & libc::MSG_CTRUNC != 0 {
+        return rejected("too many descriptors");
+    }
+    if unexpected {
+        return rejected("unexpected control message");
+    }
+    let reply = match privport::parse_reply(&buffer[..n as usize]) {
+        Ok(reply) => reply,
+        Err(ReplyError::Protocol(p)) => {
+            return Received::Message(Err(BindError::ProtocolMismatch(p)));
+        }
+        Err(ReplyError::Malformed) => return rejected("malformed reply"),
+    };
+    match reply {
+        Reply::Error(error) => {
+            if fds.is_empty() {
+                Received::Message(Err(BindError::Helper(error)))
+            } else {
+                rejected("descriptors with an error reply")
+            }
+        }
+        Reply::Ok {
+            port: reply_port,
+            count,
+            ipv6_unavailable,
+            ..
+        } => {
+            if reply_port != port {
+                return rejected("the reply names another port");
+            }
+            if fds.len() != count {
+                return rejected("the descriptor count doesn't match the reply");
+            }
+            Received::Message(check_sockets(fds, port, ipv6_unavailable))
+        }
+    }
+}
+
+/// The descriptors must be one listening TCP socket per family, bound to exactly loopback on the
+/// port the caller asked for (not the one the reply claims).
+fn check_sockets(
+    fds: Vec<OwnedFd>,
+    port: u16,
+    ipv6_unavailable: bool,
+) -> Result<Reserved, BindError> {
+    let mut v4 = None;
+    let mut v6 = None;
+    for fd in fds {
+        let raw = fd.as_raw_fd();
+        let int_option = |level, name| socket_option(raw, level, name);
+        let stream = int_option(libc::SOL_SOCKET, libc::SO_TYPE) == Some(libc::SOCK_STREAM);
+        let listening = int_option(libc::SOL_SOCKET, libc::SO_ACCEPTCONN) == Some(1);
+        if !stream || !listening {
+            return Err(BindError::Rejected("not a listening TCP socket".into()));
+        }
+        match local_address(raw) {
+            Some(Local::V4 { address, port: p }) if address == [127, 0, 0, 1] && p == port => {
+                if v4.replace(fd).is_some() {
+                    return Err(BindError::Rejected("two IPv4 sockets".into()));
+                }
+            }
+            Some(Local::V6 { address, port: p }) if address == LOOPBACK_V6 && p == port => {
+                if int_option(libc::IPPROTO_IPV6, libc::IPV6_V6ONLY) != Some(1) {
+                    return Err(BindError::Rejected("the IPv6 socket isn't v6-only".into()));
+                }
+                if v6.replace(fd).is_some() {
+                    return Err(BindError::Rejected("two IPv6 sockets".into()));
+                }
+            }
+            _ => {
+                return Err(BindError::Rejected(
+                    "a socket isn't on loopback at the requested port".into(),
+                ));
+            }
+        }
+    }
+    let Some(v4) = v4 else {
+        return Err(BindError::Rejected("no IPv4 socket".into()));
+    };
+    if v6.is_none() != ipv6_unavailable {
+        return Err(BindError::Rejected(
+            "IPv6 sockets don't match the reply".into(),
+        ));
+    }
+    let warning = ipv6_unavailable
+        .then(|| "IPv6 loopback is unavailable; only 127.0.0.1 is reserved".to_owned());
+    Ok(Reserved { v4, v6, warning })
+}
+
+const LOOPBACK_V6: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+
+enum Local {
+    V4 { address: [u8; 4], port: u16 },
+    V6 { address: [u8; 16], port: u16 },
+}
+
+fn socket_option(fd: RawFd, level: libc::c_int, name: libc::c_int) -> Option<libc::c_int> {
+    let mut value: libc::c_int = -1;
+    let mut length = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+    // SAFETY: `value` and `length` are valid for an int-sized option.
+    let rc = unsafe {
+        libc::getsockopt(
+            fd,
+            level,
+            name,
+            (&mut value as *mut libc::c_int).cast(),
+            &mut length,
+        )
+    };
+    (rc == 0).then_some(value)
+}
+
+fn local_address(fd: RawFd) -> Option<Local> {
+    // SAFETY: sockaddr_storage is plain data; getsockname fills at most `length` bytes of it.
+    let mut storage: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+    let mut length = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+    let rc = unsafe {
+        libc::getsockname(
+            fd,
+            (&mut storage as *mut libc::sockaddr_storage).cast(),
+            &mut length,
+        )
+    };
+    if rc != 0 {
+        return None;
+    }
+    match libc::c_int::from(storage.ss_family) {
+        libc::AF_INET if length as usize >= std::mem::size_of::<libc::sockaddr_in>() => {
+            // SAFETY: the family says this is a sockaddr_in and the length covers it.
+            let a = unsafe {
+                &*(&storage as *const libc::sockaddr_storage).cast::<libc::sockaddr_in>()
+            };
+            Some(Local::V4 {
+                address: a.sin_addr.s_addr.to_ne_bytes(),
+                port: u16::from_be(a.sin_port),
+            })
+        }
+        libc::AF_INET6 if length as usize >= std::mem::size_of::<libc::sockaddr_in6>() => {
+            // SAFETY: as above, for sockaddr_in6.
+            let a = unsafe {
+                &*(&storage as *const libc::sockaddr_storage).cast::<libc::sockaddr_in6>()
+            };
+            Some(Local::V6 {
+                address: a.sin6_addr.s6_addr,
+                port: u16::from_be(a.sin6_port),
+            })
+        }
+        _ => None,
     }
 }

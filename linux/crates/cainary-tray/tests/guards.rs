@@ -463,6 +463,66 @@ fn guard_l3_process_network_writes_and_scanning_paths_are_confined() {
     );
 }
 
+const RUNNER: &str = "crates/tray-model/src/runner.rs";
+const PRIVPORT: &str = "crates/tray-model/src/privport.rs";
+const FAKE_PKEXEC: &str = "crates/tray-model/src/bin/fake-pkexec.rs";
+
+/// Privileged-port plumbing stays where it can be reviewed: pkexec and descriptor passing only in
+/// the runner (and the test fake), the helper's and its policy's install paths only in privport.rs.
+#[test]
+fn guard_l3b_privileged_port_plumbing_is_confined() {
+    // Where each token may appear in production code.
+    let confined: &[(&str, &[&str])] = &[
+        ("pkexec", &[RUNNER, FAKE_PKEXEC]),
+        ("recvmsg", &[RUNNER, FAKE_PKEXEC]),
+        ("sendmsg", &[FAKE_PKEXEC]),
+        ("SCM_RIGHTS", &[RUNNER, FAKE_PKEXEC]),
+        ("socketpair", &[RUNNER, FAKE_PKEXEC]),
+        ("--disable-internal-agent", &[RUNNER, FAKE_PKEXEC]),
+        ("libexec/cainary", &[PRIVPORT]),
+        ("polkit-1/actions", &[PRIVPORT]),
+        ("cainary-bind-helper", &[PRIVPORT, FAKE_PKEXEC]),
+    ];
+    let mut violations = Vec::new();
+    let mut argv_sites = 0;
+    for source in sources() {
+        // The helper's own error code for "not started by pkexec" is protocol text, not a use.
+        let code = source.code.replace("\"not-pkexec\"", "");
+        for (token, allowed) in confined {
+            if code.contains(token) && !allowed.contains(&source.path.as_str()) {
+                violations.push(format!("{}: {token:?} outside {allowed:?}", source.path));
+            }
+        }
+        if source.path == RUNNER {
+            argv_sites = code.matches("\"--disable-internal-agent\"").count();
+            if !code
+                .contains("fn pkexec_args(helper: &std::path::Path, port: u16) -> [OsString; 4]")
+            {
+                violations.push(format!(
+                    "{}: the pkexec argv must come from `pkexec_args`, a fixed-size array",
+                    source.path
+                ));
+            }
+            if code.matches(".args(pkexec_args(").count() != 1 {
+                violations.push(format!(
+                    "{}: pkexec must be started with exactly `.args(pkexec_args(…))`",
+                    source.path
+                ));
+            }
+        }
+    }
+    if argv_sites != 1 {
+        violations.push(format!(
+            "{RUNNER}: the pkexec argv must be spelled once, found {argv_sites}"
+        ));
+    }
+    assert!(
+        violations.is_empty(),
+        "L3b source guard failed:\n  {}",
+        violations.join("\n  ")
+    );
+}
+
 /// Whether `code` brings a writing function (or a glob) into scope with `use std::fs::…`.
 fn imports_fs_write(code: &str) -> bool {
     let mut rest = code;

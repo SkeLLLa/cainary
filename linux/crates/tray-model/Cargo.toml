@@ -15,3 +15,16 @@ serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 libc.workspace = true
+
+[features]
+# Builds the fake pkexec the bind_privileged tests run. Never part of a release.
+test-fakes = []
+
+[[bin]]
+name = "fake-pkexec"
+path = "src/bin/fake-pkexec.rs"
+required-features = ["test-fakes"]
+
+[dev-dependencies]
+# Turns the feature on for this package's own tests, so plain `cargo test` builds the fake.
+cainary-tray-model = { path = ".", features = ["test-fakes"] }

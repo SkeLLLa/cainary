@@ -5,6 +5,8 @@
 
 use std::path::PathBuf;
 
+pub mod sockets;
+
 use serde_json::{Value, json};
 
 /// The repository root (this crate is `linux/crates/tray-model`).
