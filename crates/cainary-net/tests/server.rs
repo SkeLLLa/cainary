@@ -1,5 +1,8 @@
 //! Integration tests: a real listener on loopback port 0, driven with `std::net::TcpStream`.
 
+mod formats;
+
+use cainary_net::decode::{ENCODING_MESSAGE, TYPE_MESSAGE};
 use cainary_net::logfile::LogFile;
 use cainary_net::redflag::{Matcher, presets};
 use cainary_net::server::{self, Config, Server};
@@ -78,6 +81,17 @@ struct Reply {
     status: u16,
     headers: String,
     body: String,
+    bytes: Vec<u8>,
+}
+
+impl Reply {
+    fn header(&self, name: &str) -> Option<&str> {
+        let prefix = format!("{}: ", name.to_ascii_lowercase());
+        self.headers
+            .lines()
+            .find(|l| l.to_ascii_lowercase().starts_with(&prefix))
+            .map(|l| &l[prefix.len()..])
+    }
 }
 
 fn read_reply(s: &mut TcpStream) -> Option<Reply> {
@@ -93,11 +107,12 @@ fn read_reply(s: &mut TcpStream) -> Option<Reply> {
                 .unwrap_or(0);
             if data.len() >= i + 4 + len {
                 let status = head.split(' ').nth(1)?.parse().ok()?;
-                let body = String::from_utf8_lossy(&data[i + 4..i + 4 + len]).into_owned();
+                let bytes = data[i + 4..i + 4 + len].to_vec();
                 return Some(Reply {
                     status,
                     headers: head,
-                    body,
+                    body: String::from_utf8_lossy(&bytes).into_owned(),
+                    bytes,
                 });
             }
         }
@@ -301,28 +316,30 @@ fn terminal_escapes_in_text_mode() {
 fn rejections_use_the_documented_statuses_and_messages() {
     let (srv, out) = start();
     let a = srv.addrs[0];
-    let proto = post_with(
+    let grpc = post_with(
         a,
         "/v1/logs",
-        "Content-Type: application/x-protobuf\r\n",
-        b"\x0a\x00",
+        "Content-Type: application/grpc\r\n",
+        b"\x00\x00\x00\x00\x00",
     )
     .unwrap();
-    assert_eq!(proto.status, 415);
-    assert!(
-        proto.body.contains("OTEL_EXPORTER_OTLP_PROTOCOL") && proto.body.contains("\"code\":3")
-    );
-    let gz = post_with(
-        a,
-        "/v1/logs",
-        "Content-Type: application/json\r\nContent-Encoding: gzip\r\n",
-        b"\x1f\x8b",
-    )
-    .unwrap();
-    assert_eq!(gz.status, 415);
+    assert_eq!(grpc.status, 415);
     assert_eq!(
-        gz.body,
-        r#"{"code":3,"message":"compressed bodies aren't supported; unset OTEL_EXPORTER_OTLP_COMPRESSION or set it to none"}"#
+        grpc.body,
+        json!({"code": 3, "message": TYPE_MESSAGE}).to_string()
+    );
+    assert!(grpc.body.contains("OTEL_EXPORTER_OTLP_PROTOCOL") && grpc.body.contains("gRPC"));
+    let zstd = post_with(
+        a,
+        "/v1/logs",
+        "Content-Type: application/json\r\nContent-Encoding: zstd\r\n",
+        b"\x28\xb5",
+    )
+    .unwrap();
+    assert_eq!(zstd.status, 415);
+    assert_eq!(
+        zstd.body,
+        r#"{"code":3,"message":"only gzip or uncompressed bodies are accepted; set OTEL_EXPORTER_OTLP_COMPRESSION to gzip or none"}"#
     );
     let bad = post_with(
         a,
@@ -371,6 +388,328 @@ fn rejections_use_the_documented_statuses_and_messages() {
     assert_eq!(errs[0]["source"], "http");
     assert_eq!(errs[0]["status"], 415);
     assert_eq!(errs[0]["path"], "/v1/logs");
+    srv.shutdown();
+}
+
+fn post_variant(addr: SocketAddr, path: &str, v: &formats::Variant) -> Reply {
+    post_with(addr, path, &v.headers(), &v.body).expect("a reply")
+}
+
+#[test]
+fn every_format_and_encoding_gives_the_same_batch() {
+    // Raw values as well as masked ones: a transcoder that bent a value would show.
+    for show in [false, true] {
+        let (srv, out) = start_with(|c| c.show_values = show);
+        let a = srv.addrs[0];
+        let mut sent = Vec::new();
+        for p in formats::payloads() {
+            let path = format!("/v1/{}", p.signal);
+            for v in formats::variants(&p) {
+                let r = post_variant(a, &path, &v);
+                assert_eq!(r.status, 200, "{}: {}", v.label, r.body);
+                sent.push((p.name, v));
+                // One at a time, so the lines come out in the order they were sent.
+                out.wait_for("batch", sent.len());
+            }
+        }
+        srv.shutdown();
+        // Each batch and the alerts after it, up to the next batch.
+        let mut groups: Vec<Vec<Value>> = Vec::new();
+        for l in out.lines() {
+            match l["type"].as_str().unwrap() {
+                "batch" => groups.push(vec![l]),
+                "alert" => groups.last_mut().unwrap().push(l),
+                _ => {}
+            }
+        }
+        assert_eq!(groups.len(), sent.len());
+        let mut first: Option<(&str, Vec<Value>)> = None;
+        for ((name, v), group) in sent.iter().zip(&groups) {
+            let batch = &group[0];
+            assert_eq!(
+                batch["bytes"],
+                v.body.len(),
+                "{}: bytes is the wire size",
+                v.label
+            );
+            assert_eq!(batch["format"].as_str(), v.format, "{}", v.label);
+            assert_eq!(
+                batch["encoding"].as_str(),
+                v.gzip.then_some("gzip"),
+                "{}",
+                v.label
+            );
+            let got: Vec<Value> = group.iter().cloned().map(formats::same).collect();
+            match &first {
+                Some((n, want)) if n == name => {
+                    let diff = formats::first_diff(&json!(got), &json!(want));
+                    assert!(
+                        diff.is_none(),
+                        "{} differs from its JSON (show={show}): {diff:?}",
+                        v.label
+                    );
+                }
+                _ => {
+                    assert!(batch["records"].as_u64().unwrap() > 0, "{}", v.label);
+                    first = Some((name, got));
+                }
+            }
+        }
+        // The payloads exercise the red flags too.
+        assert!(
+            groups.iter().any(|g| g.len() > 1),
+            "no alert in any payload"
+        );
+    }
+}
+
+#[test]
+fn text_mode_says_protobuf_and_gzip() {
+    let (srv, out) = start_with(|c| c.json = false);
+    let a = srv.addrs[0];
+    let p = formats::payloads().remove(2);
+    for v in formats::variants(&p) {
+        assert_eq!(post_variant(a, "/v1/logs", &v).status, 200, "{}", v.label);
+    }
+    srv.shutdown();
+    let text = out.text();
+    // The header ends with the time.
+    let headers: Vec<&str> = text
+        .lines()
+        .filter(|l| l.contains(" records"))
+        .filter_map(|l| l.rsplit_once(" · ").map(|(h, _)| h))
+        .collect();
+    let has = |suffix: &str| headers.iter().any(|h| h.ends_with(suffix));
+    assert!(has(" records"), "{text}");
+    assert!(has(" records · gzip"), "{text}");
+    assert!(has(" records · protobuf"), "{text}");
+    assert!(has(" records · protobuf · gzip"), "{text}");
+}
+
+#[test]
+fn protobuf_requests_get_protobuf_answers() {
+    let (srv, out) = start();
+    let a = srv.addrs[0];
+    let p = formats::payloads().remove(2);
+    let binpb = formats::variants(&p)[3].body.clone();
+    for (ct, media) in [
+        ("application/x-protobuf", "application/x-protobuf"),
+        (
+            "Application/Protobuf; charset=utf-8",
+            "application/protobuf",
+        ),
+    ] {
+        let r = post_with(a, "/v1/logs", &format!("Content-Type: {ct}\r\n"), &binpb).unwrap();
+        assert_eq!(r.status, 200);
+        assert!(r.bytes.is_empty(), "an empty ExportLogsServiceResponse");
+        assert_eq!(r.header("content-type"), Some(media));
+        assert_eq!(r.header("content-length"), Some("0"));
+    }
+
+    // Once it's known to be protobuf, every error is a google.rpc.Status with the same HTTP status.
+    let torn = [0x0a, 0x05, 0x01];
+    let want = cainary_net::otlp_pb::to_json(cainary_net::otlp::Signal::Logs, &torn).unwrap_err();
+    let proto = "Content-Type: application/x-protobuf\r\n";
+    let bad = post_with(a, "/v1/logs", proto, &torn).unwrap();
+    assert_eq!(bad.status, want.status);
+    assert_eq!(bad.header("content-type"), Some("application/x-protobuf"));
+    assert_eq!(formats::status(&bad.bytes), (3, want.message.to_string()));
+    assert!(bad.headers.contains("Connection: close"));
+
+    let bomb = formats::gzip(&vec![0u8; 17 << 20]);
+    let big = post_with(
+        a,
+        "/v1/logs",
+        "Content-Type: application/protobuf\r\nContent-Encoding: gzip\r\n",
+        &bomb,
+    )
+    .unwrap();
+    assert_eq!(big.status, 413);
+    assert_eq!(big.header("content-type"), Some("application/protobuf"));
+    assert_eq!(
+        formats::status(&big.bytes),
+        (3, "decompressed body too large".to_string())
+    );
+    let junk = post_with(
+        a,
+        "/v1/logs",
+        &format!("{proto}Content-Encoding: gzip\r\n"),
+        b"not gzip",
+    )
+    .unwrap();
+    assert_eq!(junk.status, 400);
+    assert_eq!(
+        formats::status(&junk.bytes),
+        (3, "invalid gzip body".to_string())
+    );
+
+    // Before the request is known to be protobuf, the answer is JSON as ever.
+    let get = raw(
+        a,
+        format!(
+            "GET /v1/logs HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n{proto}\r\n",
+            a.port()
+        )
+        .as_bytes(),
+    )
+    .unwrap();
+    assert_eq!(
+        (get.status, get.header("content-type")),
+        (405, Some("application/json"))
+    );
+    let nf = post_with(a, "/nope", proto, b"").unwrap();
+    assert_eq!(
+        (nf.status, nf.header("content-type")),
+        (404, Some("application/json"))
+    );
+    let dup = post_with(a, "/v1/logs", &format!("{proto}{proto}"), b"").unwrap();
+    assert_eq!(dup.status, 400);
+    assert!(dup.body.contains("duplicate Content-Type"), "{}", dup.body);
+    let enc = post_with(
+        a,
+        "/v1/logs",
+        &format!("{proto}Content-Encoding: br\r\n"),
+        b"",
+    )
+    .unwrap();
+    assert_eq!(
+        (enc.status, enc.header("content-type")),
+        (415, Some("application/json"))
+    );
+
+    let errs = out.wait_for("error", 7);
+    assert_eq!(errs.len(), 7);
+    assert_eq!(errs[0]["status"], i64::from(want.status));
+    assert_eq!(errs[0]["message"], want.message);
+
+    // The same connection keeps working after a good protobuf request.
+    let mut s = connect(a);
+    for _ in 0..2 {
+        let head = format!(
+            "POST /v1/logs HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n{proto}Content-Length: {}\r\n\r\n",
+            a.port(),
+            binpb.len()
+        );
+        s.write_all(head.as_bytes()).unwrap();
+        s.write_all(&binpb).unwrap();
+        let r = read_reply(&mut s).unwrap();
+        assert_eq!(r.status, 200);
+        assert!(r.headers.contains("Connection: keep-alive"));
+    }
+    srv.shutdown();
+}
+
+#[test]
+fn unsupported_encodings_and_types_are_415_and_duplicates_400() {
+    let (srv, _out) = start();
+    let a = srv.addrs[0];
+    let json = "Content-Type: application/json\r\n";
+    for enc in [
+        "deflate",
+        "zstd",
+        "br",
+        "compress",
+        "gzip, br",
+        "br, gzip",
+        "gzip, gzip",
+        "",
+    ] {
+        let extra = format!("{json}Content-Encoding: {enc}\r\n");
+        let r = post_with(a, "/v1/logs", &extra, b"{}").unwrap();
+        assert_eq!(r.status, 415, "{enc:?}");
+        assert_eq!(
+            r.body,
+            json!({"code": 3, "message": ENCODING_MESSAGE}).to_string()
+        );
+    }
+    for ct in [
+        "application/grpc",
+        "application/grpc+proto",
+        "text/plain",
+        "application/xml",
+        "",
+    ] {
+        let r = post_with(a, "/v1/logs", &format!("Content-Type: {ct}\r\n"), b"{}").unwrap();
+        assert_eq!(r.status, 415, "{ct:?}");
+        assert_eq!(
+            r.body,
+            json!({"code": 3, "message": TYPE_MESSAGE}).to_string()
+        );
+    }
+    assert_eq!(post_with(a, "/v1/logs", "", b"{}").unwrap().status, 415);
+    for (extra, what) in [
+        (format!("{json}{json}"), "duplicate Content-Type"),
+        (
+            format!("{json}Content-Type: application/x-protobuf\r\n"),
+            "duplicate Content-Type",
+        ),
+        (
+            format!("{json}Content-Encoding: gzip\r\nContent-Encoding: gzip\r\n"),
+            "duplicate Content-Encoding",
+        ),
+        (
+            format!("{json}Content-Encoding: identity\r\nContent-Encoding: gzip\r\n"),
+            "duplicate Content-Encoding",
+        ),
+    ] {
+        let r = post_with(a, "/v1/logs", &extra, b"{}").unwrap();
+        assert_eq!(r.status, 400, "{extra:?}");
+        assert!(r.body.contains(what), "{}", r.body);
+    }
+    // `identity` is a plain body.
+    let doc = logs_doc(vec![]).to_string();
+    let extra = format!("{json}Content-Encoding: Identity\r\n");
+    let ok = post_with(a, "/v1/logs", &extra, doc.as_bytes()).unwrap();
+    assert_eq!(ok.status, 200);
+    srv.shutdown();
+}
+
+#[test]
+fn gzip_bodies_are_bounded_and_strict() {
+    let (srv, out) = start();
+    let a = srv.addrs[0];
+    let gz = "Content-Type: application/json\r\nContent-Encoding: gzip\r\n";
+    let doc = logs_doc(vec![("event.name", "tool_result")]).to_string();
+    let good = formats::gzip(doc.as_bytes());
+
+    // 17 MiB of zeros is about 17 KiB on the wire: the wire budget lets it in, the decoded cap
+    // doesn't.
+    let bomb = formats::gzip(&vec![0u8; 17 << 20]);
+    assert!(bomb.len() < 64 * 1024);
+    let r = post_with(a, "/v1/logs", gz, &bomb).unwrap();
+    assert_eq!(r.status, 413);
+    assert_eq!(
+        r.body,
+        r#"{"code":3,"message":"decompressed body too large"}"#
+    );
+
+    let mut junk = good.clone();
+    junk.extend(b"trailing junk");
+    let mut zeros = good.clone();
+    zeros.extend([0u8; 8]);
+    for (what, body) in [
+        ("not gzip", b"{\"resourceLogs\":[]}".to_vec()),
+        ("empty", Vec::new()),
+        ("truncated", good[..good.len() - 6].to_vec()),
+        ("trailing junk", junk),
+        ("trailing zeros", zeros),
+    ] {
+        let r = post_with(a, "/v1/logs", gz, &body).unwrap();
+        assert_eq!(r.status, 400, "{what}");
+        assert_eq!(
+            r.body, r#"{"code":3,"message":"invalid gzip body"}"#,
+            "{what}"
+        );
+    }
+
+    // A good one still works afterwards, and counts as its wire size.
+    let r = post_with(a, "/v1/logs", gz, &good).unwrap();
+    assert_eq!((r.status, r.body.as_str()), (200, "{}"));
+    let b = out.wait_for("batch", 1);
+    assert_eq!(b[0]["bytes"], good.len());
+    assert_eq!(b[0]["encoding"], "gzip");
+    assert!(b[0].get("format").is_none());
+    assert_eq!(out.wait_for("error", 6).len(), 6);
     srv.shutdown();
 }
 

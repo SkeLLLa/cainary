@@ -3,6 +3,9 @@
 //! never bound.
 #![cfg(feature = "tls")]
 
+mod formats;
+
+use cainary_net::decode::TYPE_MESSAGE;
 use cainary_net::redflag::{Matcher, presets};
 use cainary_net::server::{self, Config, Server, TlsRun};
 use cainary_net::tls::Tls;
@@ -148,6 +151,7 @@ fn connect(addr: SocketAddr, cfg: &Arc<ClientConfig>, sni: &str) -> Result<Tls_,
 struct Reply {
     status: u16,
     body: String,
+    bytes: Vec<u8>,
 }
 
 fn read_reply(s: &mut Tls_) -> Option<Reply> {
@@ -163,8 +167,13 @@ fn read_reply(s: &mut Tls_) -> Option<Reply> {
                 .unwrap_or(0);
             if data.len() >= i + 4 + len {
                 let status = head.split(' ').nth(1)?.parse().ok()?;
-                let body = String::from_utf8_lossy(&data[i + 4..i + 4 + len]).into_owned();
-                return Some(Reply { status, body });
+                let bytes = data[i + 4..i + 4 + len].to_vec();
+                let body = String::from_utf8_lossy(&bytes).into_owned();
+                return Some(Reply {
+                    status,
+                    body,
+                    bytes,
+                });
             }
         }
         match s.read(&mut chunk) {
@@ -175,14 +184,21 @@ fn read_reply(s: &mut Tls_) -> Option<Reply> {
 }
 
 fn request(path: &str, host_header: Option<&str>, extra: &str, body: &[u8]) -> Vec<u8> {
+    request_as(
+        path,
+        host_header,
+        &format!("Content-Type: application/json\r\n{extra}"),
+        body,
+    )
+}
+
+/// `request` with the content headers spelled out.
+fn request_as(path: &str, host_header: Option<&str>, headers: &str, body: &[u8]) -> Vec<u8> {
     let mut r = format!("POST {path} HTTP/1.1\r\n");
     if let Some(h) = host_header {
         r.push_str(&format!("Host: {h}\r\n"));
     }
-    r.push_str(&format!(
-        "Content-Type: application/json\r\n{extra}Content-Length: {}\r\n\r\n",
-        body.len()
-    ));
+    r.push_str(&format!("{headers}Content-Length: {}\r\n\r\n", body.len()));
     let mut v = r.into_bytes();
     v.extend_from_slice(body);
     v
@@ -466,7 +482,7 @@ fn takeover_routing_is_post_only_and_needs_one_signal() {
         "POST https://{HOST}/v1/logs HTTP/1.1\r\nHost: {h}\r\nContent-Length: 2\r\n\r\n{{}}"
     );
     assert_eq!(send(abs.into_bytes()).unwrap().0, 400);
-    // The query is ignored; the strict §14 limits still apply (gzip is refused).
+    // The query is ignored; the strict §14 limits still apply (br is refused, gzip is read).
     assert_eq!(
         send(request("/v1/logs?token=abc", Some(&h), "", &logs))
             .unwrap()
@@ -477,14 +493,149 @@ fn takeover_routing_is_post_only_and_needs_one_signal() {
         send(request(
             "/v1/logs",
             Some(&h),
-            "Content-Encoding: gzip\r\n",
+            "Content-Encoding: br\r\n",
             &logs
         ))
         .unwrap()
         .0,
         415
     );
+    assert_eq!(
+        send(request(
+            "/v1/logs",
+            Some(&h),
+            "Content-Encoding: gzip\r\n",
+            &logs
+        ))
+        .unwrap()
+        .0,
+        400,
+        "a body that isn't gzip says so"
+    );
     assert!(!run.out.text().contains("token=abc"));
+    run.srv.shutdown();
+    let _ = std::fs::remove_dir_all(&run.dir);
+}
+
+#[test]
+fn every_format_and_encoding_works_in_takeover_too() {
+    let run = start("formats");
+    let a = run.srv.addrs[0];
+    let cfg = client_config(&run.ca_pem, &[b"http/1.1"]);
+    let h = host_port(&run, HOST);
+    let send = |raw: Vec<u8>| {
+        let mut s = connect(a, &cfg, HOST).unwrap();
+        s.write_all(&raw).unwrap();
+        read_reply(&mut s).expect("a reply")
+    };
+    let mut sent = Vec::new();
+    for p in formats::payloads() {
+        // The signal comes from the path for protobuf, and from the path or the body for JSON.
+        let paths = [format!("/v1/{}", p.signal), format!("/_x/org/{}", p.signal)];
+        for v in formats::variants(&p) {
+            for path in &paths {
+                let r = send(request_as(path, Some(&h), &v.headers(), &v.body));
+                assert_eq!(r.status, 200, "{} {path}: {}", v.label, r.body);
+                match v.format {
+                    Some(_) => assert!(r.bytes.is_empty(), "{}", v.label),
+                    None => assert_eq!(r.body, "{}", "{}", v.label),
+                }
+                let shown = if path.starts_with("/v1/") {
+                    path.as_str()
+                } else {
+                    "<custom path>"
+                };
+                sent.push((
+                    p.name,
+                    v.label.clone(),
+                    v.body.len(),
+                    v.format,
+                    v.gzip,
+                    shown.to_string(),
+                ));
+                run.out.wait_for("batch", sent.len());
+            }
+        }
+    }
+    // JSON bodies find their signal in the body, on a path that has none.
+    let json = formats::payloads().remove(2);
+    let r = send(request_as(
+        "/anything/else",
+        Some(&h),
+        &formats::variants(&json)[1].headers(),
+        &formats::variants(&json)[1].body,
+    ));
+    assert_eq!(r.status, 200);
+    let batches = run.out.wait_for("batch", sent.len() + 1);
+    assert_eq!(batches.len(), sent.len() + 1);
+    let mut first: Option<(&str, Value)> = None;
+    for ((name, label, bytes, format, gzip, path), b) in sent.iter().zip(&batches) {
+        assert_eq!(b["bytes"], *bytes, "{label}");
+        assert_eq!(b["format"].as_str(), *format, "{label}");
+        assert_eq!(b["encoding"].as_str(), gzip.then_some("gzip"), "{label}");
+        assert_eq!(b["path"], *path, "{label}");
+        let mut got = formats::same(b.clone());
+        got.as_object_mut().unwrap().remove("path");
+        match &first {
+            Some((n, want)) if n == name => {
+                let diff = formats::first_diff(&got, want);
+                assert!(diff.is_none(), "{label} differs: {diff:?}");
+            }
+            _ => first = Some((name, got)),
+        }
+    }
+    run.srv.shutdown();
+    let _ = std::fs::remove_dir_all(&run.dir);
+}
+
+#[test]
+fn protobuf_in_takeover_needs_a_path_that_names_the_signal() {
+    let run = start("pb-path");
+    let a = run.srv.addrs[0];
+    let cfg = client_config(&run.ca_pem, &[b"http/1.1"]);
+    let h = host_port(&run, HOST);
+    let send = |raw: Vec<u8>| {
+        let mut s = connect(a, &cfg, HOST).unwrap();
+        s.write_all(&raw).unwrap();
+        read_reply(&mut s).expect("a reply")
+    };
+    let p = formats::payloads().remove(3);
+    let v = &formats::variants(&p)[3];
+    let r = send(request_as("/x/y", Some(&h), &v.headers(), &v.body));
+    assert_eq!(r.status, 400);
+    assert_eq!(
+        formats::status(&r.bytes),
+        (
+            3,
+            "can't tell which signal this is (protobuf needs a /v1/<signal> path)".to_string()
+        )
+    );
+    // Said before the body is read or allocated, and the same with no body at all.
+    let r = send(request_as("/", Some(&h), &v.headers(), b""));
+    assert_eq!(r.status, 400);
+    assert!(
+        formats::status(&r.bytes)
+            .1
+            .starts_with("can't tell which signal")
+    );
+    // A path that names a signal works, a JSON body on the neutral path still gets a JSON answer.
+    let r = send(request_as("/v1/traces", Some(&h), &v.headers(), &v.body));
+    assert_eq!((r.status, r.bytes.len()), (200, 0));
+    let r = send(request_as(
+        "/x/y",
+        Some(&h),
+        "Content-Type: application/grpc\r\n",
+        b"x",
+    ));
+    assert_eq!(r.status, 415);
+    assert_eq!(
+        r.body,
+        json!({"code": 3, "message": TYPE_MESSAGE}).to_string()
+    );
+    // The error line never carries the path.
+    let errs = run.out.wait_for("error", 3);
+    assert_eq!(errs.len(), 3);
+    assert!(!run.out.text().contains("/x/y"));
     run.srv.shutdown();
     let _ = std::fs::remove_dir_all(&run.dir);
 }
