@@ -1,7 +1,7 @@
 #!/bin/sh
 # Set the release version: [workspace.package] version in Cargo.toml (the single source), the
 # exact cainary-core requirement in [workspace.dependencies], and the workspace crates' entries
-# in Cargo.lock. The Linux tray workspace follows: linux/Cargo.toml's [workspace.package]
+# in Cargo.lock (every member, named in its own manifest). The Linux tray workspace follows: linux/Cargo.toml's [workspace.package]
 # version, its crates in linux/Cargo.lock, and a <release> entry in the AppStream metainfo.
 # Used by .github/workflows/release.yml (through scripts/release-tree.sh).
 #
@@ -20,7 +20,7 @@ case "$VERSION" in
 esac
 
 tmp="$(mktemp "${TMPDIR:-/tmp}/set-version.XXXXXX")"
-trap 'rm -f "$tmp"' EXIT
+trap 'rm -f "$tmp" "$tmp.count"' EXIT
 
 # The version line inside [workspace.package], and the exact `version = "=..."` on the
 # cainary-core line in [workspace.dependencies]; other dependency versions stay untouched.
@@ -32,18 +32,41 @@ awk -v v="$VERSION" '
 ' Cargo.toml > "$tmp"
 cat "$tmp" > Cargo.toml
 
-# The version line right after `name = "cainary"` and `name = "cainary-core"` in their [[package]] blocks.
-awk -v v="$VERSION" '
-    /^name = "cainary(-core)?"$/ { own = 1; print; next }
-    own && /^version = "/ { $0 = "version = \"" v "\""; own = 0 }
-    { print }
-' Cargo.lock > "$tmp"
-cat "$tmp" > Cargo.lock
+# Bump every workspace member's [[package]] entry in a lockfile: the version line right after its
+# `name = "..."`. The names come from the members' own manifests, so a new crate needs no edit
+# here; third-party packages are never matched. Fails if the bumped count differs from the
+# member count.
+bump_lock() { # MANIFEST LOCKFILE
+    base="$(dirname "$1")"
+    members="$(sed -n 's/^members *= *\[\(.*\)\].*/\1/p' "$1" | tr -d ' "' | tr ',' ' ')"
+    names=""
+    for m in $members; do
+        n="$(sed -n 's/^name *= *"\([^"]*\)".*/\1/p' "$base/$m/Cargo.toml" | head -n 1)"
+        [ -n "$n" ] || { echo "no package name in $base/$m/Cargo.toml" >&2; exit 1; }
+        names="$names $n"
+    done
+    expected="$(echo "$names" | wc -w | tr -d ' ')"
+    awk -v v="$VERSION" -v names="$names" '
+        BEGIN { n = split(names, a, " "); for (i = 1; i <= n; i++) want[a[i]] = 1 }
+        /^name = "/ { name = $0; sub(/^name = "/, "", name); sub(/"$/, "", name); own = (name in want); print; next }
+        own && /^version = "/ { $0 = "version = \"" v "\""; own = 0; bumped++ }
+        { print }
+        END { print bumped + 0 > "/dev/stderr" }
+    ' "$2" > "$tmp" 2> "$tmp.count"
+    got="$(cat "$tmp.count")"
+    rm -f "$tmp.count"
+    if [ "$got" != "$expected" ]; then
+        echo "$2: bumped $got entries, expected $expected ($names )" >&2
+        exit 1
+    fi
+    cat "$tmp" > "$2"
+}
+
+bump_lock Cargo.toml Cargo.lock
 
 # Fail if either file didn't take the new version.
 grep -qx "version = \"$VERSION\"" Cargo.toml
 grep -q "^cainary-core = .*version = \"=$VERSION\"" Cargo.toml
-[ "$(grep -A1 -E '^name = "cainary(-core)?"$' Cargo.lock | grep -cx "version = \"$VERSION\"")" -eq 2 ]
 
 # --- The Linux tray workspace (its own Cargo.toml and Cargo.lock) ------------------------------
 if [ -f linux/Cargo.toml ]; then
@@ -56,13 +79,7 @@ if [ -f linux/Cargo.toml ]; then
     grep -qx "version = \"$VERSION\"" linux/Cargo.toml
 
     if [ -f linux/Cargo.lock ]; then
-        awk -v v="$VERSION" '
-            /^name = "cainary-tray(-model|-dbus)?"$/ { own = 1; print; next }
-            own && /^version = "/ { $0 = "version = \"" v "\""; own = 0 }
-            { print }
-        ' linux/Cargo.lock > "$tmp"
-        cat "$tmp" > linux/Cargo.lock
-        [ "$(grep -A1 -E '^name = "cainary-tray(-model|-dbus)?"$' linux/Cargo.lock | grep -cx "version = \"$VERSION\"")" -eq 3 ]
+        bump_lock linux/Cargo.toml linux/Cargo.lock
     fi
 fi
 
