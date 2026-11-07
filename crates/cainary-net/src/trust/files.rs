@@ -350,12 +350,38 @@ pub(super) fn backup(dir: &CaDir, name: &str, bytes: &[u8], stamp: &str) -> io::
 /// 2 MiB that others can't write, symlinks followed (`/etc/ssl/cert.pem` is one). Anything else
 /// is `None`.
 pub(super) fn read_bundle_text(path: &Path) -> Option<String> {
+    read_text(path, None)
+}
+
+/// The same for a user's original: never a file of the collector directory, however it is named.
+/// The path is resolved first (symlinks, `..`, relative), and the resolved file is refused when it
+/// lies inside the resolved directory or is the same file (device and inode) as any entry in it,
+/// so no CA file or managed bundle can come back as an "original".
+pub(super) fn read_original_text(ca: &CaDir, path: &Path) -> Option<String> {
+    read_text(path, Some(ca))
+}
+
+fn read_text(path: &Path, exclude: Option<&CaDir>) -> Option<String> {
     const CAP: u64 = 2 << 20;
     let resolved = std::fs::canonicalize(path).ok()?;
     let f = File::open(&resolved).ok()?;
     let md = f.metadata().ok()?;
     if !md.is_file() || md.len() > CAP || md.mode() & 0o022 != 0 {
         return None;
+    }
+    if let Some(ca) = exclude {
+        let dir = std::fs::canonicalize(ca.path()).ok()?;
+        if resolved.starts_with(&dir) {
+            return None;
+        }
+        for e in std::fs::read_dir(&dir).ok()?.flatten() {
+            let Ok(m) = std::fs::metadata(e.path()) else {
+                continue;
+            };
+            if (m.dev(), m.ino()) == (md.dev(), md.ino()) {
+                return None;
+            }
+        }
     }
     let mut buf = Vec::new();
     io::Read::read_to_end(&mut io::Read::take(f, CAP + 1), &mut buf).ok()?;

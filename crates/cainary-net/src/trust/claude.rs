@@ -2,7 +2,7 @@
 //! with a backup and a recorded transaction, and undone from that record.
 
 use super::bundle::{
-    COLLECTOR_MISSING, bundle, cert_fingerprint, collector_ca, read_certs, sha_of,
+    COLLECTOR_MISSING, bundle, cert_fingerprint, collector_ca, read_original, sha_of,
 };
 use super::files::{
     Done, MAX_FILE, Replace, Snapshot, TrustLock, Why, backup, discard, lock_trust, plain_name,
@@ -317,7 +317,7 @@ fn claude_apply(
                     return l;
                 }
             };
-            let Some(certs) = read_certs(Path::new(p)) else {
+            let Some(certs) = ca.and_then(|d| read_original(d, Path::new(p))) else {
                 let mut l = Line::refused(
                     t,
                     "The file your NODE_EXTRA_CA_CERTS points at could not be read as a certificate bundle, so a combined bundle can't be made.",

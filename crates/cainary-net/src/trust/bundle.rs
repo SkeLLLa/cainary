@@ -2,7 +2,7 @@
 //! system roots.
 
 use super::MODES;
-use super::files::{read_bundle_text, read_in};
+use super::files::{read_bundle_text, read_in, read_original_text};
 use crate::tls::ca_file::{CA_FILE, CaDir};
 use cainary_core::harness::Harness;
 use std::collections::HashSet;
@@ -49,25 +49,25 @@ pub(super) fn bundle(originals: &[String], cas: &[String]) -> String {
     out
 }
 
-/// The certificate blocks of a bundle of someone else, unless it lives in the collector directory:
-/// a file there is cAInary's own (a CA, a bundle) and is never an "original".
+/// The certificate blocks of a bundle of someone else, unless it is a file of the collector
+/// directory (a CA, a managed bundle) under any name: see `read_original_text`.
 pub(super) fn read_original(ca: &CaDir, path: &Path) -> Option<Vec<String>> {
-    if path.starts_with(ca.path()) {
-        return None;
-    }
-    read_certs(path)
+    certs_only(&read_original_text(ca, path)?)
 }
 
-/// A certificate bundle of someone else (the file `NODE_EXTRA_CA_CERTS` already names, or the
-/// system roots), as its certificate blocks only. The core harness refuses `*.pem` by design (they
-/// may hold keys), so `files` reads the file itself, narrowly, and a file that holds a private key
-/// is refused outright here, so key material is never handled at all.
+/// A certificate bundle of someone else (the system roots), as its certificate blocks only. The
+/// core harness refuses `*.pem` by design (they may hold keys), so `files` reads the file itself,
+/// narrowly, and a file that holds a private key is refused outright here, so key material is never
+/// handled at all.
 pub(super) fn read_certs(path: &Path) -> Option<Vec<String>> {
-    let text = read_bundle_text(path)?;
+    certs_only(&read_bundle_text(path)?)
+}
+
+fn certs_only(text: &str) -> Option<Vec<String>> {
     if text.contains("PRIVATE KEY") {
         return None;
     }
-    let certs = pem_certs(&text);
+    let certs = pem_certs(text);
     (!certs.is_empty()).then_some(certs)
 }
 
@@ -86,7 +86,11 @@ pub(super) const COLLECTOR_MISSING: &str = "Start the takeover once (cainary-ote
 /// The certificate in one CA file of the collector directory, exactly one.
 fn one_cert(ca: &CaDir, file: &str) -> Option<String> {
     let b = read_in(ca, file).ok().flatten()?;
-    match pem_certs(&String::from_utf8_lossy(&b)).as_slice() {
+    let text = String::from_utf8_lossy(&b);
+    if text.contains("PRIVATE KEY") {
+        return None;
+    }
+    match pem_certs(&text).as_slice() {
         [one] => Some(one.clone()),
         _ => None,
     }

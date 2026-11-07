@@ -700,7 +700,7 @@ mod tests {
     use crate::trust::tests::*;
     use crate::trust::*;
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     const V1: &str = r#"{"claudeCode":{"settingsPath":"/h/.claude/settings.json","original":null,"written":"/s/ca.pem","createdEnv":true,"createdFile":false,"origSha":"aa","backup":"settings.json.cainary-1.bak","newSha":"bb"},"codex":{"bundlePath":"/s/codex.pem"}}"#;
 
@@ -1402,5 +1402,112 @@ mod tests {
             fx.ca_dir.join(PROXY_CA_FILE).display().to_string()
         );
         assert!(v.get("pendingBundles").is_none());
+    }
+
+    #[test]
+    fn mode_ca_with_private_key_refused() {
+        let fx = Fx::new("mode-key", "");
+        let ca = CaDir::open_existing(&fx.ca_dir).unwrap().unwrap();
+        for label in ["PRIVATE KEY", "EC PRIVATE KEY", "ENCRYPTED PRIVATE KEY"] {
+            fs::write(
+                fx.ca_dir.join(PROXY_CA_FILE),
+                format!("{PROXY_CA}-----BEGIN {label}-----\nU0VDUkVU\n-----END {label}-----\n"),
+            )
+            .unwrap();
+            assert_eq!(
+                mode_cas(&ca, &[PROXY.to_string()]),
+                Err(MissingCa(PROXY)),
+                "{label}"
+            );
+        }
+    }
+
+    /// Initial setup and refresh both refuse an original that is a collector-directory file.
+    fn refused_original(tag: &str, link: impl Fn(&Fx) -> PathBuf) {
+        let fx = Fx::new(tag, "");
+        fs::write(fx.ca_dir.join(PROXY_CA_FILE), PROXY_CA).unwrap();
+        let p = link(&fx);
+        fx.write_settings(&format!("{{\"env\":{{\"{KEY}\":\"{}\"}}}}\n", p.display()));
+        let a = apply(&fx);
+        assert_eq!(a.action, Action::Refused, "{a:?}");
+        assert!(!fx.ca_dir.join(CLAUDE_BUNDLE).exists());
+        let ca = CaDir::open_existing(&fx.ca_dir).unwrap().unwrap();
+        assert!(read_original(&ca, &p).is_none());
+    }
+
+    #[test]
+    fn original_symlink_into_ca_dir_refused() {
+        refused_original("o-sym", |fx| {
+            let l = fx.base.join("link.pem");
+            std::os::unix::fs::symlink(fx.ca_dir.join(PROXY_CA_FILE), &l).unwrap();
+            l
+        });
+    }
+
+    #[test]
+    fn original_dotdot_into_ca_dir_refused() {
+        refused_original("o-dotdot", |fx| {
+            fx.ca_dir.join("../cainary/").join(PROXY_CA_FILE)
+        });
+    }
+
+    #[test]
+    fn original_relative_path_refused() {
+        let fx = Fx::new("o-rel", "");
+        fs::write(fx.ca_dir.join(PROXY_CA_FILE), PROXY_CA).unwrap();
+        let ca = CaDir::open_existing(&fx.ca_dir).unwrap().unwrap();
+        // Resolved against the working directory, then checked like any other path.
+        let cwd = std::env::current_dir().unwrap();
+        let rel = pathdiff(&fx.ca_dir.join(PROXY_CA_FILE), &cwd);
+        assert!(rel.is_relative());
+        assert!(read_original(&ca, &rel).is_none());
+    }
+
+    /// `to` relative to `from`, both absolute (enough for the test: `..` up to the common root).
+    fn pathdiff(to: &Path, from: &Path) -> PathBuf {
+        let common = to
+            .ancestors()
+            .find(|a| from.starts_with(a))
+            .unwrap()
+            .to_path_buf();
+        let ups = from.strip_prefix(&common).unwrap().components().count();
+        let mut out = PathBuf::new();
+        for _ in 0..ups {
+            out.push("..");
+        }
+        out.join(to.strip_prefix(&common).unwrap())
+    }
+
+    #[test]
+    fn disabled_proxy_ca_never_imported() {
+        // Even when the proxy is off, its certificate file is not an original for a rebuild.
+        let fx = Fx::new("o-disabled", "");
+        mine(&fx);
+        assert_eq!(apply(&fx).action, Action::Applied);
+        fs::write(fx.ca_dir.join(PROXY_CA_FILE), PROXY_CA).unwrap();
+        let ca = CaDir::open_existing(&fx.ca_dir).unwrap().unwrap();
+        let mut st = read_state(&ca);
+        st.claude.as_mut().unwrap().original =
+            Some(fx.ca_dir.join(PROXY_CA_FILE).display().to_string());
+        save_state(&ca, &st).unwrap();
+        let before = fs::read(fx.ca_dir.join(CLAUDE_BUNDLE)).unwrap();
+        let w = refresh(&fx.env());
+        assert!(w.iter().any(|m| m.contains("can't be read")), "{w:?}");
+        assert_eq!(fs::read(fx.ca_dir.join(CLAUDE_BUNDLE)).unwrap(), before);
+    }
+
+    #[test]
+    fn original_aliasing_managed_bundle_refused() {
+        let fx = Fx::new("o-alias", "");
+        mine(&fx);
+        assert_eq!(apply(&fx).action, Action::Applied);
+        let ca = CaDir::open_existing(&fx.ca_dir).unwrap().unwrap();
+        // A hard link outside the directory to the managed bundle, and a symlink to the link.
+        let hard = fx.base.join("hard.pem");
+        fs::hard_link(fx.ca_dir.join(CLAUDE_BUNDLE), &hard).unwrap();
+        assert!(read_original(&ca, &hard).is_none());
+        let sym = fx.base.join("sym.pem");
+        std::os::unix::fs::symlink(&hard, &sym).unwrap();
+        assert!(read_original(&ca, &sym).is_none());
     }
 }
