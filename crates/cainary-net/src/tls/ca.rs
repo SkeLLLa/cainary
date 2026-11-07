@@ -142,6 +142,13 @@ impl Ca {
 
 pub use cainary_sig::{sha256, sha256_hex};
 
+/// Whether `der` parses as a certificate usable as a trust anchor (the TLS stack's own reader).
+pub fn parses_as_trust_anchor(der: &[u8]) -> bool {
+    rustls::RootCertStore::empty()
+        .add(rustls::pki_types::CertificateDer::from(der.to_vec()))
+        .is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

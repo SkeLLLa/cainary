@@ -126,11 +126,7 @@ pub(super) fn mode_cas(ca: &CaDir, modes: &[String]) -> Result<Vec<String>, Miss
 /// the TLS stack's own anchor reader), so arbitrary base64 never reaches a trust bundle.
 fn is_trust_anchor(block: &str) -> bool {
     let body: String = block.lines().filter(|l| !l.starts_with("-----")).collect();
-    unbase64(&body).is_some_and(|der| {
-        rustls::RootCertStore::empty()
-            .add(rustls::pki_types::CertificateDer::from(der))
-            .is_ok()
-    })
+    unbase64(&body).is_some_and(|der| crate::tls::ca::parses_as_trust_anchor(&der))
 }
 
 /// SHA-256 of a certificate's DER (what browsers and `openssl x509 -fingerprint` show). A block
