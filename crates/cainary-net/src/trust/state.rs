@@ -458,25 +458,16 @@ pub(super) enum Refused {
     /// The bundle's sources (the user's original file, the system roots, or the record) can't be
     /// read: nothing was written.
     NoSource,
+    /// The recorded original bundle is a relative path: never read.
+    RelativeOriginal,
 }
 
 /// Replaces a bundle the safe way: check ownership, journal `{path, old, new}` durably, stage the
 /// new bytes, re-check, rename. Returns the new hash with the journal entry still in `st` (and in
 /// the file): the caller records the hash and then clears it, so a crash in between is
 /// reconciled by `reconcile`. Identical bytes are not written (no journal).
-pub(super) fn publish_bundle(
-    ca: &CaDir,
-    st: &mut State,
-    target: Target,
-    name: &str,
-    rec: &Rec,
-    bytes: &[u8],
-) -> Result<String, Refused> {
-    publish_with(ca, st, target, name, rec, bytes, None)
-}
-
-/// `publish_bundle` that also journals the modes the bundle is made for, so a crash before the
-/// record is saved is settled with them.
+/// Also journals the modes the bundle is made for, so a crash before the record is saved is
+/// settled with them.
 pub(super) fn publish_bundle_modes(
     ca: &CaDir,
     st: &mut State,
@@ -562,6 +553,7 @@ pub(super) fn rebuild(
             // No original: the bundle holds only the mode certificates.
             let originals = match c.original.as_deref() {
                 None => Vec::new(),
+                Some(p) if !Path::new(p).is_absolute() => return Err(Refused::RelativeOriginal),
                 Some(p) => read_original(ca, Path::new(p)).ok_or(Refused::NoSource)?,
             };
             (CLAUDE_BUNDLE, Rec::of(c.bundle_sha.as_deref()), originals)

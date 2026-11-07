@@ -10,7 +10,7 @@ use super::files::{
 };
 use super::state::{
     ClaudeState, Pending, PendingKind, Rec, Refused, State, Use, check_owned, delete_owned,
-    publish_bundle, read_state, rebuild, reconcile, save_state,
+    publish_bundle_modes, read_state, rebuild, reconcile, save_state,
 };
 use super::{
     Action, BUSY, CLAUDE_BUNDLE, Env, KEY, Line, MODES, Mode, NEWER, ORG_NOTE, RESTART, TAKEOVER,
@@ -198,8 +198,13 @@ pub(super) fn modes_with(cur: &[String], mode: &str, undo: bool) -> Vec<String> 
         .collect()
 }
 
-/// Why a rebuild wrote nothing, as text for `target`.
-fn rebuild_refusal(target: Target, r: Refused) -> String {
+fn relative_text(path: &str) -> String {
+    format!("{path} is relative; set an absolute path to keep it")
+}
+
+/// Why a rebuild wrote nothing, as text for `target`. `original` is the user's bundle path, when
+/// the target has one.
+fn rebuild_refusal(target: Target, r: Refused, original: Option<&str>) -> String {
     let (what, foreign) = match target {
         Target::ClaudeCode => ("Claude Code", FOREIGN_BUNDLE),
         Target::Codex => ("Codex", super::codex::FOREIGN_BUNDLE),
@@ -215,6 +220,7 @@ fn rebuild_refusal(target: Target, r: Refused) -> String {
             format!("The files the {what} bundle is made from can't be read; it was left as it is.")
         }
         Refused::Failed => format!("The {what} bundle could not be written."),
+        Refused::RelativeOriginal => relative_text(original.unwrap_or_default()),
     }
 }
 
@@ -226,8 +232,13 @@ pub(super) fn rebuild_modes(
     target: Target,
     new_modes: &[String],
 ) -> Result<(), Box<Line>> {
-    rebuild(env, ca, state, target, new_modes)
-        .map_err(|r| Box::new(Line::refused(target, rebuild_refusal(target, r))))?;
+    rebuild(env, ca, state, target, new_modes).map_err(|r| {
+        let original = state.claude.as_ref().and_then(|c| c.original.clone());
+        Box::new(Line::refused(
+            target,
+            rebuild_refusal(target, r, original.as_deref()),
+        ))
+    })?;
     save_state(ca, state).map_err(|_| {
         Box::new(Line::refused(
             target,
@@ -378,14 +389,15 @@ fn claude_migrate(
     }
     let originals = match old.original.as_deref() {
         None => Vec::new(),
+        Some(p) if !Path::new(p).is_absolute() => return fail(&relative_text(p)),
         Some(p) => match read_original(ca, Path::new(p)) {
             Some(c) => c,
-            None => return fail(rebuild_refusal(t, Refused::NoSource).as_str()),
+            None => return fail(&rebuild_refusal(t, Refused::NoSource, None)),
         },
     };
     let cas = match mode_cas(ca, new_modes) {
         Ok(c) => c,
-        Err(m) => return fail(rebuild_refusal(t, Refused::MissingCa(m.0)).as_str()),
+        Err(m) => return fail(&rebuild_refusal(t, Refused::MissingCa(m.0), None)),
     };
     let bundle_path = ca.path().join(CLAUDE_BUNDLE).display().to_string();
     let bundle_text = bundle(&originals, &cas);
@@ -422,20 +434,21 @@ fn claude_migrate(
         return fail("The state file could not be written; nothing was changed.");
     }
     // The bundle first (journaled in the pending state): until the key is set nothing refers to it.
-    match publish_bundle(
+    match publish_bundle_modes(
         ca,
         &mut pending_state,
         t,
         CLAUDE_BUNDLE,
         &rec,
         bundle_text.as_bytes(),
+        new_modes,
     ) {
         Ok(_) => {}
         Err(Refused::Uncertain) => return fail(UNCERTAIN),
         Err(Refused::Crashed) => return fail("(simulated crash)"),
         Err(r) => {
             let _ = save_state(ca, state);
-            return fail(&rebuild_refusal(t, r));
+            return fail(&rebuild_refusal(t, r, None));
         }
     }
     let after_bundle = || {
@@ -614,6 +627,12 @@ fn claude_apply(
                     return l;
                 }
             };
+            if !Path::new(p).is_absolute() {
+                let mut l = Line::refused(t, relative_text(p));
+                fill_paths(&mut l, &settings);
+                l.from = Some(p.clone());
+                return l;
+            }
             let Some(certs) = ca.and_then(|d| read_original(d, Path::new(p))) else {
                 let mut l = Line::refused(
                     t,
@@ -763,13 +782,14 @@ fn claude_apply(
     // stays until the apply is committed, so a failure from here on still settles from the hash.
     if let Some(text) = &bundle_text {
         let rec = bundle_rec(&state, &bundle_path);
-        let refused = match publish_bundle(
+        let refused = match publish_bundle_modes(
             ca_dir,
             &mut pending_state,
             t,
             CLAUDE_BUNDLE,
             &rec,
             text.as_bytes(),
+            &cs.modes,
         ) {
             Ok(_) => None,
             Err(Refused::Foreign) => Some(if rec == Rec::None {
@@ -777,9 +797,12 @@ fn claude_apply(
             } else {
                 FOREIGN_BUNDLE
             }),
-            Err(Refused::Failed | Refused::MissingCa(_) | Refused::NoSource) => {
-                Some("The combined bundle could not be written; nothing was changed.")
-            }
+            Err(
+                Refused::Failed
+                | Refused::MissingCa(_)
+                | Refused::NoSource
+                | Refused::RelativeOriginal,
+            ) => Some("The combined bundle could not be written; nothing was changed."),
             Err(Refused::Uncertain) => return fail(UNCERTAIN),
             Err(Refused::Crashed) => return fail("(simulated crash)"),
         };
@@ -2681,6 +2704,63 @@ mod tests {
             read_state(&CaDir::open_existing(&fx.ca_dir).unwrap().unwrap())
                 .claude
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn claude_first_apply_crash_journals_modes() {
+        let fx = Fx::new("first-journal", "");
+        fx.write_settings(OPUS);
+        stop_at("after-bundle-publish");
+        let a = apply(&fx);
+        clear_hooks();
+        assert_eq!(a.action, Action::Refused, "{a:?}");
+        let st = read_state(&CaDir::open_existing(&fx.ca_dir).unwrap().unwrap());
+        assert_eq!(st.journal.len(), 1);
+        assert_eq!(st.journal[0].modes, Some(vec![TAKEOVER.to_string()]));
+        // The settings were never touched: recovery drops the orphan bundle.
+        assert_eq!(fx.read_settings(), OPUS);
+        status(&fx);
+        assert!(!fx.ca_dir.join(CLAUDE_BUNDLE).exists());
+        // A crash after the settings rename is finished with the record's modes.
+        stop_at("after-rename");
+        let a = apply(&fx);
+        clear_hooks();
+        assert_eq!(a.action, Action::Refused, "{a:?}");
+        status(&fx);
+        let c = claude_rec(&fx);
+        assert_eq!(
+            (c.written, c.modes),
+            (bundle_of(&fx), vec![TAKEOVER.to_string()])
+        );
+        assert_eq!(certs_of(&fx, CLAUDE_BUNDLE), [CA1]);
+    }
+
+    #[test]
+    fn relative_original_message() {
+        let fx = Fx::new("relative", "");
+        fx.write_settings(&format!("{{\"env\":{{\"{KEY}\":\"rel/mine.pem\"}}}}\n"));
+        let a = apply(&fx);
+        assert_eq!(a.action, Action::Refused, "{a:?}");
+        assert!(
+            a.message
+                .contains("rel/mine.pem is relative; set an absolute path to keep it"),
+            "{a:?}"
+        );
+        // A stored relative original is met by a rebuild.
+        let fx = Fx::new("relative-rebuild", "");
+        user_bundle(&fx);
+        assert_eq!(apply(&fx).action, Action::Applied);
+        let ca = CaDir::open_existing(&fx.ca_dir).unwrap().unwrap();
+        let mut st = read_state(&ca);
+        st.claude.as_mut().unwrap().original = Some("rel/mine.pem".into());
+        save_state(&ca, &st).unwrap();
+        fs::write(fx.ca_dir.join(PROXY_CA_FILE), PROXY_CA).unwrap();
+        let a = apply_mode(&fx.env(), Target::ClaudeCode, PROXY);
+        assert_eq!(a.action, Action::Refused, "{a:?}");
+        assert!(
+            a.message
+                .contains("rel/mine.pem is relative; set an absolute path to keep it")
         );
     }
 }

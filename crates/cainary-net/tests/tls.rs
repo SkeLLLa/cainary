@@ -1152,6 +1152,12 @@ fn trust_through_the_binary_applies_reports_and_undoes() {
     assert_eq!(v["to"], bundle.display().to_string());
     assert!(!settings.exists());
 
+    // The bundle needs the collector certificate, as a run of the collector leaves it.
+    let ca_dir = ca.parent().unwrap();
+    std::fs::create_dir_all(ca_dir).unwrap();
+    std::fs::set_permissions(ca_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::write(&ca, rcgen_cert("collector")).unwrap();
+    std::fs::set_permissions(&ca, std::fs::Permissions::from_mode(0o644)).unwrap();
     // Apply, then again (already), then the status, then undo.
     let out = trust_bin(&home)
         .args(["--trust", "claude-code", "--json"])

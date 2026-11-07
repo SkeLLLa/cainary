@@ -184,7 +184,9 @@ pub(super) fn codex_mode(env: &Env<'_>, mode: &str, undo: bool) -> Line {
                 "The Codex bundle may have been replaced, but that could not be confirmed on disk. Run cainary-otel-debug --trust-status to check and finish.",
             );
         }
-        Err(Refused::Failed | Refused::MissingCa(_) | Refused::NoSource) => {
+        Err(
+            Refused::Failed | Refused::MissingCa(_) | Refused::NoSource | Refused::RelativeOriginal,
+        ) => {
             return Line::refused(t, "The Codex bundle could not be written.");
         }
     };
