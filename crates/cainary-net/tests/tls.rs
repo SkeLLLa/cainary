@@ -1316,14 +1316,16 @@ fn each_tls_start_regenerates_the_combined_bundle_at_the_same_path() {
 
 /// A throwaway certificate in PEM, for a user's pre-existing bundle.
 fn rcgen_cert(name: &str) -> String {
-    let t = Tls::start(
-        &[format!("{}.example.test", name.replace(' ', "-"))],
-        &tmp("rcgen-cert"),
-    )
-    .unwrap();
+    // A directory per call: tests run in parallel and each removes its own.
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let dir = tmp(&format!(
+        "rcgen-cert-{}",
+        N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let t = Tls::start(&[format!("{}.example.test", name.replace(' ', "-"))], &dir).unwrap();
     let pem = std::fs::read_to_string(&t.ca_path).unwrap();
     drop(t);
-    let _ = std::fs::remove_dir_all(tmp("rcgen-cert"));
+    let _ = std::fs::remove_dir_all(&dir);
     pem
 }
 

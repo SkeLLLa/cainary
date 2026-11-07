@@ -1581,13 +1581,12 @@ bundles), `claude.rs` and `codex.rs` (the two targets).
   certificate of each enabled mode. If one is missing (or isn't exactly one certificate), the
   rebuild is skipped with a warning and the bundle is left as it is: a CA is never silently
   dropped.
-- **Claude Code and the bundle.** A new Claude Code apply points `NODE_EXTRA_CA_CERTS` at
-  `otel-debug-claude-bundle.pem` (the user's original certificates, when the key held one, plus
+- **Claude Code and the bundle.** When the key already holds another path, the apply points
+  `NODE_EXTRA_CA_CERTS` at `otel-debug-claude-bundle.pem` (the user's original certificates plus
   one certificate per enabled mode), so adding or removing a mode is a bundle rebuild and the
-  settings value never changes again. A record from before T3 that points straight at the
-  collector CA migrates to the bundle only when a second mode is added; with `takeover` alone it
-  is left as it is. Removing the last mode undoes the target completely (settings restored, bundle
-  deleted).
+  settings value doesn't change. When the key is unset, a `takeover`-only apply points straight at
+  the collector CA; that direct record migrates to the bundle only when a second mode is added.
+  Removing the last mode undoes the target completely (settings restored, bundle deleted).
 - **`--delete-ca` undoes trust first.** `--delete-ca` takes the run lock, then (still holding it)
   undoes the `takeover` mode for every target that has it (`undo_mode_everywhere`, which takes the
   trust lock itself), and unlinks the certificate only if every undo went through. If any is
