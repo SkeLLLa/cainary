@@ -1198,11 +1198,13 @@ not supported. A protobuf request gets protobuf answers: an empty `200`, and `go
 error bodies. Limits and details: otel-payload-preview.md §18.
 
 **Own-user check (Linux).** Before TLS and before a byte is read, the client's socket is looked
-up in `/proc/net/tcp` and `/proc/net/tcp6` (`peer.rs`): local address = the peer address, remote
-address = loopback on the listen or public port, state ESTABLISHED or FIN_WAIT1/2. Exactly one
-match owned by the collector's effective uid passes. Anything else is refused: plain mode `403`
-`connection from another local user refused`; TLS and takeover close without a reply. There is
-no check on macOS (no `/proc`; see macos.md). Details: otel-payload-preview.md §14.4.
+up in `/proc/net/tcp` and `/proc/net/tcp6` (`peer.rs` parses, `peer_proc.rs` reads): local
+address = the peer address, remote address = loopback on the listen or public port, state
+ESTABLISHED or FIN_WAIT1/2. Exactly one match owned by the collector's effective uid passes.
+Another uid is refused with `connection from another local user refused`; no match, several
+matches or unreadable tables with `connection refused: couldn't confirm it comes from this user`.
+Plain mode answers `403`; TLS and takeover close without a reply. There is no check on macOS (no
+`/proc`; see macos.md). Details: otel-payload-preview.md §14.4.
 
 ### 12.3 What is printed (one policy for every payload-derived string)
 
