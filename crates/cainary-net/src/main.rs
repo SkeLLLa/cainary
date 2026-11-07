@@ -37,7 +37,7 @@ and this serves it with a certificate from a throwaway CA limited to the names y
 FORWARDS NOTHING: while it runs, your organization's collector receives nothing from this
 machine, and every other request to those names fails. It listens on 8443 by default and prints
 the 443 redirect, the /etc/hosts lines and how to trust the certificate; it never runs sudo,
-setcap or nft, and it needs a build with the `tls` cargo feature. `--delete-ca` removes the
+or nft, and it needs a build with the `tls` cargo feature. `--delete-ca` removes the
 certificate file it writes.
 
 --trust claude-code sets one key, env.NODE_EXTRA_CA_CERTS, in ~/.claude/settings.json (after a
@@ -197,7 +197,6 @@ fn stdin_thread(
 /// on stderr otherwise), then the note on stderr with the ways to get the port (design: the
 /// program prints these commands and never runs them).
 fn refused_port(message: &str, port: u16, json: bool, args: &[String]) -> u8 {
-    use std::os::unix::fs::MetadataExt;
     if json {
         print!(
             "{}",
@@ -207,20 +206,10 @@ fn refused_port(message: &str, port: u16, json: bool, args: &[String]) -> u8 {
         eprintln!("cainary-otel-debug: {message}");
     }
     let exe = std::env::current_exe().ok();
-    // Root-owned file in a root-owned directory, writable by nobody else: a capability on it
-    // can't be exploited by swapping the file or the directory entry.
-    let safe = |p: &std::path::Path| {
-        p.metadata()
-            .is_ok_and(|m| m.uid() == 0 && m.mode() & 0o022 == 0)
-    };
-    let root_owned = exe
-        .as_deref()
-        .is_some_and(|e| safe(e) && e.parent().is_some_and(safe));
     let shown = exe.as_ref().map(|e| e.display().to_string());
     let note = setup::privileged_port_note(&setup::PortNote {
         port,
         exe: shown.as_deref(),
-        exe_root_owned: root_owned,
         args,
         linux: cfg!(target_os = "linux"),
     });

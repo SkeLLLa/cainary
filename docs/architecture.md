@@ -1123,7 +1123,7 @@ pipe); `1` setup (port in use, log file or red-flags file unusable, a failed bin
 (including an invalid or oversized pattern, a non-loopback `--listen`, a bad `--tls-host` and `--tls` in a build without the feature); `3` a panic. A second `--tls` run for the same certificate directory, and `--delete-ca` while one runs, exit `1`.
 
 **A refused privileged port.** `--port <n>` chooses the port in every mode. When `bind` fails with
-`EACCES` the program exits `1` with a short fixed error (`{"v":1,"type":"error","source":"listen","code":"port-privileged","message":"can't listen on <addr>: permission denied","port":<n>}` on stdout under `--json`, text on stderr otherwise) and a note on stderr (`setup::privileged_port_note`; one plain line on other systems than Linux). The note gives three options, concrete for the run and printed, never run: a `cap_net_bind_service` capability on a root-owned copy (the running executable, read in `main.rs` only, counts as that when it and its directory are root-owned and writable by nobody else; otherwise `sudo install -D -m 755 -o root -g root <exe> /usr/local/libexec/cainary/cainary-otel-debug` comes first); an unprivileged port (`n + 8000`, or 8443) with a loopback-only, both-families `nft` redirect and its removal; and the `net.ipv4.ip_unprivileged_port_start` sysctl with its revert. Commands are written for both fish and bash.
+`EACCES` the program exits `1` with a short fixed error (`{"v":1,"type":"error","source":"listen","code":"port-privileged","message":"can't listen on <addr>: permission denied","port":<n>}` on stdout under `--json`, text on stderr otherwise) and a note on stderr (`setup::privileged_port_note`; one plain line on other systems than Linux). The note gives the ways to listen, concrete for the run and printed, never run: an unprivileged port (`n + 8000`, or 8443) to point the client at; the tray's "Open port N", which has the root helper `cainary-bind-helper` (packages: `/usr/libexec/cainary/`; development: `mise run linux:helper`) bind the loopback sockets and hand them over (`--listen-fd`); and, worded as administrator-only, a loopback-only both-families `nft` redirect with its removal and the `net.ipv4.ip_unprivileged_port_start` sysctl with its revert. No option installs a capability on a file (the earlier `setcap` copy recipe is gone). Commands are written for both fish and bash.
 
 ### 12.2 Server
 
@@ -1387,8 +1387,7 @@ users who can't change how the agent is launched. It is built only with the `tls
   `takeover` trust that points at it (§12.11), and refuses while a run holds the lock.
 - **Privilege.** The program prints, and never runs, a loopback-only `nft` redirect of 443 to 8443
   for locally generated traffic (both address families, exact destinations) with its removal. As
-  an alternative it documents `setcap cap_net_bind_service=+ep` only for an installed binary in a
-  root-owned directory (`/usr/bin/cainary-otel-debug`), never a development path. If the process
+  alternative the tray's helper hands it the sockets (§12.1 `--listen-fd`); it documents no `setcap`. If the process
   holds `CAP_NET_BIND_SERVICE` it clears its effective, permitted and inheritable sets and sets
   `no_new_privs` right after binding (`privdrop.rs`; the bounding set is not cleared), in every
   build and mode, plain receiver included, since a file capability applies to the executable
@@ -1399,7 +1398,7 @@ users who can't change how the agent is launched. It is built only with the `tls
   (`--help`, `--trust*`, `--list-presets`, usage errors) drop at startup. A failed drop is fatal
   (`privilege-drop`). A receiver run refuses to start as UID 0, which clearing capabilities does
   not limit, unless `--allow-root` is given (`privilege-drop`). It never
-  calls `sudo`, `setcap`, `nft` or edits `/etc/hosts`.
+  calls `sudo`, `nft` or edits `/etc/hosts`.
 - **CA.** A new CA per start: ECDSA P-256, valid from an hour ago for 30 days, name-constrained
   (critical) to exactly the `--tls-host` names, `CA:true` with path length 0, `keyCertSign`. The
   constraints are defence in depth: DNS constraints cover subdomains and enforcement on a directly

@@ -77,7 +77,7 @@ pub struct Takeover<'a> {
 }
 
 /// The takeover instructions (design §16.4, §16.7.5, §16.7.7), as lines. Printed, never run:
-/// the program calls neither sudo, setcap, nft nor anything that edits `/etc/hosts`. Commands
+/// the program calls neither sudo, nft nor anything that edits `/etc/hosts`. Commands
 /// are valid in fish and in sh.
 pub fn takeover(t: &Takeover<'_>) -> Vec<String> {
     let mut l: Vec<String> = Vec::new();
@@ -122,7 +122,6 @@ pub fn takeover(t: &Takeover<'_>) -> Vec<String> {
         if t.v6 {
             l.push(format!("  sudo nft add rule inet cainary_otel_debug out oifname lo ip6 daddr ::1 tcp dport {} redirect to :{p}", t.public_port));
         }
-        l.push(format!("   Or listen on {} directly: install this binary in a root-owned directory such as /usr/bin and run `sudo setcap cap_net_bind_service=+ep /usr/bin/cainary-otel-debug`. A rebuilt or copied file loses the capability, and the program drops it right after binding. Never run it as root.", t.public_port));
     }
     l.push(format!("{}. Trust the certificate, for the exporting process only (never disable certificate verification):", next()));
     l.push(format!(
@@ -149,16 +148,10 @@ pub struct PortNote<'a> {
     pub port: u16,
     /// The running executable, when it could be found.
     pub exe: Option<&'a str>,
-    /// Whether that file and its directory are root-owned and not writable by anyone else, so a
-    /// capability on it can't be exploited by swapping the file.
-    pub exe_root_owned: bool,
     /// The command-line arguments of this run, to show the run command with the same flags.
     pub args: &'a [String],
     pub linux: bool,
 }
-
-/// Where option 1 puts a root-owned copy.
-pub const COPY_PATH: &str = "/usr/local/libexec/cainary/cainary-otel-debug";
 
 /// A word as both fish and bash read it: bare when plain, else in single quotes with each
 /// single quote written `'\''` (close, an escaped quote, reopen), which both shells accept. A
@@ -279,12 +272,14 @@ pub fn alternative_port(n: u16) -> u16 {
     n.checked_add(8000).filter(|p| *p >= 1024).unwrap_or(8443)
 }
 
-/// The note printed (on stderr) after a refused bind to a privileged port: three ways to listen
+/// The note printed (on stderr) after a refused bind to a privileged port: the ways to listen
 /// on it, concrete for this run, in commands that work in fish and in bash. Printed, never run.
+/// No option puts a capability on a file: the program never runs as root and is never given
+/// `CAP_NET_BIND_SERVICE` by file.
 pub fn privileged_port_note(n: &PortNote<'_>) -> Vec<String> {
     let port = n.port;
     let mut l = vec![format!(
-        "Port {port} is privileged{}. Three ways to listen on it, most to least recommended:",
+        "Port {port} is privileged{}. Ways to listen on it, most to least recommended:",
         if n.linux { " on Linux" } else { "" }
     )];
     if !n.linux {
@@ -297,35 +292,21 @@ pub fn privileged_port_note(n: &PortNote<'_>) -> Vec<String> {
     }
     let exe = n.exe.unwrap_or("cainary-otel-debug");
     let args = safe_args(n.args);
-    let q_exe = quote(exe);
-    l.push("1. A capability on a root-owned copy (the quick way to try it). Only CAP_NET_BIND_SERVICE is granted, and this program drops it right after binding. A rebuild or a copy of the file loses it. Never run this as root.".into());
-    if n.exe_root_owned && n.exe.is_some() {
-        l.push(format!("   sudo setcap cap_net_bind_service=+ep {q_exe}"));
-        l.push(format!("   {}", command(exe, &args)));
-        l.push(format!("   To undo: sudo setcap -r {q_exe}"));
-    } else {
-        l.push(format!(
-            "   sudo install -D -m 755 -o root -g root {q_exe} {}",
-            quote(COPY_PATH)
-        ));
-        l.push(format!(
-            "   sudo setcap cap_net_bind_service=+ep {}",
-            quote(COPY_PATH)
-        ));
-        l.push(format!("   {}", command(COPY_PATH, &args)));
-        l.push(format!("   To undo: sudo rm {}", quote(COPY_PATH)));
-    }
     let alt = alternative_port(port);
-    l.push(format!(
-        "2. Listen on an unprivileged port and redirect {port} to it, for connections this machine makes to loopback, both address families (run these yourself; they are not run for you):"
-    ));
+    l.push("1. Listen on an unprivileged port (1024 and up) and point the client there:".into());
     l.push(format!("   {}", command(exe, &with_port(&args, alt))));
+    l.push(format!(
+        "2. In the cAInary tray, use \"Open port {port}\": an administrator approves once and the root helper cainary-bind-helper (from your distribution's package, or \"mise run linux:helper\" for a development build) hands this program the loopback sockets. Nothing is installed on this program, and it never runs as root."
+    ));
+    l.push(format!(
+        "3. Administrators only: redirect {port} to that port, for connections this machine makes to loopback, both address families (run these yourself; they are not run for you):"
+    ));
     l.push("   sudo nft add table inet cainary_port_redirect".into());
     l.push("   sudo nft 'add chain inet cainary_port_redirect out { type nat hook output priority -100 ; }'".into());
     l.push(format!("   sudo nft add rule inet cainary_port_redirect out oifname lo ip daddr 127.0.0.1 tcp dport {port} redirect to :{alt}"));
     l.push(format!("   sudo nft add rule inet cainary_port_redirect out oifname lo ip6 daddr ::1 tcp dport {port} redirect to :{alt}"));
     l.push("   To undo: sudo nft delete table inet cainary_port_redirect".into());
-    l.push(format!("3. System-wide, the least recommended: every program on this machine can then listen on ports {port} and up."));
+    l.push(format!("4. Administrators only, system-wide, the least recommended: every program on this machine can then listen on ports {port} and up."));
     l.push(format!(
         "   sudo sysctl net.ipv4.ip_unprivileged_port_start={port}"
     ));
@@ -405,7 +386,7 @@ mod takeover_tests {
         let r = takeover(&t(&hosts, 8443, true)).join("\n");
         assert!(r.contains("tcp dport 443 redirect to :8443"));
         assert!(r.contains("sudo nft delete table inet cainary_otel_debug"));
-        assert!(r.contains("/usr/bin/cainary-otel-debug") && !r.contains("command -v"));
+        assert!(!r.contains("setcap") && !r.contains("cap_net_bind_service"));
         let direct = takeover(&t(&hosts, 443, true)).join("\n");
         assert!(!direct.contains("nft"));
     }
@@ -458,7 +439,6 @@ mod takeover_tests {
             "does not revoke",
             "--delete-ca",
             "never disable certificate verification",
-            "Never run it as root",
         ] {
             assert!(s.contains(needle), "{needle}");
         }
@@ -478,11 +458,10 @@ mod port_note_tests {
         a.iter().map(|s| s.to_string()).collect()
     }
 
-    fn note(port: u16, exe: Option<&str>, root: bool, a: &[&str]) -> String {
+    fn note(port: u16, exe: Option<&str>, a: &[&str]) -> String {
         privileged_port_note(&PortNote {
             port,
             exe,
-            exe_root_owned: root,
             args: &args(a),
             linux: true,
         })
@@ -490,62 +469,35 @@ mod port_note_tests {
     }
 
     #[test]
-    fn a_root_owned_exe_gets_setcap_on_that_path() {
-        let n = note(
-            443,
-            Some("/usr/bin/cainary-otel-debug"),
-            true,
-            &["--tls", "--tls-host", "a.example.test", "--port", "443"],
-        );
-        assert!(n.contains("sudo setcap cap_net_bind_service=+ep /usr/bin/cainary-otel-debug"));
-        assert!(
-            n.contains("/usr/bin/cainary-otel-debug --tls --tls-host a.example.test --port 443")
-        );
-        assert!(!n.contains("sudo install"), "{n}");
-        assert!(n.contains("sudo setcap -r /usr/bin/cainary-otel-debug"));
-    }
-
-    #[test]
-    fn a_user_owned_exe_is_installed_into_a_root_owned_place_first() {
-        let n = note(
-            443,
-            Some("/home/u/src/target/release/cainary-otel-debug"),
-            false,
-            &["--port", "443", "--json"],
-        );
-        let install = n.find("sudo install -D -m 755 -o root -g root /home/u/src/target/release/cainary-otel-debug /usr/local/libexec/cainary/cainary-otel-debug").expect("install line");
-        let setcap = n.find("sudo setcap cap_net_bind_service=+ep /usr/local/libexec/cainary/cainary-otel-debug").expect("setcap line");
-        assert!(install < setcap, "install comes first");
-        assert!(!n.contains("setcap cap_net_bind_service=+ep /home/"));
-        assert!(n.contains("/usr/local/libexec/cainary/cainary-otel-debug --port 443 --json"));
-        assert!(n.contains("To undo: sudo rm /usr/local/libexec/cainary/cainary-otel-debug"));
-        // An unknown exe path is never trusted either.
-        let unknown = note(443, None, true, &[]);
-        assert!(unknown.contains("sudo install -D"));
-    }
-
-    #[test]
-    fn explains_the_capability() {
-        let n = note(80, Some("/usr/bin/x"), true, &[]);
-        for needle in [
-            "Only CAP_NET_BIND_SERVICE",
-            "drops it right after binding",
-            "loses it",
-            "Never run this as root",
-        ] {
-            assert!(n.contains(needle), "{needle}");
+    fn no_option_puts_a_capability_on_a_file() {
+        for exe in [Some("/usr/bin/x"), Some("/home/u/x"), None] {
+            let n = note(443, exe, &["--port", "443"]);
+            for bad in ["setcap", "cap_net_bind_service", "sudo install", "COPY"] {
+                assert!(!n.contains(bad), "{bad}\n{n}");
+            }
         }
     }
 
     #[test]
+    fn the_helper_option_names_the_tray_and_the_helper() {
+        let n = note(443, Some("/usr/bin/x"), &["--port", "443"]);
+        assert!(n.contains("1. Listen on an unprivileged port"), "{n}");
+        assert!(n.contains("/usr/bin/x --port 8443"), "{n}");
+        assert!(n.contains("\"Open port 443\""), "{n}");
+        assert!(n.contains("cainary-bind-helper") && n.contains("mise run linux:helper"));
+        assert!(n.contains("3. Administrators only"));
+        assert!(n.contains("4. Administrators only, system-wide"));
+    }
+
+    #[test]
     fn the_redirect_option_uses_the_alternative_port_and_both_families() {
-        let n = note(443, Some("/usr/bin/x"), true, &["--port", "443", "--json"]);
+        let n = note(443, Some("/usr/bin/x"), &["--port", "443", "--json"]);
         assert!(n.contains("/usr/bin/x --json --port 8443"), "{n}");
         assert!(n.contains("ip daddr 127.0.0.1 tcp dport 443 redirect to :8443"));
         assert!(n.contains("ip6 daddr ::1 tcp dport 443 redirect to :8443"));
         assert!(n.contains("oifname lo"));
         assert!(n.contains("sudo nft delete table inet cainary_port_redirect"));
-        let n = note(80, Some("/usr/bin/x"), true, &["--port=80"]);
+        let n = note(80, Some("/usr/bin/x"), &["--port=80"]);
         assert!(n.contains("/usr/bin/x --port 8080"), "{n}");
         assert!(n.contains("tcp dport 80 redirect to :8080"));
         assert_eq!(alternative_port(443), 8443);
@@ -557,7 +509,7 @@ mod port_note_tests {
 
     #[test]
     fn the_sysctl_option_names_the_risk_and_the_revert() {
-        let n = note(443, Some("/usr/bin/x"), true, &[]);
+        let n = note(443, Some("/usr/bin/x"), &[]);
         assert!(n.contains("sudo sysctl net.ipv4.ip_unprivileged_port_start=443"));
         assert!(n.contains("every program on this machine"));
         assert!(n.contains("sudo sysctl net.ipv4.ip_unprivileged_port_start=1024"));
@@ -568,7 +520,6 @@ mod port_note_tests {
         let n = note(
             443,
             Some("/usr/bin/x"),
-            true,
             &["--red-flag", "customer=acme corp", "--listen", "127.0.0.1"],
         );
         for bad in ["$(", "export ", "`", "<(", "[[", "; then", "&&"] {
@@ -580,7 +531,7 @@ mod port_note_tests {
             "{n}"
         );
         // The path is escaped like any printed path.
-        let e = note(443, Some("/tmp/evil\u{1b}]52;c;AAAA\u{7}/x"), true, &[]);
+        let e = note(443, Some("/tmp/evil\u{1b}]52;c;AAAA\u{7}/x"), &[]);
         assert!(!e.contains('\u{1b}') && !e.contains('\u{7}'));
     }
 
@@ -610,21 +561,7 @@ mod port_note_tests {
             "/tmp/$(id)/x",
         ] {
             let q = quote(exe);
-            // A user-owned file: install, setcap on the copy, run, and undo.
-            let n = note(443, Some(exe), false, &["--json"]);
-            assert!(n.contains(&format!("sudo install -D -m 755 -o root -g root {q} /usr/local/libexec/cainary/cainary-otel-debug")), "{exe}\n{n}");
-            assert!(
-                !n.contains(&format!("install -D -m 755 -o root -g root {exe} ")) || q == exe,
-                "{exe}"
-            );
-            // A root-owned one: setcap, run, undo, and the redirect's run command.
-            let n = note(443, Some(exe), true, &["--json"]);
-            assert!(
-                n.contains(&format!("sudo setcap cap_net_bind_service=+ep {q}\n")),
-                "{exe}\n{n}"
-            );
-            assert!(n.contains(&format!("sudo setcap -r {q}\n")), "{exe}\n{n}");
-            assert!(n.contains(&format!("   {q} --json\n")), "{exe}\n{n}");
+            let n = note(443, Some(exe), &["--json"]);
             assert!(
                 n.contains(&format!("   {q} --json --port 8443\n")),
                 "{exe}\n{n}"
@@ -658,12 +595,7 @@ mod port_note_tests {
             "stray-SECRET-positional",
             "--unknown=SECRET-UNKNOWN",
         ];
-        // Both branches replay the arguments: the root-owned file, and the install-a-copy one.
-        let n = format!(
-            "{}{}",
-            note(443, Some("/usr/bin/x"), true, &a),
-            note(443, Some("/home/u/x"), false, &a)
-        );
+        let n = note(443, Some("/usr/bin/x"), &a);
         assert!(!n.contains("SECRET"), "{n}");
         // The safe flags are kept verbatim; the secret-bearing ones are placeholders.
         assert!(
@@ -689,7 +621,6 @@ mod port_note_tests {
         let n = privileged_port_note(&PortNote {
             port: 443,
             exe: None,
-            exe_root_owned: false,
             args: &[],
             linux: false,
         });

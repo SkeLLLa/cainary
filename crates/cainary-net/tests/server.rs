@@ -1135,22 +1135,22 @@ fn a_refused_privileged_port_is_a_short_error_and_a_note_on_stderr() {
         (json!("port-privileged"), json!(1))
     );
     assert_eq!(line.lines().count(), 1);
-    // The note is on stderr and offers the three ways, concrete for this run.
+    // The note is on stderr and offers the ways, concrete for this run.
     let err = String::from_utf8_lossy(&out.stderr);
     for needle in [
         "Port 1 is privileged on Linux",
-        "1. A capability on a root-owned copy",
-        "sudo install -D -m 755 -o root -g root",
-        "sudo setcap cap_net_bind_service=+ep /usr/local/libexec/cainary/cainary-otel-debug",
-        "2. Listen on an unprivileged port and redirect 1",
-        "sudo nft delete table inet cainary_port_redirect",
+        "1. Listen on an unprivileged port",
         "--port 8001",
-        "3. System-wide",
+        "2. In the cAInary tray, use \"Open port 1\"",
+        "cainary-bind-helper",
+        "3. Administrators only: redirect 1",
+        "sudo nft delete table inet cainary_port_redirect",
+        "4. Administrators only, system-wide",
         "sudo sysctl net.ipv4.ip_unprivileged_port_start=1024",
     ] {
         assert!(err.contains(needle), "{needle}\n{err}");
     }
-    assert!(!err.contains("$("));
+    assert!(!err.contains("$(") && !err.contains("setcap"));
     // Without --json the error is text on stderr and nothing is on stdout.
     let out = bin()
         .args(["--port", "1", "--listen", "127.0.0.1"])
