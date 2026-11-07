@@ -2,12 +2,16 @@
 //! behind, the Codex bundle path, and a transaction that may not have finished.
 
 use super::bundle::{cert_fingerprint, collector_ca, sha_of};
-use super::files::{read_in, unlink_in, write_atomic};
-use super::{NEWER, STATE_FILE, TAKEOVER, hook};
+use super::files::{
+    Replace, Snapshot, read_in, read_snapshot, replace_checked, unlink_in, unlink_unchanged,
+    write_atomic,
+};
+use super::{NEWER, STATE_FILE, TAKEOVER, Target, hook};
 use crate::tls::ca_file::{CA_FILE, CaDir};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::io;
+use std::path::Path;
 
 /// The state file's schema version. A file without `v` is version 1 (the first shape).
 pub(super) const VERSION: u64 = 2;
@@ -73,6 +77,22 @@ pub(super) struct Pending {
     pub(super) after: Option<String>,
 }
 
+/// A bundle replacement that was started and maybe not finished: written durably before the
+/// file is replaced, cleared once its hash is recorded. The file's hash says how far it got.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Journal {
+    pub(super) target: Target,
+    pub(super) path: String,
+    pub(super) old_sha: Option<String>,
+    pub(super) new_sha: String,
+}
+
+impl Journal {
+    fn name(&self) -> Option<&str> {
+        Path::new(&self.path).file_name()?.to_str()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(super) struct State {
     pub(super) claude: Option<ClaudeState>,
@@ -80,6 +100,8 @@ pub(super) struct State {
     /// Keyed by mode name, so a later `proxy` fits without a schema change.
     pub(super) modes: BTreeMap<String, ModeCa>,
     pub(super) pending: Option<Pending>,
+    /// Bundle replacements in flight (`pendingBundles`).
+    pub(super) journal: Vec<Journal>,
     /// The file was written by a cAInary that knows a newer schema: readable for display, never
     /// written.
     pub(super) newer: bool,
@@ -170,6 +192,26 @@ impl State {
                     .collect()
             })
             .unwrap_or_default();
+        let journal = m
+            .get("pendingBundles")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|j| {
+                        Some(Journal {
+                            target: match j.get("target")?.as_str()? {
+                                "claude-code" => Target::ClaudeCode,
+                                "codex" => Target::Codex,
+                                _ => return None,
+                            },
+                            path: j.get("path")?.as_str()?.to_string(),
+                            old_sha: j.get("oldSha").and_then(Value::as_str).map(str::to_string),
+                            new_sha: j.get("newSha")?.as_str()?.to_string(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         // No `v` is the first shape; anything above ours (or not a number) is a newer file.
         let newer = m
             .get("v")
@@ -192,6 +234,7 @@ impl State {
             codex,
             modes,
             pending,
+            journal,
             newer,
         }
     }
@@ -219,6 +262,14 @@ impl State {
                 json!({"bundlePath": c.bundle_path, "bundleSha": c.bundle_sha, "modes": c.modes}),
             );
         }
+        if !self.journal.is_empty() {
+            let j: Vec<Value> = self
+                .journal
+                .iter()
+                .map(|j| json!({"target": j.target.as_str(), "path": j.path, "oldSha": j.old_sha, "newSha": j.new_sha}))
+                .collect();
+            m.insert("pendingBundles".into(), Value::Array(j));
+        }
         if let Some(p) = &self.pending {
             m.insert(
                 "pending".into(),
@@ -234,7 +285,10 @@ impl State {
     }
 
     pub(super) fn is_empty(&self) -> bool {
-        self.claude.is_none() && self.codex.is_none() && self.pending.is_none()
+        self.claude.is_none()
+            && self.codex.is_none()
+            && self.pending.is_none()
+            && self.journal.is_empty()
     }
 }
 
@@ -280,6 +334,23 @@ pub(super) fn save_state(ca: &CaDir, st: &State) -> io::Result<()> {
     }
 }
 
+/// What the state file records about a file's bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Rec {
+    /// No record that cAInary ever wrote this file.
+    None,
+    /// A record from before v2, which has no hash: the file is adopted as it is.
+    Legacy,
+    Sha(String),
+}
+
+impl Rec {
+    /// For a record that exists: its hash, if it has one.
+    pub(super) fn of(written: Option<&str>) -> Rec {
+        written.map_or(Rec::Legacy, |w| Rec::Sha(w.to_string()))
+    }
+}
+
 /// Whether a file cAInary owns is still what cAInary wrote.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Owned {
@@ -288,38 +359,185 @@ pub(super) enum Owned {
     Ours,
     /// The bytes (or the file itself: a symlink, a directory, too big) are not what was written.
     Foreign,
-    /// No hash was recorded (a v1 record): the file is adopted as it is.
+    /// A record without a hash (v1): the file is adopted as it is.
     Unverified,
+    /// A file with no record at all: cAInary never wrote it, so it is never replaced or deleted.
+    Unrecorded,
 }
 
 impl Owned {
+    /// May an owned file be deleted?
     pub(super) fn may_replace(self) -> bool {
-        self != Owned::Foreign
+        !matches!(self, Owned::Foreign | Owned::Unrecorded)
     }
 }
 
-/// Compares the file in the collector directory with the hash cAInary recorded for it.
-pub(super) fn check_owned(ca: &CaDir, name: &str, written: Option<&str>) -> Owned {
-    match read_in(ca, name) {
-        Ok(None) => Owned::Missing,
-        Ok(Some(b)) => match written {
-            None => Owned::Unverified,
-            Some(w) if sha_of(&b) == w => Owned::Ours,
-            Some(_) => Owned::Foreign,
-        },
-        Err(_) => Owned::Foreign,
+/// The verdict on a file and the snapshot it was made from (for the re-check before the change).
+pub(super) struct Checked {
+    pub(super) owned: Owned,
+    pub(super) snap: Option<Snapshot>,
+}
+
+impl Checked {
+    /// May `new` be written over it? An unrecorded file only if it already holds exactly `new`
+    /// (then it is adopted).
+    pub(super) fn allows_write(&self, new: &[u8]) -> bool {
+        match self.owned {
+            Owned::Unrecorded => self.snap.as_ref().is_some_and(|s| s.bytes == new),
+            o => o.may_replace(),
+        }
     }
 }
 
-/// Deletes a file cAInary owns, unless it was changed since cAInary wrote it (then it stays).
-pub(super) fn drop_owned(ca: &CaDir, name: &str, written: Option<&str>) -> io::Result<()> {
-    if check_owned(ca, name, written).may_replace() {
-        unlink_in(ca, name)
-    } else {
-        Ok(())
+/// Compares the file in the collector directory with what the state file recorded for it.
+pub(super) fn check_owned(ca: &CaDir, name: &str, rec: &Rec) -> Checked {
+    let (owned, snap) = match read_snapshot(ca, name) {
+        Ok(None) => (Owned::Missing, None),
+        Ok(Some(s)) => (
+            match rec {
+                Rec::None => Owned::Unrecorded,
+                Rec::Legacy => Owned::Unverified,
+                Rec::Sha(w) if sha_of(&s.bytes) == *w => Owned::Ours,
+                Rec::Sha(_) => Owned::Foreign,
+            },
+            Some(s),
+        ),
+        Err(_) => (Owned::Foreign, None),
+    };
+    Checked { owned, snap }
+}
+
+/// Deletes a file cAInary owns, unless it is foreign, unrecorded, or changed between the check and
+/// the unlink (then it stays and this is still `Ok`: the caller's record is cleared regardless).
+pub(super) fn delete_owned(ca: &CaDir, name: &str, rec: &Rec) -> io::Result<()> {
+    let c = check_owned(ca, name, rec);
+    if !c.owned.may_replace() {
+        return Ok(());
+    }
+    match unlink_unchanged(ca, name, &c.snap) {
+        Ok(()) | Err(Replace::Changed) => Ok(()),
+        Err(_) => Err(io::Error::other("could not remove the file")),
     }
 }
 
+/// Why a bundle was not published.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Refused {
+    /// Foreign, unrecorded, or changed since the check: left untouched.
+    Foreign,
+    Failed,
+    /// Replaced, but durability is unknown; the journal stays.
+    Uncertain,
+    /// Test-only simulated crash after the replace.
+    Crashed,
+}
+
+/// Replaces a bundle the safe way: check ownership, journal `{path, old, new}` durably, stage the
+/// new bytes, re-check, rename. Returns the new hash with the journal entry still in `st` (and in
+/// the file): the caller records the hash and then clears it, so a crash in between is
+/// reconciled by `reconcile`. Identical bytes are not written (no journal).
+pub(super) fn publish_bundle(
+    ca: &CaDir,
+    st: &mut State,
+    target: Target,
+    name: &str,
+    rec: &Rec,
+    bytes: &[u8],
+) -> Result<String, Refused> {
+    let new_sha = sha_of(bytes);
+    let c = check_owned(ca, name, rec);
+    if !c.allows_write(bytes) {
+        return Err(Refused::Foreign);
+    }
+    if c.snap.as_ref().is_some_and(|s| s.bytes == bytes) {
+        return Ok(new_sha);
+    }
+    let entry = Journal {
+        target,
+        path: ca.path().join(name).display().to_string(),
+        old_sha: c.snap.as_ref().map(|s| sha_of(&s.bytes)),
+        new_sha: new_sha.clone(),
+    };
+    st.journal.push(entry);
+    if save_state(ca, st).is_err() {
+        st.journal.pop();
+        return Err(Refused::Failed);
+    }
+    let undo_journal = |st: &mut State| {
+        st.journal.pop();
+        let _ = save_state(ca, st);
+    };
+    match replace_checked(ca, name, bytes, 0o644, &c.snap) {
+        Ok(()) => {}
+        Err(Replace::Changed) => {
+            undo_journal(st);
+            return Err(Refused::Foreign);
+        }
+        Err(Replace::Failed) => {
+            undo_journal(st);
+            return Err(Refused::Failed);
+        }
+        Err(Replace::Uncertain) => return Err(Refused::Uncertain),
+    }
+    if hook::stop("after-bundle-publish") {
+        return Err(Refused::Crashed);
+    }
+    Ok(new_sha)
+}
+
+impl State {
+    /// Drops the journal entry for `name` (its hash is recorded now).
+    pub(super) fn clear_journal(&mut self, name: &str) {
+        self.journal.retain(|j| j.name() != Some(name));
+    }
+}
+
+/// Settles every journal entry from what the file holds now: the new hash means the replace
+/// happened (the hash is recorded, or an orphaned Claude Code bundle is removed); the old hash
+/// (or still absent) means it never did; anything else is foreign and left alone. Returns whether
+/// the state changed. Needs the trust lock.
+pub(super) fn reconcile(ca: &CaDir, st: &mut State) -> bool {
+    if st.journal.is_empty() {
+        return false;
+    }
+    for j in std::mem::take(&mut st.journal) {
+        let Some(name) = j.name().map(str::to_string) else {
+            continue;
+        };
+        let now = match read_snapshot(ca, &name) {
+            Ok(s) => s.map(|s| sha_of(&s.bytes)),
+            Err(_) => continue,
+        };
+        if now.as_deref() != Some(j.new_sha.as_str()) {
+            continue;
+        }
+        let recorded = match j.target {
+            Target::Codex => {
+                let c = st.codex.get_or_insert_with(|| CodexState {
+                    bundle_path: j.path.clone(),
+                    bundle_sha: None,
+                    modes: default_modes(),
+                });
+                c.bundle_sha = Some(j.new_sha.clone());
+                true
+            }
+            Target::ClaudeCode => match st.claude.as_mut() {
+                Some(c)
+                    if Path::new(&c.written).file_name().and_then(|n| n.to_str())
+                        == Some(&name) =>
+                {
+                    c.bundle_sha = Some(j.new_sha.clone());
+                    true
+                }
+                _ => false,
+            },
+        };
+        if !recorded {
+            let _ = delete_owned(ca, &name, &Rec::Sha(j.new_sha.clone()));
+        }
+    }
+    true
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -548,5 +766,155 @@ mod tests {
         fs::remove_file(&xb).unwrap();
         assert_eq!(codex(&fx.env(), true).action, Action::Undone);
         assert!(state_bytes(&fx).is_none());
+    }
+
+    fn state_json(fx: &Fx) -> Value {
+        serde_json::from_slice(&state_bytes(fx).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn undo_without_record_leaves_existing_bundle() {
+        let fx = Fx::new("norecord", "");
+        mine(&fx);
+        let (cb, xb) = (fx.ca_dir.join(CLAUDE_BUNDLE), fx.ca_dir.join(CODEX_BUNDLE));
+        fs::write(&xb, "someone else's file").unwrap();
+        fs::write(&cb, "someone else's other file").unwrap();
+        // No record: never deleted, never overwritten.
+        for undo_it in [true, false] {
+            let l = codex(&fx.env(), undo_it);
+            assert_eq!(l.action, Action::Refused, "{l:?}");
+            assert!(l.message.contains("no record"), "{}", l.message);
+        }
+        let a = apply(&fx);
+        assert_eq!(a.action, Action::Refused, "{a:?}");
+        assert!(a.message.contains("no record"), "{}", a.message);
+        assert_eq!(fs::read(&xb).unwrap(), b"someone else's file");
+        assert_eq!(fs::read(&cb).unwrap(), b"someone else's other file");
+        assert_eq!(fx.read_settings().matches("mine.pem").count(), 1);
+        assert!(state_bytes(&fx).is_none(), "nothing was recorded");
+        // A file that already holds exactly what would be written is adopted, not rewritten.
+        fs::remove_file(&xb).unwrap();
+        assert_eq!(codex(&fx.env(), false).action, Action::Applied);
+        let good = fs::read(&xb).unwrap();
+        fs::remove_file(fx.ca_dir.join(STATE_FILE)).unwrap();
+        assert_eq!(codex(&fx.env(), false).action, Action::Already);
+        assert_eq!(fs::read(&xb).unwrap(), good);
+        assert!(state_json(&fx)["codex"]["bundleSha"].is_string());
+    }
+
+    #[test]
+    fn refresh_crash_after_publish_reconciles() {
+        let fx = Fx::new("refresh-crash", "");
+        mine(&fx);
+        assert_eq!(apply(&fx).action, Action::Applied);
+        assert_eq!(codex(&fx.env(), false).action, Action::Applied);
+        fs::write(fx.ca_dir.join(CA_FILE), CA2).unwrap();
+        stop_at("after-bundle-publish");
+        let w = refresh(&fx.env());
+        clear_hooks();
+        assert!(!w.is_empty(), "{w:?}");
+        let v = state_json(&fx);
+        assert!(
+            v["pendingBundles"].is_array(),
+            "the journal is durable: {v}"
+        );
+        // The next run settles it: the files are ours, not foreign.
+        let s = status(&fx);
+        assert!(s["note"].as_str().unwrap().contains("bundle update"), "{s}");
+        for o in owned(&s) {
+            assert_eq!(o["foreign"], false, "{o}");
+        }
+        let v = state_json(&fx);
+        assert!(v.get("pendingBundles").is_none());
+        for (key, name) in [("claudeCode", CLAUDE_BUNDLE), ("codex", CODEX_BUNDLE)] {
+            let on_disk = sha_of(&fs::read(fx.ca_dir.join(name)).unwrap());
+            assert_eq!(v[key]["bundleSha"], on_disk, "{key}");
+        }
+        // And the next refresh and undo work as usual.
+        assert!(refresh(&fx.env()).is_empty());
+        assert_eq!(codex(&fx.env(), true).action, Action::Undone);
+        assert_eq!(undo(&fx).action, Action::Undone);
+    }
+
+    #[test]
+    fn codex_apply_crash_after_publish_reconciles() {
+        let fx = Fx::new("codex-crash", "");
+        fx.roots();
+        let xb = fx.ca_dir.join(CODEX_BUNDLE);
+        stop_at("after-bundle-publish");
+        let l = codex(&fx.env(), false);
+        clear_hooks();
+        assert_eq!(l.action, Action::Refused);
+        assert!(xb.exists());
+        assert!(state_json(&fx)["pendingBundles"].is_array());
+        assert!(
+            state_json(&fx).get("codex").is_none(),
+            "no hash was recorded yet"
+        );
+        // The next apply settles it, adopts the file and has nothing to write.
+        let a = codex(&fx.env(), false);
+        assert_eq!(a.action, Action::Already, "{a:?}");
+        let v = state_json(&fx);
+        assert!(v.get("pendingBundles").is_none());
+        assert_eq!(v["codex"]["bundleSha"], sha_of(&fs::read(&xb).unwrap()));
+        assert_eq!(entry(&status(&fx), "codex", "bundle")["foreign"], false);
+        assert_eq!(codex(&fx.env(), true).action, Action::Undone);
+    }
+
+    #[test]
+    fn pending_with_unknown_sha_is_foreign() {
+        let fx = Fx::new("unknown-sha", "");
+        fx.roots();
+        let xb = fx.ca_dir.join(CODEX_BUNDLE);
+        assert_eq!(codex(&fx.env(), false).action, Action::Applied);
+        fs::write(&xb, "edited by someone").unwrap();
+        let mut v = state_json(&fx);
+        v["pendingBundles"] = json!([{"target": "codex", "path": xb.display().to_string(),
+            "oldSha": "00", "newSha": "11"}]);
+        put_state(&fx, &v.to_string());
+        let s = status(&fx);
+        assert_eq!(entry(&s, "codex", "bundle")["foreign"], true, "{s}");
+        assert!(state_json(&fx).get("pendingBundles").is_none());
+        assert_eq!(fs::read(&xb).unwrap(), b"edited by someone");
+        assert_eq!(codex(&fx.env(), false).action, Action::Refused);
+        assert_eq!(codex(&fx.env(), true).action, Action::Refused);
+        assert_eq!(fs::read(&xb).unwrap(), b"edited by someone");
+    }
+
+    #[test]
+    fn replaced_between_check_and_write_is_refused() {
+        let fx = Fx::new("race", "");
+        fx.roots();
+        let xb = fx.ca_dir.join(CODEX_BUNDLE);
+        assert_eq!(codex(&fx.env(), false).action, Action::Applied);
+        let recorded = state_json(&fx);
+        // A writer swaps the file after the check and before the rename: a rewrite is refused.
+        fs::write(fx.ca_dir.join(CA_FILE), CA2).unwrap();
+        let p = xb.clone();
+        on_cas(move |point| {
+            if point == CODEX_BUNDLE {
+                fs::write(&p, "raced").unwrap();
+            }
+        });
+        let w = refresh(&fx.env());
+        clear_hooks();
+        assert!(w.iter().any(|m| m.contains("changed since")), "{w:?}");
+        assert_eq!(fs::read(&xb).unwrap(), b"raced");
+        assert_eq!(state_json(&fx)["codex"], recorded["codex"]);
+        assert!(state_json(&fx).get("pendingBundles").is_none());
+        // The same before an undo: the file is not deleted.
+        fs::remove_file(&xb).unwrap();
+        fs::write(fx.ca_dir.join(CA_FILE), CA1).unwrap();
+        assert_eq!(codex(&fx.env(), false).action, Action::Applied);
+        let p = xb.clone();
+        on_cas(move |point| {
+            if point == CODEX_BUNDLE {
+                fs::write(&p, "raced again").unwrap();
+            }
+        });
+        let u = codex(&fx.env(), true);
+        clear_hooks();
+        assert_eq!(u.action, Action::Refused, "{u:?}");
+        assert_eq!(fs::read(&xb).unwrap(), b"raced again");
     }
 }

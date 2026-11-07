@@ -1521,6 +1521,24 @@ bundles), `claude.rs` and `codex.rs` (the two targets).
   file is shared with Claude Code, so it is never compared as a whole: it is `foreign` only when
   `env.NODE_EXTRA_CA_CERTS` no longer holds the value cAInary wrote (the existing "changed since
   cAInary wrote it" refusal), and the backup only when its bytes differ from the recorded ones.
+- **No record, no touch.** A file cAInary has no record of creating is never overwritten or
+  deleted (`--trust codex --undo` leaves an existing bundle alone and says so); the one exception
+  is a file that already holds exactly the bytes about to be written, which is adopted. A record
+  from before v2, which has no hash, is the only unverified case that may be replaced.
+- **Journal.** A bundle replacement is written durably to the state file's `pendingBundles`
+  (`[{target, path, oldSha, newSha}]`) before the file is replaced, and cleared once the new hash is
+  recorded. The next call that holds the trust lock (`--trust`, `--trust-status`, a `--tls`
+  refresh) settles each entry from the file's hash: `newSha` means the replace happened, so the
+  hash is recorded (an orphaned Claude Code bundle with no record is removed); `oldSha` or still
+  absent means it didn't, so the entry is dropped; anything else is foreign and left alone. A
+  crash or failed state write can therefore never leave cAInary's own file looking foreign.
+- **Check, stage, re-check.** For every replace the new content is staged first; then, under the
+  trust lock, the target is read again and its bytes and identity (device, inode, size, mtime,
+  through the directory descriptor) must equal what the ownership check saw; only then is it
+  renamed (or, for a delete, unlinked). If anything changed the write is refused and the file left
+  as the other writer made it. This narrows the window to a few system calls but cannot close it
+  against a malicious same-user writer racing the rename; same-user processes are outside
+  cAInary's threat model here as elsewhere.
 - **`owned[]` in `trust-status`.** One entry per owned file and enabled mode: `mode`, `target`
   (`claude-code`, `codex`), `kind` (`settings`, `backup`, `bundle`), `path`, `key` (the settings
   key, else `null`), `fingerprints` (for a bundle: the preserved originals, then the mode's

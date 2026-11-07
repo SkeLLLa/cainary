@@ -5,11 +5,12 @@ use super::bundle::{
     COLLECTOR_MISSING, bundle, cert_fingerprint, collector_ca, read_certs, sha_of,
 };
 use super::files::{
-    Done, MAX_FILE, Snapshot, TrustLock, Why, backup, discard, lock_trust, plain_name, publish,
-    read_in, read_snapshot, stage, unlink_checked, unlink_in, write_atomic,
+    Done, MAX_FILE, Replace, Snapshot, TrustLock, Why, backup, discard, lock_trust, plain_name,
+    publish, read_in, read_snapshot, stage, unlink_checked, unlink_in, unlink_unchanged,
 };
 use super::state::{
-    ClaudeState, Pending, PendingKind, State, check_owned, drop_owned, read_state, save_state,
+    ClaudeState, Pending, PendingKind, Rec, Refused, State, check_owned, delete_owned,
+    publish_bundle, read_state, reconcile, save_state,
 };
 use super::{
     Action, BUSY, CLAUDE_BUNDLE, Env, KEY, Line, Mode, NEWER, ORG_NOTE, RESTART, TAKEOVER, Target,
@@ -62,6 +63,7 @@ const UNCERTAIN: &str = "The settings file may have been changed, but that could
 const CHANGED: &str =
     "Your Claude Code settings changed while editing; close Claude Code and try again.";
 const FOREIGN_BUNDLE: &str = "The Claude Code certificate bundle was changed since cAInary wrote it; leaving it untouched, and your settings too.";
+const UNRECORDED_BUNDLE: &str = "A Claude Code certificate bundle exists that cAInary has no record of creating; leaving it untouched, and your settings too.";
 const WHERE_CHANGED: &str = "Your Claude Code settings location changed since cAInary edited it (CLAUDE_CONFIG_DIR?); leaving it alone.";
 
 pub(super) struct Settings {
@@ -140,6 +142,14 @@ pub(super) fn managed_sets_key(h: &Harness) -> bool {
     let mut ctx = ScanCtx::new(h, Tool::ClaudeCode);
     let cfg = claude_code::resolve(&mut ctx);
     claude_code::env(&cfg, KEY).is_some_and(|v| matches!(v.from, CcFrom::Tier(_)))
+}
+
+/// What the state file says about the Claude Code bundle at `bundle_path`.
+fn bundle_rec(state: &State, bundle_path: &str) -> Rec {
+    match &state.claude {
+        Some(c) if c.written == bundle_path => Rec::of(c.bundle_sha.as_deref()),
+        _ => Rec::None,
+    }
 }
 
 fn prefixed(note: Option<String>, mut line: Line) -> Line {
@@ -348,20 +358,23 @@ fn claude_apply(
     if bundle_text.as_ref().is_some_and(|b| b.len() > MAX_FILE) {
         return too_big("The combined bundle would be over 1 MiB; refusing to make it.");
     }
-    // A bundle cAInary wrote earlier is only replaced if it is still what cAInary wrote.
-    if bundle_text.is_some()
-        && let Some(d) = ca
-        && !check_owned(
-            d,
-            CLAUDE_BUNDLE,
-            state.claude.as_ref().and_then(|c| c.bundle_sha.as_deref()),
-        )
-        .may_replace()
-    {
-        let mut l = Line::refused(t, FOREIGN_BUNDLE);
-        fill_paths(&mut l, &settings);
-        l.bundle_path = Some(bundle_path);
-        return l;
+    // A bundle is only replaced if it is cAInary's own and unchanged, or already holds these
+    // exact bytes; a file cAInary has no record of is never overwritten.
+    if let (Some(text), Some(d)) = (&bundle_text, ca) {
+        let rec = bundle_rec(&state, &bundle_path);
+        if !check_owned(d, CLAUDE_BUNDLE, &rec).allows_write(text.as_bytes()) {
+            let mut l = Line::refused(
+                t,
+                if rec == Rec::None {
+                    UNRECORDED_BUNDLE
+                } else {
+                    FOREIGN_BUNDLE
+                },
+            );
+            fill_paths(&mut l, &settings);
+            l.bundle_path = Some(bundle_path);
+            return l;
+        }
     }
     let stamp_now = stamp(&now_string(h));
     let planned_backup = settings
@@ -436,18 +449,46 @@ fn claude_apply(
         },
         None => None,
     };
-    if let Some(text) = &bundle_text
-        && write_atomic(ca_dir, CLAUDE_BUNDLE, text.as_bytes(), 0o644).is_err()
-    {
-        let _ = save_state(ca_dir, &state);
-        return fail("The combined bundle could not be written; nothing was changed.");
+    // The bundle: journaled in the pending record, staged, re-checked, then renamed. The journal
+    // stays until the apply is committed, so a failure from here on still settles from the hash.
+    if let Some(text) = &bundle_text {
+        let rec = bundle_rec(&state, &bundle_path);
+        let refused = match publish_bundle(
+            ca_dir,
+            &mut pending_state,
+            t,
+            CLAUDE_BUNDLE,
+            &rec,
+            text.as_bytes(),
+        ) {
+            Ok(_) => None,
+            Err(Refused::Foreign) => Some(if rec == Rec::None {
+                UNRECORDED_BUNDLE
+            } else {
+                FOREIGN_BUNDLE
+            }),
+            Err(Refused::Failed) => {
+                Some("The combined bundle could not be written; nothing was changed.")
+            }
+            Err(Refused::Uncertain) => return fail(UNCERTAIN),
+            Err(Refused::Crashed) => return fail("(simulated crash)"),
+        };
+        if let Some(m) = refused {
+            let _ = save_state(ca_dir, &state);
+            return fail(m);
+        }
     }
+    let after_bundle = || {
+        let mut s = state.clone();
+        s.journal.clone_from(&pending_state.journal);
+        s
+    };
     // 3. Stage the new file first (written and fsynced), then compare, then rename at once: the
     //    time between the check and the swap is a few system calls, not a file write.
     let tmp = match stage(&settings.dir, "settings.json", new_text.as_bytes(), 0o600) {
         Ok(t) => t,
         Err(_) => {
-            let _ = save_state(ca_dir, &state);
+            let _ = save_state(ca_dir, &after_bundle());
             return fail("The settings file could not be written; nothing was changed.");
         }
     };
@@ -456,7 +497,7 @@ fn claude_apply(
         if let Some(n) = &backup_name {
             let _ = unlink_in(&settings.dir, n);
         }
-        let _ = save_state(ca_dir, &state);
+        let _ = save_state(ca_dir, &after_bundle());
         return fail(CHANGED);
     }
     if hook::stop("before-rename") {
@@ -465,7 +506,7 @@ fn claude_apply(
     match publish(&settings.dir, &tmp, "settings.json") {
         Ok(()) => {}
         Err(Done::No) => {
-            let _ = save_state(ca_dir, &state);
+            let _ = save_state(ca_dir, &after_bundle());
             return fail("The settings file could not be written; nothing was changed.");
         }
         // The rename happened and its durability is unknown: keep the transaction, say so.
@@ -560,14 +601,20 @@ fn claude_undo(env: &Env<'_>, dry_run: bool, ca_dir: &CaDir, lock: Option<&Trust
         return l;
     }
     let bundle_here = ca_dir.path().join(CLAUDE_BUNDLE).display().to_string();
-    if cs.written == bundle_here
-        && !check_owned(ca_dir, CLAUDE_BUNDLE, cs.bundle_sha.as_deref()).may_replace()
-    {
-        let mut l = Line::refused(t, FOREIGN_BUNDLE);
-        fill_paths(&mut l, &settings);
-        l.bundle_path = Some(bundle_here);
-        return l;
-    }
+    // The bundle (if ours) must still be what cAInary wrote; this snapshot is re-checked before it
+    // is deleted.
+    let bundle_snap = if cs.written == bundle_here {
+        let c = check_owned(ca_dir, CLAUDE_BUNDLE, &Rec::of(cs.bundle_sha.as_deref()));
+        if !c.owned.may_replace() {
+            let mut l = Line::refused(t, FOREIGN_BUNDLE);
+            fill_paths(&mut l, &settings);
+            l.bundle_path = Some(bundle_here);
+            return l;
+        }
+        Some(c.snap)
+    } else {
+        None
+    };
     // What the file becomes: the exact original bytes if nothing else touched it, else just
     // this key put back (or removed).
     let snap_bytes = settings
@@ -705,7 +752,7 @@ fn claude_undo(env: &Env<'_>, dry_run: bool, ca_dir: &CaDir, lock: Option<&Trust
     if hook::stop("after-rename") {
         return fail("(simulated crash)");
     }
-    if let Err(m) = finish_undo(ca_dir, &state, &cs) {
+    if let Err(m) = finish_undo(ca_dir, &state, bundle_snap) {
         return fail(m);
     }
     l.backup_path = Some(settings.dir.path().join(backup_name).display().to_string());
@@ -757,12 +804,18 @@ fn stale_record(ca: &CaDir, mut state: State, dry_run: bool) -> Line {
 
 /// The last step of an undo: the bundle goes first, then the record and the transaction in one
 /// write. A failure is reported, with the transaction left for the next run to finish.
-fn finish_undo(ca: &CaDir, state: &State, cs: &ClaudeState) -> Result<(), &'static str> {
+fn finish_undo(
+    ca: &CaDir,
+    state: &State,
+    bundle_snap: Option<Option<Snapshot>>,
+) -> Result<(), &'static str> {
     const LEFT: &str = "The settings were restored, but the record of the change could not be cleared. Run cainary-otel-debug --trust-status to finish it.";
-    if cs.written == ca.path().join(CLAUDE_BUNDLE).display().to_string()
-        && drop_owned(ca, CLAUDE_BUNDLE, cs.bundle_sha.as_deref()).is_err()
-    {
-        return Err(LEFT);
+    if let Some(snap) = bundle_snap {
+        // Unlinked only if it is still the file that was checked; if it changed meanwhile it stays.
+        match unlink_unchanged(ca, CLAUDE_BUNDLE, &snap) {
+            Ok(()) | Err(Replace::Changed) => {}
+            Err(_) => return Err(LEFT),
+        }
     }
     let mut done = state.clone();
     done.claude = None;
@@ -816,42 +869,52 @@ fn settings_sha(p: &Pending) -> Option<Option<String>> {
 pub(super) fn recover(env: &Env<'_>, ca: &CaDir, _lock: &TrustLock) -> Option<String> {
     let _ = env;
     let state = read_state(ca);
-    let p = state.pending.clone()?;
     if state.newer {
-        return Some(NEWER.to_string());
+        return (state.pending.is_some() || !state.journal.is_empty()).then(|| NEWER.to_string());
     }
-    let Some(now) = settings_sha(&p) else {
-        return Some("An interrupted Claude Code trust change was found, but the settings can't be inspected right now; run --trust-status again later.".into());
-    };
+    if state.pending.is_none() && state.journal.is_empty() {
+        return None;
+    }
     let mut next = state.clone();
-    next.pending = None;
-    let note = if now == p.after {
-        match p.kind {
-            PendingKind::Apply => {
-                next.claude = Some(p.claude.clone());
-                "Finished an interrupted Claude Code trust change."
-            }
-            PendingKind::Undo => {
-                next.claude = None;
-                if p.claude.written == ca.path().join(CLAUDE_BUNDLE).display().to_string()
-                    && drop_owned(ca, CLAUDE_BUNDLE, p.claude.bundle_sha.as_deref()).is_err()
-                {
-                    return Some("An interrupted undo was found, but its bundle could not be removed; it will be tried again.".into());
+    let mut note: Option<&str> = None;
+    if let Some(p) = state.pending.clone() {
+        let Some(now) = settings_sha(&p) else {
+            return Some("An interrupted Claude Code trust change was found, but the settings can't be inspected right now; run --trust-status again later.".into());
+        };
+        next.pending = None;
+        note = Some(if now == p.after {
+            match p.kind {
+                PendingKind::Apply => {
+                    next.claude = Some(p.claude.clone());
+                    "Finished an interrupted Claude Code trust change."
                 }
-                "Finished an interrupted undo of the Claude Code trust change."
+                PendingKind::Undo => {
+                    next.claude = None;
+                    if p.claude.written == ca.path().join(CLAUDE_BUNDLE).display().to_string()
+                        && delete_owned(ca, CLAUDE_BUNDLE, &Rec::of(p.claude.bundle_sha.as_deref()))
+                            .is_err()
+                    {
+                        return Some("An interrupted undo was found, but its bundle could not be removed; it will be tried again.".into());
+                    }
+                    "Finished an interrupted undo of the Claude Code trust change."
+                }
             }
-        }
-    } else if now == p.before {
-        "An interrupted Claude Code trust change had not touched your settings; it was cleared."
-    } else {
-        "An interrupted Claude Code trust change was found, and your settings have changed since; they were left alone and the record was cleared."
-    };
+        } else if now == p.before {
+            "An interrupted Claude Code trust change had not touched your settings; it was cleared."
+        } else {
+            "An interrupted Claude Code trust change was found, and your settings have changed since; they were left alone and the record was cleared."
+        });
+    }
+    // Bundle replacements that were journaled, settled from each file's hash.
+    if reconcile(ca, &mut next) {
+        note = note.or(Some("Settled an interrupted certificate bundle update."));
+    }
     if save_state(ca, &next).is_err() {
         return Some(
             "An interrupted Claude Code trust change was found but could not be cleared.".into(),
         );
     }
-    Some(note.to_string())
+    note.map(str::to_string)
 }
 
 #[cfg(test)]

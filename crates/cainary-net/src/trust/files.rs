@@ -216,6 +216,62 @@ pub(super) fn write_atomic(dir: &CaDir, name: &str, bytes: &[u8], mode: u32) -> 
     publish(dir, &tmp, name).map_err(|_| io::Error::other("could not put the file in place"))
 }
 
+/// Why a checked replace or delete did not happen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Replace {
+    /// The target is no longer the file (bytes, device, inode, size, mtime) the caller checked.
+    Changed,
+    Failed,
+    /// It happened but isn't known to be durable.
+    Uncertain,
+}
+
+/// Whether `name` is still exactly what `before` read (`None`: still absent). `point` names the
+/// moment for the tests' hook. This narrows the check-to-change window to a few system calls; it
+/// cannot close it against a same-user writer that races the rename.
+fn still(dir: &CaDir, name: &str, before: &Option<Snapshot>, point: &str) -> bool {
+    hook::before_cas(point);
+    match (read_snapshot(dir, name), before) {
+        (Ok(None), None) => true,
+        (Ok(Some(now)), Some(then)) => now.bytes == then.bytes && now.ident == then.ident,
+        _ => false,
+    }
+}
+
+/// Stages `bytes` first, then re-checks the target against `before`, then renames at once.
+pub(super) fn replace_checked(
+    dir: &CaDir,
+    name: &str,
+    bytes: &[u8],
+    mode: u32,
+    before: &Option<Snapshot>,
+) -> Result<(), Replace> {
+    let tmp = stage(dir, name, bytes, mode).map_err(|_| Replace::Failed)?;
+    if !still(dir, name, before, name) {
+        discard(dir, &tmp);
+        return Err(Replace::Changed);
+    }
+    publish(dir, &tmp, name).map_err(|d| match d {
+        Done::No => Replace::Failed,
+        Done::Uncertain => Replace::Uncertain,
+    })
+}
+
+/// Re-checks the target against `before`, then unlinks it.
+pub(super) fn unlink_unchanged(
+    dir: &CaDir,
+    name: &str,
+    before: &Option<Snapshot>,
+) -> Result<(), Replace> {
+    if !still(dir, name, before, name) {
+        return Err(Replace::Changed);
+    }
+    unlink_checked(dir, name).map_err(|d| match d {
+        Done::No => Replace::Failed,
+        Done::Uncertain => Replace::Uncertain,
+    })
+}
+
 /// The one lock every `--trust` and `--trust-status` call holds across recovery, reads, edits and
 /// the final state write (design §17.2). Not the CA directory's run lock: `--trust` has to work
 /// while the collector runs. Dropped (and released) with the file.

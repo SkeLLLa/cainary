@@ -25,9 +25,11 @@ use bundle::{bundle, collector_ca, read_certs, sha_of, system_roots};
 use cainary_core::harness::{Harness, ToolHome};
 use claude::{inspect_note, managed_sets_key, open_settings, recover, settings_view, sibling_sha};
 use codex::codex_command;
-use files::{lock_trust, read_in, write_atomic};
+use files::{lock_trust, read_in};
 use serde_json::{Map, Value, json};
-use state::{Owned, State, check_owned, read_state, save_state};
+use state::{
+    Owned, Rec, Refused, State, check_owned, publish_bundle, read_state, reconcile, save_state,
+};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -347,7 +349,7 @@ fn owned_entries(state: &State, ca: Option<&CaDir>) -> Vec<Value> {
         .unwrap_or_default();
     let bundle_state = |name: &str, written: Option<&str>| match ca {
         Some(d) => (
-            check_owned(d, name, written) == Owned::Foreign,
+            check_owned(d, name, &Rec::of(written)).owned == Owned::Foreign,
             read_in(d, name).ok().flatten().map(|b| sha_of(&b)),
         ),
         None => (false, None),
@@ -475,46 +477,60 @@ pub fn refresh(env: &Env<'_>) -> Vec<String> {
             ];
         }
     };
-    let mut changed = false;
-    if let Some(cs) = state.claude.as_mut() {
-        let bundle_path = ca_dir.path().join(CLAUDE_BUNDLE).display().to_string();
-        if cs.written == bundle_path {
-            let certs = cs
-                .original
-                .as_deref()
-                .and_then(|p| read_certs(Path::new(p)));
-            match certs {
-                _ if !check_owned(&ca_dir, CLAUDE_BUNDLE, cs.bundle_sha.as_deref()).may_replace() => {
-                    warnings.push("the Claude Code trust bundle was changed since cAInary wrote it; it was not refreshed".into());
-                }
-                Some(certs) => {
-                    let b = bundle(&certs, &ca);
-                    if write_atomic(&ca_dir, CLAUDE_BUNDLE, b.as_bytes(), 0o644).is_err() {
-                        warnings.push("the Claude Code trust bundle could not be rewritten".into());
-                    } else {
-                        cs.bundle_sha = Some(sha_of(b.as_bytes()));
+    // Replacements an earlier run didn't finish are settled from the files' hashes first.
+    let mut changed = reconcile(&ca_dir, &mut state);
+    let claude_bundle = state
+        .claude
+        .as_ref()
+        .filter(|c| c.written == ca_dir.path().join(CLAUDE_BUNDLE).display().to_string())
+        .map(|c| (c.original.clone(), Rec::of(c.bundle_sha.as_deref())));
+    if let Some((original, rec)) = claude_bundle {
+        match original.as_deref().and_then(|p| read_certs(Path::new(p))) {
+            Some(certs) => {
+                let b = bundle(&certs, &ca);
+                match publish_bundle(&ca_dir, &mut state, Target::ClaudeCode, CLAUDE_BUNDLE, &rec, b.as_bytes()) {
+                    Ok(sha) => {
+                        if let Some(cs) = state.claude.as_mut() {
+                            cs.bundle_sha = Some(sha);
+                        }
+                        state.clear_journal(CLAUDE_BUNDLE);
                         changed = true;
                     }
+                    Err(Refused::Foreign) => warnings.push("the Claude Code trust bundle was changed since cAInary wrote it; it was not refreshed".into()),
+                    Err(_) => warnings.push("the Claude Code trust bundle could not be rewritten".into()),
                 }
-                None => warnings.push("the file your Claude Code bundle was made from can't be read; the bundle was not refreshed".into()),
             }
+            None => warnings.push("the file your Claude Code bundle was made from can't be read; the bundle was not refreshed".into()),
         }
     }
-    if let Some(cx) = state.codex.as_mut() {
+    if let Some(rec) = state
+        .codex
+        .as_ref()
+        .map(|c| Rec::of(c.bundle_sha.as_deref()))
+    {
         match system_roots(env.harness) {
-            _ if !check_owned(&ca_dir, CODEX_BUNDLE, cx.bundle_sha.as_deref()).may_replace() => {
-                warnings.push(
-                    "the Codex bundle was changed since cAInary wrote it; it was not refreshed"
-                        .into(),
-                );
-            }
             Some(roots) => {
                 let b = bundle(&roots, &ca);
-                if write_atomic(&ca_dir, CODEX_BUNDLE, b.as_bytes(), 0o644).is_err() {
-                    warnings.push("the Codex bundle could not be rewritten".into());
-                } else {
-                    cx.bundle_sha = Some(sha_of(b.as_bytes()));
-                    changed = true;
+                match publish_bundle(
+                    &ca_dir,
+                    &mut state,
+                    Target::Codex,
+                    CODEX_BUNDLE,
+                    &rec,
+                    b.as_bytes(),
+                ) {
+                    Ok(sha) => {
+                        if let Some(cx) = state.codex.as_mut() {
+                            cx.bundle_sha = Some(sha);
+                        }
+                        state.clear_journal(CODEX_BUNDLE);
+                        changed = true;
+                    }
+                    Err(Refused::Foreign) => warnings.push(
+                        "the Codex bundle was changed since cAInary wrote it; it was not refreshed"
+                            .into(),
+                    ),
+                    Err(_) => warnings.push("the Codex bundle could not be rewritten".into()),
                 }
             }
             None => warnings.push(
