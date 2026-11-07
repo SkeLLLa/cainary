@@ -11,6 +11,7 @@ pub mod level;
 pub mod locate;
 pub mod logbook;
 pub mod notify_plan;
+pub mod privport;
 pub mod report;
 pub mod runner;
 pub mod schedule;
