@@ -386,5 +386,469 @@
   },
   "encoding_hex": "07000000d6060000000b6361696e6172792d73696703000000080000000000000001060000000d6f74656c2d73686170652f763108000000a20600000005636f756e740400000008ffffffffffffffff060000000570617468730700000063080000003406000000047061746806000000157265736f757263652f736572766963652e6e616d650600000004747970650600000003737472080000002506000000047061746806000000097265636f72642fc3a90600000004747970650000000000060000000776657273696f6e03000000080000000000000002",
   "digest_hex": "818d05b4607cdb471da7ae2a621c0f7535c3ab775c26e3e5abe24a20c29e4e57"
+ },
+ {
+  "name": "map-composed-and-decomposed-keys",
+  "key_hex": null,
+  "domain": null,
+  "fields": {
+   "t": "map",
+   "v": [
+    [
+     "é",
+     {
+      "t": "u64",
+      "v": "2"
+     }
+    ],
+    [
+     "é",
+     {
+      "t": "u64",
+      "v": "1"
+     }
+    ],
+    [
+     "e",
+     {
+      "t": "u64",
+      "v": "0"
+     }
+    ]
+   ]
+  },
+  "encoding_hex": "080000003c06000000016503000000080000000000000000060000000365cc81030000000800000000000000020600000002c3a903000000080000000000000001",
+  "digest_hex": null
+ },
+ {
+  "name": "depth-32-accepted",
+  "key_hex": null,
+  "domain": null,
+  "fields": {
+   "t": "list",
+   "v": [
+    {
+     "t": "list",
+     "v": [
+      {
+       "t": "list",
+       "v": [
+        {
+         "t": "list",
+         "v": [
+          {
+           "t": "list",
+           "v": [
+            {
+             "t": "list",
+             "v": [
+              {
+               "t": "list",
+               "v": [
+                {
+                 "t": "list",
+                 "v": [
+                  {
+                   "t": "list",
+                   "v": [
+                    {
+                     "t": "list",
+                     "v": [
+                      {
+                       "t": "list",
+                       "v": [
+                        {
+                         "t": "list",
+                         "v": [
+                          {
+                           "t": "list",
+                           "v": [
+                            {
+                             "t": "list",
+                             "v": [
+                              {
+                               "t": "list",
+                               "v": [
+                                {
+                                 "t": "list",
+                                 "v": [
+                                  {
+                                   "t": "list",
+                                   "v": [
+                                    {
+                                     "t": "list",
+                                     "v": [
+                                      {
+                                       "t": "list",
+                                       "v": [
+                                        {
+                                         "t": "list",
+                                         "v": [
+                                          {
+                                           "t": "list",
+                                           "v": [
+                                            {
+                                             "t": "list",
+                                             "v": [
+                                              {
+                                               "t": "list",
+                                               "v": [
+                                                {
+                                                 "t": "list",
+                                                 "v": [
+                                                  {
+                                                   "t": "list",
+                                                   "v": [
+                                                    {
+                                                     "t": "list",
+                                                     "v": [
+                                                      {
+                                                       "t": "list",
+                                                       "v": [
+                                                        {
+                                                         "t": "list",
+                                                         "v": [
+                                                          {
+                                                           "t": "list",
+                                                           "v": [
+                                                            {
+                                                             "t": "list",
+                                                             "v": [
+                                                              {
+                                                               "t": "list",
+                                                               "v": [
+                                                                {
+                                                                 "t": "null"
+                                                                }
+                                                               ]
+                                                              }
+                                                             ]
+                                                            }
+                                                           ]
+                                                          }
+                                                         ]
+                                                        }
+                                                       ]
+                                                      }
+                                                     ]
+                                                    }
+                                                   ]
+                                                  }
+                                                 ]
+                                                }
+                                               ]
+                                              }
+                                             ]
+                                            }
+                                           ]
+                                          }
+                                         ]
+                                        }
+                                       ]
+                                      }
+                                     ]
+                                    }
+                                   ]
+                                  }
+                                 ]
+                                }
+                               ]
+                              }
+                             ]
+                            }
+                           ]
+                          }
+                         ]
+                        }
+                       ]
+                      }
+                     ]
+                    }
+                   ]
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  "encoding_hex": "070000009b07000000960700000091070000008c07000000870700000082070000007d07000000780700000073070000006e07000000690700000064070000005f070000005a07000000550700000050070000004b07000000460700000041070000003c07000000370700000032070000002d07000000280700000023070000001e07000000190700000014070000000f070000000a07000000050100000000",
+  "digest_hex": null
+ },
+ {
+  "name": "bytes-at-size-limit-accepted",
+  "key_hex": null,
+  "domain": null,
+  "fields": {
+   "t": "bytes_repeat",
+   "byte": "00",
+   "count": 1048571
+  },
+  "encoding_hex": null,
+  "encoding_len": 1048576,
+  "encoding_sha256_hex": "4af2b4dd7a3d26c6b9432f493cf397f0641e068cfcff983c5b4aad646b975dd4",
+  "digest_hex": null
+ },
+ {
+  "name": "duplicate-key-rejected",
+  "key_hex": null,
+  "domain": null,
+  "fields": {
+   "t": "map",
+   "v": [
+    [
+     "a",
+     {
+      "t": "u64",
+      "v": "1"
+     }
+    ],
+    [
+     "b",
+     {
+      "t": "u64",
+      "v": "2"
+     }
+    ],
+    [
+     "a",
+     {
+      "t": "null"
+     }
+    ]
+   ]
+  },
+  "expect_error": "duplicate-key"
+ },
+ {
+  "name": "duplicate-nested-key-rejected",
+  "key_hex": null,
+  "domain": null,
+  "fields": {
+   "t": "list",
+   "v": [
+    {
+     "t": "map",
+     "v": [
+      [
+       "k",
+       {
+        "t": "u64",
+        "v": "1"
+       }
+      ],
+      [
+       "k",
+       {
+        "t": "u64",
+        "v": "1"
+       }
+      ]
+     ]
+    }
+   ]
+  },
+  "expect_error": "duplicate-key"
+ },
+ {
+  "name": "depth-33-rejected",
+  "key_hex": null,
+  "domain": null,
+  "fields": {
+   "t": "list",
+   "v": [
+    {
+     "t": "list",
+     "v": [
+      {
+       "t": "list",
+       "v": [
+        {
+         "t": "list",
+         "v": [
+          {
+           "t": "list",
+           "v": [
+            {
+             "t": "list",
+             "v": [
+              {
+               "t": "list",
+               "v": [
+                {
+                 "t": "list",
+                 "v": [
+                  {
+                   "t": "list",
+                   "v": [
+                    {
+                     "t": "list",
+                     "v": [
+                      {
+                       "t": "list",
+                       "v": [
+                        {
+                         "t": "list",
+                         "v": [
+                          {
+                           "t": "list",
+                           "v": [
+                            {
+                             "t": "list",
+                             "v": [
+                              {
+                               "t": "list",
+                               "v": [
+                                {
+                                 "t": "list",
+                                 "v": [
+                                  {
+                                   "t": "list",
+                                   "v": [
+                                    {
+                                     "t": "list",
+                                     "v": [
+                                      {
+                                       "t": "list",
+                                       "v": [
+                                        {
+                                         "t": "list",
+                                         "v": [
+                                          {
+                                           "t": "list",
+                                           "v": [
+                                            {
+                                             "t": "list",
+                                             "v": [
+                                              {
+                                               "t": "list",
+                                               "v": [
+                                                {
+                                                 "t": "list",
+                                                 "v": [
+                                                  {
+                                                   "t": "list",
+                                                   "v": [
+                                                    {
+                                                     "t": "list",
+                                                     "v": [
+                                                      {
+                                                       "t": "list",
+                                                       "v": [
+                                                        {
+                                                         "t": "list",
+                                                         "v": [
+                                                          {
+                                                           "t": "list",
+                                                           "v": [
+                                                            {
+                                                             "t": "list",
+                                                             "v": [
+                                                              {
+                                                               "t": "list",
+                                                               "v": [
+                                                                {
+                                                                 "t": "list",
+                                                                 "v": [
+                                                                  {
+                                                                   "t": "null"
+                                                                  }
+                                                                 ]
+                                                                }
+                                                               ]
+                                                              }
+                                                             ]
+                                                            }
+                                                           ]
+                                                          }
+                                                         ]
+                                                        }
+                                                       ]
+                                                      }
+                                                     ]
+                                                    }
+                                                   ]
+                                                  }
+                                                 ]
+                                                }
+                                               ]
+                                              }
+                                             ]
+                                            }
+                                           ]
+                                          }
+                                         ]
+                                        }
+                                       ]
+                                      }
+                                     ]
+                                    }
+                                   ]
+                                  }
+                                 ]
+                                }
+                               ]
+                              }
+                             ]
+                            }
+                           ]
+                          }
+                         ]
+                        }
+                       ]
+                      }
+                     ]
+                    }
+                   ]
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  "expect_error": "too-deep"
+ },
+ {
+  "name": "size-just-over-limit-rejected",
+  "key_hex": null,
+  "domain": null,
+  "fields": {
+   "t": "bytes_repeat",
+   "byte": "00",
+   "count": 1048572
+  },
+  "expect_error": "too-large"
+ },
+ {
+  "name": "size-over-1mib-rejected",
+  "key_hex": null,
+  "domain": null,
+  "fields": {
+   "t": "bytes_repeat",
+   "byte": "00",
+   "count": 1048577
+  },
+  "expect_error": "too-large"
  }
 ]

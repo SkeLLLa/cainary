@@ -1,26 +1,27 @@
 //! HMAC-SHA256 (RFC 2104).
 
 use crate::sha256::sha256;
+use crate::wipe::Wiped;
 
 const BLOCK_SIZE: usize = 64;
 
 pub fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
-    let mut normalized_key = [0u8; BLOCK_SIZE];
+    let mut normalized_key = Wiped([0u8; BLOCK_SIZE]);
     if key.len() > BLOCK_SIZE {
-        normalized_key[..32].copy_from_slice(&sha256(key));
+        normalized_key.0[..32].copy_from_slice(&sha256(key));
     } else {
-        normalized_key[..key.len()].copy_from_slice(key);
+        normalized_key.0[..key.len()].copy_from_slice(key);
     }
 
-    let mut inner = Vec::with_capacity(BLOCK_SIZE + msg.len());
-    let mut outer = Vec::with_capacity(BLOCK_SIZE + 32);
-    for byte in normalized_key {
-        inner.push(byte ^ 0x36);
-        outer.push(byte ^ 0x5c);
+    let mut inner = Wiped(Vec::with_capacity(BLOCK_SIZE + msg.len()));
+    let mut outer = Wiped(Vec::with_capacity(BLOCK_SIZE + 32));
+    for byte in normalized_key.0 {
+        inner.0.push(byte ^ 0x36);
+        outer.0.push(byte ^ 0x5c);
     }
-    inner.extend_from_slice(msg);
-    outer.extend_from_slice(&sha256(&inner));
-    sha256(&outer)
+    inner.0.extend_from_slice(msg);
+    outer.0.extend_from_slice(&sha256(&inner.0));
+    sha256(&outer.0)
 }
 
 #[cfg(test)]

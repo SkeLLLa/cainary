@@ -3,6 +3,7 @@
 use crate::canon::{EncodeError, Value, encode};
 use crate::domain::{self, Domain};
 use crate::hmac::hmac_sha256;
+use crate::wipe::wipe;
 
 /// `List[Str "cainary-sig", U64 1, Str domain, Map fields]`, encoded.
 pub fn message(domain: Domain, fields: Vec<(String, Value)>) -> Result<Vec<u8>, EncodeError> {
@@ -48,11 +49,7 @@ impl core::fmt::Debug for Key {
 
 impl Drop for Key {
     fn drop(&mut self) {
-        for byte in self.0.iter_mut() {
-            // SAFETY: `byte` is a valid, aligned, exclusive reference.
-            unsafe { core::ptr::write_volatile(byte, 0) };
-        }
-        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        wipe(&mut self.0);
     }
 }
 
@@ -75,8 +72,15 @@ pub fn sign(
     Ok(Digest(hmac_sha256(&key.0, &message(domain, fields)?)))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Digest(pub [u8; 32]);
+/// A 256-bit MAC. Deliberately not `PartialEq`: compare with [`Digest::ct_eq`].
+#[derive(Clone, Copy)]
+pub struct Digest([u8; 32]);
+
+impl core::fmt::Debug for Digest {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "Digest({})", self.hex())
+    }
+}
 
 impl Digest {
     /// 64 lowercase hex characters.

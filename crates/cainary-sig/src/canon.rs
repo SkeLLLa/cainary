@@ -52,52 +52,123 @@ impl core::fmt::Display for EncodeError {
 impl std::error::Error for EncodeError {}
 
 pub fn encode(value: &Value) -> Result<Vec<u8>, EncodeError> {
-    let mut out = Vec::new();
-    item(value, 1, &mut out)?;
+    let len = measure(value, 1)?;
+    let mut out = Vec::with_capacity(len);
+    write(value, &mut out);
+    debug_assert_eq!(out.len(), len);
     Ok(out)
 }
 
-fn put(tag: u8, payload: &[u8], out: &mut Vec<u8>) -> Result<(), EncodeError> {
-    if payload.len() > MAX_SIZE || out.len() + 5 + payload.len() > MAX_SIZE {
-        return Err(EncodeError::TooLarge);
-    }
-    out.push(tag);
-    out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
-    out.extend_from_slice(payload);
-    Ok(())
+fn sorted(pairs: &[(String, Value)]) -> Vec<&(String, Value)> {
+    let mut refs: Vec<&(String, Value)> = pairs.iter().collect();
+    refs.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+    refs
 }
 
-fn item(value: &Value, depth: usize, out: &mut Vec<u8>) -> Result<(), EncodeError> {
+/// First pass: the exact encoded length of `value`, rejecting depth, size and duplicate keys
+/// before anything is written. Every sum is checked and capped at `MAX_SIZE`.
+fn measure(value: &Value, depth: usize) -> Result<usize, EncodeError> {
     if depth > MAX_DEPTH {
         return Err(EncodeError::TooDeep);
     }
-    match value {
-        Value::Absent => put(TAG_ABSENT, &[], out),
-        Value::Null => put(TAG_NULL, &[], out),
-        Value::Bool(b) => put(TAG_BOOL, &[u8::from(*b)], out),
-        Value::U64(n) => put(TAG_U64, &n.to_be_bytes(), out),
-        Value::I64(n) => put(TAG_I64, &n.to_be_bytes(), out),
-        Value::Bytes(b) => put(TAG_BYTES, b, out),
-        Value::Str(s) => put(TAG_STR, s.as_bytes(), out),
+    let payload = match value {
+        Value::Absent | Value::Null => 0,
+        Value::Bool(_) => 1,
+        Value::U64(_) | Value::I64(_) => 8,
+        Value::Bytes(b) => b.len(),
+        Value::Str(s) => s.len(),
         Value::List(items) => {
-            let mut payload = Vec::new();
+            let mut sum = 0usize;
             for v in items {
-                item(v, depth + 1, &mut payload)?;
+                sum = add(sum, measure(v, depth + 1)?)?;
             }
-            put(TAG_LIST, &payload, out)
+            sum
         }
         Value::Map(pairs) => {
-            let mut sorted: Vec<&(String, Value)> = pairs.iter().collect();
-            sorted.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
-            if let Some(w) = sorted.windows(2).find(|w| w[0].0 == w[1].0) {
+            let refs = sorted(pairs);
+            if let Some(w) = refs.windows(2).find(|w| w[0].0 == w[1].0) {
                 return Err(EncodeError::DuplicateKey(w[0].0.clone()));
             }
-            let mut payload = Vec::new();
-            for (k, v) in sorted {
-                put(TAG_STR, k.as_bytes(), &mut payload)?;
-                item(v, depth + 1, &mut payload)?;
+            let mut sum = 0usize;
+            for (k, v) in refs {
+                sum = add(sum, add(HEADER, k.len())?)?;
+                sum = add(sum, measure(v, depth + 1)?)?;
             }
-            put(TAG_MAP, &payload, out)
+            sum
+        }
+    };
+    add(HEADER, payload)
+}
+
+const HEADER: usize = 5;
+
+fn add(a: usize, b: usize) -> Result<usize, EncodeError> {
+    match a.checked_add(b) {
+        Some(n) if n <= MAX_SIZE => Ok(n),
+        _ => Err(EncodeError::TooLarge),
+    }
+}
+
+/// Payload length of an already measured value.
+fn payload_len(value: &Value) -> usize {
+    match value {
+        Value::Absent | Value::Null => 0,
+        Value::Bool(_) => 1,
+        Value::U64(_) | Value::I64(_) => 8,
+        Value::Bytes(b) => b.len(),
+        Value::Str(s) => s.len(),
+        Value::List(items) => items.iter().map(|v| HEADER + payload_len(v)).sum(),
+        Value::Map(pairs) => pairs
+            .iter()
+            .map(|(k, v)| HEADER + k.len() + HEADER + payload_len(v))
+            .sum(),
+    }
+}
+
+fn head(tag: u8, len: usize, out: &mut Vec<u8>) {
+    out.push(tag);
+    out.extend_from_slice(&(len as u32).to_be_bytes());
+}
+
+/// Second pass: writes into a buffer sized by `measure`; lengths come from the values.
+fn write(value: &Value, out: &mut Vec<u8>) {
+    let len = payload_len(value);
+    match value {
+        Value::Absent => head(TAG_ABSENT, len, out),
+        Value::Null => head(TAG_NULL, len, out),
+        Value::Bool(b) => {
+            head(TAG_BOOL, len, out);
+            out.push(u8::from(*b));
+        }
+        Value::U64(n) => {
+            head(TAG_U64, len, out);
+            out.extend_from_slice(&n.to_be_bytes());
+        }
+        Value::I64(n) => {
+            head(TAG_I64, len, out);
+            out.extend_from_slice(&n.to_be_bytes());
+        }
+        Value::Bytes(b) => {
+            head(TAG_BYTES, len, out);
+            out.extend_from_slice(b);
+        }
+        Value::Str(s) => {
+            head(TAG_STR, len, out);
+            out.extend_from_slice(s.as_bytes());
+        }
+        Value::List(items) => {
+            head(TAG_LIST, len, out);
+            for v in items {
+                write(v, out);
+            }
+        }
+        Value::Map(pairs) => {
+            head(TAG_MAP, len, out);
+            for (k, v) in sorted(pairs) {
+                head(TAG_STR, k.len(), out);
+                out.extend_from_slice(k.as_bytes());
+                write(v, out);
+            }
         }
     }
 }

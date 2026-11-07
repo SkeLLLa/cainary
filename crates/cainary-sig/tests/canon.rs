@@ -108,11 +108,14 @@ fn digest_hex_roundtrip() {
     let d = sign(&k, domain::NOTIFY_DEDUP, vec![pair("x", s("y"))]).unwrap();
     assert_eq!(d.hex().len(), 64);
     assert_eq!(d.short(), d.hex()[..8]);
-    assert_eq!(Digest::from_hex(&d.hex()), Some(d));
-    assert_eq!(Digest::from_hex(&d.hex().to_uppercase()), Some(d));
-    assert_eq!(Digest::from_hex("zz"), None);
-    assert_eq!(Digest::from_hex(&"g".repeat(64)), None);
-    assert_eq!(Digest::from_hex(&d.hex()[..62]), None);
+    assert_eq!(Digest::from_hex(&d.hex()).unwrap().hex(), d.hex());
+    assert_eq!(
+        Digest::from_hex(&d.hex().to_uppercase()).unwrap().hex(),
+        d.hex()
+    );
+    assert!(Digest::from_hex("zz").is_none());
+    assert!(Digest::from_hex(&"g".repeat(64)).is_none());
+    assert!(Digest::from_hex(&d.hex()[..62]).is_none());
 }
 
 #[test]
@@ -124,8 +127,9 @@ fn ct_eq_works() {
     assert!(a.ct_eq(&a));
     assert!(!a.ct_eq(&b));
     assert!(!a.ct_eq(&c), "domains separate digests");
-    let mut last = a;
-    last.0[31] ^= 1;
+    let h = a.hex();
+    let flipped = if h.ends_with('0') { '1' } else { '0' };
+    let last = Digest::from_hex(&format!("{}{flipped}", &h[..63])).unwrap();
     assert!(!a.ct_eq(&last));
     assert_eq!(Domain::from_name("key-id/v1"), Some(domain::KEY_ID));
     assert_eq!(Domain::from_name("nope"), None);

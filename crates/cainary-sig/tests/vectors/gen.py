@@ -7,6 +7,12 @@ Stdlib only; independent of the Rust implementation. Run from anywhere:
 It rewrites sig-v1.json next to this script. The Rust test `vectors_match` (and later the Swift
 tests) re-encode every case and compare with `encoding_hex` / `digest_hex`.
 
+Rejection cases carry `expect_error` ("duplicate-key" | "too-deep" | "too-large") instead of
+`encoding_hex`. `{"t":"bytes_repeat","byte":"00","count":N}` is N copies of one byte (keeps the
+JSON small). A case whose encoding is too big to inline has `encoding_hex` null and
+`encoding_len` / `encoding_sha256_hex` instead. Map keys compare as exact UTF-8 bytes, with no
+Unicode normalization.
+
 Case: {name, key_hex (null: encode-only), domain (null: encode `fields` as a bare Map item),
 fields (typed), encoding_hex, digest_hex}. With a domain, `encoding_hex` is the full message
 List["cainary-sig", u64 1, domain, Map fields] and `digest_hex` is HMAC-SHA256(key, message).
@@ -36,6 +42,8 @@ def enc(t):
         return item(4, struct.pack(">q", int(t["v"])))
     if k == "bytes":
         return item(5, bytes.fromhex(t["v"]))
+    if k == "bytes_repeat":
+        return item(5, bytes.fromhex(t["byte"]) * t["count"])
     if k == "str":
         return item(6, t["v"].encode("utf-8"))
     if k == "list":
@@ -95,6 +103,33 @@ cases = [
 ]
 
 
+
+
+def nest(depth):
+    v = {"t": "null"}
+    for _ in range(depth - 1):
+        v = {"t": "list", "v": [v]}
+    return v
+
+
+cases += [
+    ("map-composed-and-decomposed-keys", None, None, m(
+        ("\u0065\u0301", u(2)), ("\u00e9", u(1)), ("e", u(0)))),
+    ("depth-32-accepted", None, None, nest(32)),
+    ("bytes-at-size-limit-accepted", None, None,
+     {"t": "bytes_repeat", "byte": "00", "count": 1048576 - 5}),
+]
+errors = [
+    ("duplicate-key-rejected", m(("a", u(1)), ("b", u(2)), ("a", {"t": "null"})), "duplicate-key"),
+    ("duplicate-nested-key-rejected", {"t": "list", "v": [m(("k", u(1)), ("k", u(1)))]},
+     "duplicate-key"),
+    ("depth-33-rejected", nest(33), "too-deep"),
+    ("size-just-over-limit-rejected", {"t": "bytes_repeat", "byte": "00", "count": 1048576 - 4},
+     "too-large"),
+    ("size-over-1mib-rejected", {"t": "bytes_repeat", "byte": "00", "count": 1048577},
+     "too-large"),
+]
+
 out = []
 for name, key, domain, fields in cases:
     if domain is None:
@@ -103,8 +138,17 @@ for name, key, domain, fields in cases:
     else:
         encoding = enc({"t": "list", "v": [s("cainary-sig"), u(1), s(domain), fields]})
         digest = hmac.new(bytes.fromhex(key), encoding, hashlib.sha256).hexdigest()
-    out.append({"name": name, "key_hex": key, "domain": domain, "fields": fields,
-                "encoding_hex": encoding.hex(), "digest_hex": digest})
+    case = {"name": name, "key_hex": key, "domain": domain, "fields": fields}
+    if len(encoding) > 4096:
+        case.update({"encoding_hex": None, "encoding_len": len(encoding),
+                     "encoding_sha256_hex": hashlib.sha256(encoding).hexdigest()})
+    else:
+        case["encoding_hex"] = encoding.hex()
+    case["digest_hex"] = digest
+    out.append(case)
+for name, fields, err in errors:
+    out.append({"name": name, "key_hex": None, "domain": None, "fields": fields,
+                "expect_error": err})
 
 path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sig-v1.json")
 with open(path, "w", encoding="utf-8") as f:

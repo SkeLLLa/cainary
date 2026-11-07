@@ -5,6 +5,7 @@ pub mod domain;
 pub mod hmac;
 pub mod key;
 pub mod sha256;
+mod wipe;
 
 pub use canon::{EncodeError, Value, encode};
 pub use domain::Domain;
