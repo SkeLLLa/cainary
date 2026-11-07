@@ -232,3 +232,94 @@ fn delete_removes() {
         assert_eq!(state.lock().unwrap().items.len(), 1);
     });
 }
+
+const SHORT: std::time::Duration = std::time::Duration::from_millis(200);
+
+#[test]
+fn prompt_never_completes_times_out() {
+    block_on(async {
+        let Some((_server, state, client)) = setup(with_default()).await else {
+            return;
+        };
+        client.put(RULES_KEY, "l", b"secret").await.unwrap();
+        {
+            let mut s = state.lock().unwrap();
+            s.locked = true;
+            s.hang = true;
+        }
+        let client = client.with_prompt_timeout(SHORT);
+        let err = client
+            .get(RULES_KEY, Interaction::Allowed)
+            .await
+            .unwrap_err();
+        assert_eq!(err, SecretError::Bus("prompt timed out".into()));
+        // Dismiss is best effort and sent after the timeout.
+        assert_eq!(state.lock().unwrap().dismiss_calls, 1);
+    });
+}
+
+#[test]
+fn service_exits_during_prompt_unavailable() {
+    block_on(async {
+        let Some(server) = session().await else {
+            return;
+        };
+        let name = unique_name();
+        let state = serve(&server, &name, with_default()).await;
+        let Some(conn) = session().await else {
+            return;
+        };
+        // A long timeout: only the owner going away may end the wait.
+        let client = SecretService::connect(conn, &name)
+            .with_prompt_timeout(std::time::Duration::from_secs(30));
+        client.put(RULES_KEY, "l", b"secret").await.unwrap();
+        {
+            let mut s = state.lock().unwrap();
+            s.locked = true;
+            s.hang = true;
+        }
+        let watcher = {
+            let state = state.clone();
+            let name = name.clone();
+            std::thread::spawn(move || {
+                while state.lock().unwrap().prompt_calls == 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                block_on(server.release_name(name.as_str())).unwrap();
+            })
+        };
+        let err = client
+            .get(RULES_KEY, Interaction::Allowed)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err,
+            SecretError::Unavailable("keyring service went away".into())
+        );
+        watcher.join().unwrap();
+    });
+}
+
+#[test]
+fn locked_item_in_unlocked_collection_unlocks() {
+    block_on(async {
+        let Some((_server, state, client)) = setup(with_default()).await else {
+            return;
+        };
+        client.put(RULES_KEY, "l", b"secret").await.unwrap();
+        let id = *state.lock().unwrap().items.keys().next().unwrap();
+        state.lock().unwrap().locked_items.insert(id);
+        let err = client.get(RULES_KEY, Interaction::Never).await.unwrap_err();
+        assert_eq!(err, SecretError::Locked);
+        assert_eq!(state.lock().unwrap().unlock_calls, 0);
+        let got = client
+            .get(RULES_KEY, Interaction::Allowed)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(got.as_bytes(), b"secret");
+        let s = state.lock().unwrap();
+        assert_eq!(s.unlock_calls, 1);
+        assert_eq!(s.prompt_calls, 0);
+    });
+}

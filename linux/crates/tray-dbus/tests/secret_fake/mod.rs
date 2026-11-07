@@ -3,7 +3,7 @@
 
 #![allow(dead_code)]
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -27,6 +27,10 @@ pub struct State {
     pub locked: bool,
     /// What the unlock prompt does: true = the user approves.
     pub approve: bool,
+    /// The prompt never completes.
+    pub hang: bool,
+    /// Items locked on their own, inside a collection that may be unlocked.
+    pub locked_items: BTreeSet<u32>,
     pub items: BTreeMap<u32, Stored>,
     next_id: u32,
     /// `(algorithm, input)` of every `OpenSession`.
@@ -34,6 +38,7 @@ pub struct State {
     pub unlock_calls: u32,
     pub prompt_calls: u32,
     pub get_secret_calls: u32,
+    pub dismiss_calls: u32,
 }
 
 pub type Shared = Arc<Mutex<State>>;
@@ -82,11 +87,22 @@ impl Service {
     fn unlock(&self, objects: Vec<OwnedObjectPath>) -> (Vec<OwnedObjectPath>, OwnedObjectPath) {
         let mut s = self.0.lock().unwrap();
         s.unlock_calls += 1;
-        if s.locked {
-            (vec![], path(PROMPT))
-        } else {
-            (objects, path(NONE))
+        let mut unlocked = Vec::new();
+        let mut prompt = false;
+        for o in objects {
+            if o.as_str() == COLLECTION {
+                prompt |= s.locked;
+            } else if let Some(id) = o
+                .as_str()
+                .strip_prefix(&format!("{COLLECTION}/"))
+                .and_then(|n| n.parse().ok())
+            {
+                // An item is unlocked directly, without a prompt.
+                s.locked_items.remove(&id);
+                unlocked.push(o);
+            }
         }
+        (unlocked, path(if prompt { PROMPT } else { NONE }))
     }
 }
 
@@ -109,6 +125,9 @@ impl Prompt {
         let approved = {
             let mut s = self.0.lock().unwrap();
             s.prompt_calls += 1;
+            if s.hang {
+                return Ok(());
+            }
             if s.approve {
                 s.locked = false;
             }
@@ -121,6 +140,10 @@ impl Prompt {
         };
         Self::completed(&emitter, !approved, result).await?;
         Ok(())
+    }
+
+    fn dismiss(&self) {
+        self.0.lock().unwrap().dismiss_calls += 1;
     }
 
     #[zbus(signal)]
@@ -210,7 +233,7 @@ impl Item {
     fn get_secret(&self, session: OwnedObjectPath) -> zbus::fdo::Result<Wire> {
         let mut s = self.0.lock().unwrap();
         s.get_secret_calls += 1;
-        if s.locked {
+        if s.locked || s.locked_items.contains(&self.1) {
             return Err(zbus::fdo::Error::Failed("item is locked".into()));
         }
         let it = s
@@ -232,7 +255,8 @@ impl Item {
 
     #[zbus(property)]
     fn locked(&self) -> bool {
-        self.0.lock().unwrap().locked
+        let s = self.0.lock().unwrap();
+        s.locked || s.locked_items.contains(&self.1)
     }
 }
 

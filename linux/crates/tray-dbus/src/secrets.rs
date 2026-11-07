@@ -15,8 +15,9 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::atomic::{Ordering, compiler_fence};
+use std::time::Duration;
 
-use futures_lite::StreamExt;
+use futures_lite::{StreamExt, future};
 use serde::{Deserialize, Serialize};
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Type, Value};
 
@@ -29,6 +30,13 @@ pub const PROXY_CA_KEY: &str = "proxy-ca-key/v1";
 
 /// `xdg:schema` of every item we store.
 pub const SCHEMA: &str = "ua.SkeLLLa.cAInary.Secret";
+
+/// How long a prompt may stay open before we give up on it: the user is expected to type a
+/// password, so this is generous. Tests shorten it with [`SecretService::with_prompt_timeout`].
+pub const PROMPT_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// How long the best-effort `Prompt.Dismiss` after a timeout may take.
+const DISMISS_WAIT: Duration = Duration::from_secs(2);
 
 const APPLICATION: &str = "cainary";
 const CONTENT_TYPE: &str = "application/octet-stream";
@@ -218,6 +226,8 @@ trait Item {
 trait Prompt {
     fn prompt(&self, window_id: &str) -> zbus::Result<()>;
 
+    fn dismiss(&self) -> zbus::Result<()>;
+
     #[zbus(signal)]
     fn completed(&self, dismissed: bool, result: OwnedValue) -> zbus::Result<()>;
 }
@@ -228,6 +238,7 @@ trait Prompt {
 pub struct SecretService {
     conn: zbus::Connection,
     dest: String,
+    prompt_timeout: Duration,
 }
 
 impl SecretService {
@@ -237,7 +248,14 @@ impl SecretService {
         Self {
             conn,
             dest: dest.into(),
+            prompt_timeout: PROMPT_TIMEOUT,
         }
+    }
+
+    /// Overrides how long a prompt may stay open ([`PROMPT_TIMEOUT`]).
+    pub fn with_prompt_timeout(mut self, timeout: Duration) -> Self {
+        self.prompt_timeout = timeout;
+        self
     }
 
     pub fn connect_default(conn: zbus::Connection) -> Self {
@@ -295,6 +313,7 @@ impl SecretService {
         Ok(Open {
             conn: self.conn.clone(),
             dest: self.dest.clone(),
+            prompt_timeout: self.prompt_timeout,
             service,
             collection,
             session,
@@ -316,6 +335,7 @@ fn attributes(item: &str) -> Vec<(&'static str, String)> {
 struct Open {
     conn: zbus::Connection,
     dest: String,
+    prompt_timeout: Duration,
     service: ServiceProxy<'static>,
     collection: OwnedObjectPath,
     session: OwnedObjectPath,
@@ -374,7 +394,15 @@ impl Open {
             if interaction == Interaction::Never {
                 return Err(SecretError::Locked);
             }
-            self.unlock().await?;
+            // Only what is locked: an item can be locked inside an unlocked collection.
+            let mut locked = Vec::new();
+            if item.locked().await? {
+                locked.push(item.inner().path().to_owned());
+            }
+            if self.collection().await?.locked().await? {
+                locked.push(self.collection.as_ref().to_owned());
+            }
+            self.unlock(&locked).await?;
             if item.locked().await? {
                 return Err(SecretError::Locked);
             }
@@ -386,7 +414,7 @@ impl Open {
     async fn put(&self, label: &str, bytes: &[u8]) -> Result<(), SecretError> {
         let collection = self.collection().await?;
         if collection.locked().await? {
-            self.unlock().await?;
+            self.unlock(&[self.collection.as_ref().to_owned()]).await?;
         }
         let attributes: HashMap<String, String> = self
             .attributes
@@ -414,7 +442,7 @@ impl Open {
             return Ok(());
         };
         if self.collection().await?.locked().await? {
-            self.unlock().await?;
+            self.unlock(&[self.collection.as_ref().to_owned()]).await?;
         }
         let prompt = self.item(path).await?.delete().await?;
         if prompt.as_str() != NONE_PATH && self.prompt(prompt).await? {
@@ -423,31 +451,69 @@ impl Open {
         Ok(())
     }
 
-    /// Unlocks the collection, following the prompt. A dismissed prompt is `Locked`.
-    async fn unlock(&self) -> Result<(), SecretError> {
-        let (_, prompt) = self.service.unlock(&[self.collection.as_ref()]).await?;
+    /// Unlocks `objects`, following the prompt. A dismissed prompt is `Locked`.
+    async fn unlock(&self, objects: &[ObjectPath<'_>]) -> Result<(), SecretError> {
+        let (_, prompt) = self.service.unlock(objects).await?;
         if prompt.as_str() != NONE_PATH && self.prompt(prompt).await? {
-            return Err(SecretError::Locked);
-        }
-        if self.collection().await?.locked().await? {
             return Err(SecretError::Locked);
         }
         Ok(())
     }
 
-    /// Runs a prompt; true when the user dismissed it.
+    /// Runs a prompt; true when the user dismissed it. Gives up when the service goes away or
+    /// `prompt_timeout` passes, so a stuck keyring can't hang the caller.
     async fn prompt(&self, path: OwnedObjectPath) -> Result<bool, SecretError> {
+        enum Outcome {
+            Done(bool),
+            Gone,
+            TimedOut,
+        }
         let prompt = PromptProxy::builder(&self.conn)
             .destination(self.dest.clone())?
             .path(path)?
             .build()
             .await?;
-        // Subscribe first: the signal may arrive before the method returns.
+        // Subscribe to both before calling: the signal may arrive before the method returns,
+        // and zbus doesn't end a signal stream when the service's owner goes away.
         let mut completed = prompt.receive_completed().await?;
-        prompt.prompt("").await?;
-        let Some(signal) = completed.next().await else {
-            return Err(SecretError::Bus("connection closed during a prompt".into()));
+        let mut owner = zbus::fdo::DBusProxy::new(&self.conn)
+            .await?
+            .receive_name_owner_changed()
+            .await?;
+        let dest = self.dest.as_str();
+        let done = async {
+            prompt.prompt("").await?;
+            match completed.next().await {
+                Some(signal) => Ok(Outcome::Done(signal.args()?.dismissed)),
+                None => Err(SecretError::Bus("connection closed during a prompt".into())),
+            }
         };
-        Ok(signal.args()?.dismissed)
+        let gone = async {
+            while let Some(signal) = owner.next().await {
+                let args = signal.args()?;
+                if args.name.as_str() == dest && args.new_owner.is_none() {
+                    return Ok(Outcome::Gone);
+                }
+            }
+            future::pending().await
+        };
+        let timeout = async {
+            async_io::Timer::after(self.prompt_timeout).await;
+            Ok(Outcome::TimedOut)
+        };
+        match future::or(done, future::or(gone, timeout)).await? {
+            Outcome::Done(dismissed) => Ok(dismissed),
+            Outcome::Gone => Err(SecretError::Unavailable("keyring service went away".into())),
+            Outcome::TimedOut => {
+                let dismiss = async {
+                    let _ = prompt.dismiss().await;
+                };
+                let bound = async {
+                    async_io::Timer::after(DISMISS_WAIT).await;
+                };
+                future::or(dismiss, bound).await;
+                Err(SecretError::Bus("prompt timed out".into()))
+            }
+        }
     }
 }
