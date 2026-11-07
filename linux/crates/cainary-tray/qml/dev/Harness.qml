@@ -17,6 +17,8 @@ Item {
     }
     readonly property bool live: args.indexOf("--live") >= 0
     readonly property var filters: args.filter(x => !x.startsWith("--"))
+    // --width=N: resize the window (e.g. 640, the narrowest Details allows).
+    readonly property int width_: parseInt((args.find(x => x.startsWith("--width=")) || "--width=0").slice(8))
     readonly property var shots: S.scenarios.filter(s =>
         filters.length === 0 || filters.some(f => s.name.indexOf(f) >= 0))
     property int i: 0
@@ -28,6 +30,8 @@ Item {
             w.showSelection(s.selection);
         else if (s.window === "about")
             w.present();
+        if (width_ > 0)
+            w.width = width_;
         w.show();
         w.requestActivate();
         return w;
