@@ -8,6 +8,7 @@ pub mod instance;
 pub mod logind;
 pub mod notifications;
 pub mod portal;
+pub mod secrets;
 pub mod tray;
 pub mod watcher;
 

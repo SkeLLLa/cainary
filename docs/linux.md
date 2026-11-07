@@ -116,6 +116,11 @@ window size is remembered, the position isn't (Wayland can't set it). Settings i
 same window. `QT_QUICK_CONTROLS_STYLE` is chosen only when unset: `org.kde.desktop` if importable,
 else `Fusion`.
 
+**Secret store.** Keys that must survive a restart (the rules key, the proxy CA key) go in the
+login keyring through a small hand-written Secret Service client in `tray-dbus` (`secrets.rs`),
+with no libsecret, glib or GTK. Startup never unlocks the keyring; prompts only follow a user
+action. Design, error mapping and the same-user caveat: [design/secret-store.md](design/secret-store.md).
+
 ## 2. Popup placement
 
 A tray click delivers `Activate(x, y)`. Where the popup goes depends on the session. The strategy
