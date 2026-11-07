@@ -383,8 +383,8 @@ arguments.
 
 The collector settings include an optional **HTTPS takeover**. It listens on loopback, uses port
 8443 by default, and only handles the host names listed there. Suggestions come from Claude Code
-and Codex telemetry endpoints in the latest scan report. A privileged-port bind failure includes
-the helper's note in a copyable error box in Details.
+and Codex telemetry endpoints in the latest scan report. A privileged-port failure offers **Open port N**
+(see [Opening a port below 1024](#opening-a-port-below-1024)).
 
 The Details page shows the takeover setup lines, local CA path and fingerprint. **Let Claude Code
 trust the collector…** first asks the helper for a dry-run preview. The confirmation dialog shows
@@ -406,6 +406,33 @@ collector.
 The tray looks for the collector binary in this order: `CAINARY_OTEL_DEBUG` in development mode,
 next to `cainary-tray`, then `/usr/bin/cainary-otel-debug`. It never searches `PATH`. Packaged
 Linux builds include the binary.
+
+### Opening a port below 1024
+
+Ports 1–1023 (443 for the HTTPS takeover) need administrator permission to listen on. The tray
+never asks on its own. When the collector's port is one of them, Setup shows **Port N needs
+administrator permission**:
+
+- **Open port N** (the port helper is installed): click it, authenticate in the system's dialog,
+  and the collector starts on that port. The dialog appears once; settings changes and **Retry**
+  reuse the port without asking again. **Cancelled** or **Not authorized** leave everything as it
+  was; **Port N is already in use** means something else listens there.
+- **The port helper isn't installed**: Setup says why. With a package, install or upgrade the
+  cainary package. From a source checkout, run `mise run linux:helper`, which builds the helper and
+  prints the commands an administrator runs to install it (the tray never runs them).
+- A helper of another build still works, with a warning to update it. A helper that speaks another
+  protocol is refused until it is updated.
+
+While the tray holds the port and the collector is stopped, Setup says **Port N reserved;
+collector stopped**; **Retry** starts it again on the same port. The tray gives the port back when
+the collector is switched off, the port changes, the collector fails to start (it then offers
+**Open port N** again), after ten minutes of being stopped, or when you quit the tray. Port numbers
+1024 and above need none of this.
+
+When the collector can't start, a box on Setup says why and offers one action: **Open port N**
+(`port-privileged`, `listen-fd`), **Add host name** (`tls-no-host`), **Try port N+1**
+(`port-in-use`). The page header repeats the reason in one line. Other failures show the
+collector's own message and its copyable stderr.
 
 ### Privileged ports (root helper)
 

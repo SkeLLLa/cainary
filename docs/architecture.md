@@ -33,6 +33,15 @@ Design rules, in priority order:
    command or the GUI's confirm button), `cainary-otel-debug` sets one key,
    `env.NODE_EXTRA_CA_CERTS`, in the user's `~/.claude/settings.json`, after a backup, and can
    undo it. It never edits Codex configuration, shell profiles or any system trust store.
+   A port below 1024 is the narrow exception to "the tray holds no privilege": a fixed root
+   helper (`cainary-bind-helper`, a few hundred lines, no file access, no exec) is started only
+   by an explicit "Open port N" click, through the system's authentication dialog. It binds
+   `127.0.0.1` and `::1` on that port and hands the listening sockets back, then exits. The tray
+   keeps them while the collector is on and passes them to the collector, which validates each
+   one and never binds by itself instead. The tray and the collector never hold a capability, and
+   no file gets one. The tray never asks at startup, autostart or retry; it closes its copy of
+   the sockets when the collector is switched off, the port changes, the collector fails to
+   start, or the tray quits (§12.6, [linux.md](linux.md#privileged-ports-root-helper)).
    `cainary` itself still writes nothing outside its prefs. Guards (§10) keep network code out of
    `cainary-core` and `cainary-cli`.
 2. **Truthful.** Every rule cites an official vendor doc. A rule that isn't confirmed by one is
