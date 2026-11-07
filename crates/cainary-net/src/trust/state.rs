@@ -559,11 +559,11 @@ pub(super) fn rebuild(
                 .as_ref()
                 .filter(|c| c.written == expected_path(ca, target))
                 .ok_or(Refused::NoSource)?;
-            let originals = c
-                .original
-                .as_deref()
-                .and_then(|p| read_original(ca, Path::new(p)))
-                .ok_or(Refused::NoSource)?;
+            // No original: the bundle holds only the mode certificates.
+            let originals = match c.original.as_deref() {
+                None => Vec::new(),
+                Some(p) => read_original(ca, Path::new(p)).ok_or(Refused::NoSource)?,
+            };
             (CLAUDE_BUNDLE, Rec::of(c.bundle_sha.as_deref()), originals)
         }
         Target::Codex => {

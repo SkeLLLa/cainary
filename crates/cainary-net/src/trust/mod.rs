@@ -784,7 +784,10 @@ mod tests {
         apply(&fx);
         let s = st(&fx);
         assert_eq!(s["claudeCode"]["state"], "applied");
-        assert_eq!(s["claudeCode"]["value"], fx.ca_path());
+        assert_eq!(
+            s["claudeCode"]["value"],
+            fx.ca_dir.join(CLAUDE_BUNDLE).display().to_string()
+        );
         assert_eq!(s["caPath"], fx.ca_path());
         // The documented shape, in order.
         let line = status_json(&fx.env(), "T");
@@ -862,7 +865,7 @@ mod tests {
         assert!(
             v["backupPath"].is_null()
                 && v["from"].is_null()
-                && v["bundlePath"].is_null()
+                && v["bundlePath"].is_string()
                 && v["command"].is_null()
         );
         assert_eq!(v["key"], KEY);

@@ -1123,6 +1123,7 @@ fn trust_through_the_binary_applies_reports_and_undoes() {
     std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
     let settings = home.join(".claude/settings.json");
     let ca = home.join("state/cainary/otel-debug-ca.pem");
+    let bundle = home.join("state/cainary/otel-debug-claude-bundle.pem");
 
     let st = json_line(
         &trust_bin(&home)
@@ -1148,7 +1149,7 @@ fn trust_through_the_binary_applies_reports_and_undoes() {
         (json!("trust"), json!("claude-code"), json!("preview"))
     );
     assert_eq!(v["key"], "NODE_EXTRA_CA_CERTS");
-    assert_eq!(v["to"], ca.display().to_string());
+    assert_eq!(v["to"], bundle.display().to_string());
     assert!(!settings.exists());
 
     // Apply, then again (already), then the status, then undo.
@@ -1162,7 +1163,7 @@ fn trust_through_the_binary_applies_reports_and_undoes() {
         serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
     assert_eq!(
         written["env"]["NODE_EXTRA_CA_CERTS"],
-        ca.display().to_string()
+        bundle.display().to_string()
     );
     assert_eq!(
         json_line(

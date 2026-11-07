@@ -2,7 +2,7 @@
 //! with a backup and a recorded transaction, and undone from that record.
 
 use super::bundle::{
-    COLLECTOR_MISSING, bundle, cert_fingerprint, collector_ca, read_original, sha_of,
+    COLLECTOR_MISSING, bundle, cert_fingerprint, collector_ca, mode_cas, read_original, sha_of,
 };
 use super::files::{
     Done, MAX_FILE, Replace, Snapshot, TrustLock, Why, backup, discard, lock_trust, plain_name,
@@ -181,7 +181,7 @@ pub fn claude_code(env: &Env<'_>, mode: Mode) -> Line {
     }
 }
 
-const NOT_YET: &str = "Adding a second mode to this Claude Code setup isn't supported yet.";
+const NOT_YET: &str = "Apply the takeover first; adding another mode to Claude Code needs it.";
 
 /// The registry-ordered mode set after adding (or, with `undo`, removing) `mode`.
 pub(super) fn modes_with(cur: &[String], mode: &str, undo: bool) -> Vec<String> {
@@ -308,9 +308,190 @@ pub(super) fn claude_mode(env: &Env<'_>, mode: &str, undo: bool) -> Line {
         None if mode == TAKEOVER && undo => claude_undo(env, false, &ca, Some(&lock)),
         None if mode == TAKEOVER => claude_apply(env, false, Some(&ca), Some(&lock)),
         None if undo => nothing_changed(t),
-        None => Line::refused(t, NOT_YET),
+        // A direct-path record gets the owned bundle only now that a second mode needs one.
+        None => match state
+            .claude
+            .clone()
+            .filter(|c| c.written == ca_path_here(&ca))
+        {
+            Some(cs) => {
+                let new_modes = modes_with(&cs.modes, mode, false);
+                if new_modes == cs.modes {
+                    let mut l = Line::new(t, Action::Already, "");
+                    l.message = format!("Claude Code already trusts the {mode} certificate.");
+                    l
+                } else {
+                    claude_migrate(env, &ca, &lock, &state, cs, &new_modes)
+                }
+            }
+            None => Line::refused(t, NOT_YET),
+        },
     };
     prefixed(note, line)
+}
+
+fn ca_path_here(ca: &CaDir) -> String {
+    ca.path().join(CA_FILE).display().to_string()
+}
+
+/// Moves a direct-path record (`NODE_EXTRA_CA_CERTS` = the collector certificate) to the owned
+/// bundle holding `new_modes`: publish the bundle, set the key under a pending apply, commit. The
+/// old record's original, backup and creation flags carry over, so an undo restores the same bytes.
+fn claude_migrate(
+    env: &Env<'_>,
+    ca: &CaDir,
+    _lock: &TrustLock,
+    state: &State,
+    old: ClaudeState,
+    new_modes: &[String],
+) -> Line {
+    let t = Target::ClaudeCode;
+    if managed_sets_key(env.harness) {
+        return Line::refused(
+            t,
+            "Your organization's managed settings set NODE_EXTRA_CA_CERTS; they override this.",
+        );
+    }
+    let settings = match open_settings(env, false) {
+        Ok(Some(s)) if s.snapshot.is_some() => s,
+        Ok(_) => return Line::refused(t, CHANGED),
+        Err(l) => return *l,
+    };
+    let fail = |m: &str| {
+        let mut l = Line::refused(t, m);
+        fill_paths(&mut l, &settings);
+        l
+    };
+    if old.settings_path != settings.path_str() {
+        return fail(WHERE_CHANGED);
+    }
+    let text = settings.text();
+    let doc = match parse_settings(&settings, &text) {
+        Ok(Some(d)) => d,
+        Ok(None) => return fail(CHANGED),
+        Err(l) => return *l,
+    };
+    match doc.env_value(KEY) {
+        Ok(v) if v.as_deref() == Some(old.written.as_str()) => {}
+        Ok(_) => return fail("The setting changed since cAInary wrote it; leaving it alone."),
+        Err(e) => return fail(edit_text(e)),
+    }
+    let originals = match old.original.as_deref() {
+        None => Vec::new(),
+        Some(p) => match read_original(ca, Path::new(p)) {
+            Some(c) => c,
+            None => return fail(rebuild_refusal(t, Refused::NoSource).as_str()),
+        },
+    };
+    let cas = match mode_cas(ca, new_modes) {
+        Ok(c) => c,
+        Err(m) => return fail(rebuild_refusal(t, Refused::MissingCa(m.0)).as_str()),
+    };
+    let bundle_path = ca.path().join(CLAUDE_BUNDLE).display().to_string();
+    let bundle_text = bundle(&originals, &cas);
+    let new_text = match doc.set_env_value(KEY, &bundle_path) {
+        Ok(n) => n,
+        Err(e) => return fail(edit_text(e)),
+    };
+    if new_text.len() > MAX_FILE || bundle_text.len() > MAX_FILE {
+        return fail(
+            "The edited settings file or bundle would be over 1 MiB; refusing to edit it.",
+        );
+    }
+    let rec = bundle_rec(state, &bundle_path);
+    if !check_owned(ca, CLAUDE_BUNDLE, &rec).allows_write(bundle_text.as_bytes()) {
+        return fail(UNRECORDED_BUNDLE);
+    }
+    let before = settings.snapshot.as_ref().map(|s| sha_of(&s.bytes));
+    let was = old.written.clone();
+    let cs = ClaudeState {
+        written: bundle_path.clone(),
+        new_sha: Some(sha_of(new_text.as_bytes())),
+        bundle_sha: Some(sha_of(bundle_text.as_bytes())),
+        modes: new_modes.to_vec(),
+        ..old
+    };
+    let mut pending_state = state.clone();
+    pending_state.pending = Some(Pending {
+        kind: PendingKind::Apply,
+        claude: cs.clone(),
+        before,
+        after: cs.new_sha.clone(),
+    });
+    if save_state(ca, &pending_state).is_err() {
+        return fail("The state file could not be written; nothing was changed.");
+    }
+    // The bundle first (journaled in the pending state): until the key is set nothing refers to it.
+    match publish_bundle(
+        ca,
+        &mut pending_state,
+        t,
+        CLAUDE_BUNDLE,
+        &rec,
+        bundle_text.as_bytes(),
+    ) {
+        Ok(_) => {}
+        Err(Refused::Uncertain) => return fail(UNCERTAIN),
+        Err(Refused::Crashed) => return fail("(simulated crash)"),
+        Err(r) => {
+            let _ = save_state(ca, state);
+            return fail(&rebuild_refusal(t, r));
+        }
+    }
+    let after_bundle = || {
+        let mut s = state.clone();
+        s.journal.clone_from(&pending_state.journal);
+        s
+    };
+    let tmp = match stage(&settings.dir, "settings.json", new_text.as_bytes(), 0o600) {
+        Ok(t) => t,
+        Err(_) => {
+            let _ = save_state(ca, &after_bundle());
+            return fail("The settings file could not be written; nothing was changed.");
+        }
+    };
+    if !unchanged_since(&settings, "apply") {
+        discard(&settings.dir, &tmp);
+        let _ = save_state(ca, &after_bundle());
+        return fail(CHANGED);
+    }
+    if hook::stop("before-rename") {
+        return fail("(simulated crash)");
+    }
+    match publish(&settings.dir, &tmp, "settings.json") {
+        Ok(()) => {}
+        Err(Done::No) => {
+            let _ = save_state(ca, &after_bundle());
+            return fail("The settings file could not be written; nothing was changed.");
+        }
+        Err(Done::Uncertain) => return fail(UNCERTAIN),
+    }
+    if hook::stop("after-rename") {
+        return fail("(simulated crash)");
+    }
+    let mut committed = state.clone();
+    committed.claude = Some(cs);
+    if save_state(ca, &committed).is_err() {
+        return fail(
+            "The change was made, but its record could not be saved. Run cainary-otel-debug --trust-status to finish it.",
+        );
+    }
+    let mut l = Line::new(
+        t,
+        Action::Applied,
+        with_shell(
+            env.harness,
+            &format!(
+                "Claude Code will trust the {} certificates once it is restarted.",
+                new_modes.join(" and ")
+            ),
+        ),
+    );
+    fill_paths(&mut l, &settings);
+    l.from = Some(was);
+    l.to = Some(bundle_path.clone());
+    l.bundle_path = Some(bundle_path);
+    l
 }
 
 fn nothing_changed(t: Target) -> Line {
@@ -389,10 +570,12 @@ fn claude_apply(
     let mut line = Line::new(t, Action::Already, "");
     fill_paths(&mut line, &settings);
     line.to = existing.clone();
+    // Also an unfinished apply of ours (a preview doesn't settle it): the bundle is already set.
     let recorded_here = state
         .claude
-        .as_ref()
-        .is_some_and(|c| c.written == bundle_path && c.settings_path == settings.path_str());
+        .iter()
+        .chain(state.pending.iter().map(|p| &p.claude))
+        .any(|c| c.written == bundle_path && c.settings_path == settings.path_str());
     if existing.as_deref() == Some(ca_path.as_str())
         || (existing.as_deref() == Some(bundle_path.as_str()) && recorded_here)
     {
@@ -406,7 +589,17 @@ fn claude_apply(
 
     // What to write, and the bundle it may need.
     let (written, bundle_text, orig_fps): (String, Option<String>, Vec<String>) = match &existing {
-        None => (ca_path.clone(), None, Vec::new()),
+        // The owned bundle, holding only the enabled modes' certificates. A preview without the
+        // certificate yet only describes it.
+        None => match ca.map(|d| mode_cas(d, &[TAKEOVER.to_string()])) {
+            Some(Ok(cas)) => (bundle_path.clone(), Some(bundle(&[], &cas)), Vec::new()),
+            Some(Err(_)) if !dry_run => {
+                let mut l = Line::refused(t, COLLECTOR_MISSING);
+                fill_paths(&mut l, &settings);
+                return l;
+            }
+            _ => (bundle_path.clone(), None, Vec::new()),
+        },
         Some(p) => {
             let collector = match ca.map(collector_ca) {
                 Some(Ok(c)) => c,
@@ -491,7 +684,7 @@ fn claude_apply(
         .map(|_| format!("settings.json.cainary-{stamp_now}.bak"));
     line.from = existing.clone();
     line.to = Some(written.clone());
-    line.bundle_path = bundle_text.as_ref().map(|_| bundle_path.clone());
+    line.bundle_path = (written == bundle_path).then(|| bundle_path.clone());
     line.backup_path = planned_backup
         .as_ref()
         .map(|n| settings.dir.path().join(n).display().to_string());
@@ -499,7 +692,16 @@ fn claude_apply(
         line.action = Action::Preview;
         line.message = with_shell(
             h,
-            &if bundle_text.is_some() {
+            &if existing.is_none() {
+                format!(
+                    "Would point env.NODE_EXTRA_CA_CERTS at a bundle holding the collector certificate in your Claude Code settings{}. {RESTART} {ORG_NOTE}",
+                    if planned_backup.is_some() {
+                        ", after a backup"
+                    } else {
+                        ""
+                    }
+                )
+            } else if bundle_text.is_some() {
                 format!(
                     "Would point env.NODE_EXTRA_CA_CERTS at a combined bundle (your current file plus the collector certificate) in your Claude Code settings, after a backup. {RESTART} {ORG_NOTE}"
                 )
@@ -666,7 +868,7 @@ fn preview_new_claude(env: &Env<'_>) -> Line {
     );
     l.settings_path = Some(dir.join("settings.json").display().to_string());
     l.key = Some(KEY);
-    l.to = Some(env.ca_dir.join(CA_FILE).display().to_string());
+    l.to = Some(env.ca_dir.join(CLAUDE_BUNDLE).display().to_string());
     l
 }
 
@@ -1085,6 +1287,10 @@ mod tests {
     use std::fs;
     use std::os::unix::fs::{PermissionsExt, symlink};
 
+    fn bundle_of(fx: &Fx) -> String {
+        fx.ca_dir.join(CLAUDE_BUNDLE).display().to_string()
+    }
+
     #[test]
     fn a_missing_settings_file_is_previewed_then_created_with_only_the_key() {
         let fx = Fx::new("create", "");
@@ -1102,14 +1308,14 @@ mod tests {
         let a = apply(&fx);
         assert_eq!((a.action, a.code()), (Action::Applied, 0), "{a:?}");
         assert_eq!(a.key, Some(KEY));
-        assert_eq!(a.to.as_deref(), Some(fx.ca_path().as_str()));
+        assert_eq!(a.to.as_deref(), Some(bundle_of(&fx).as_str()));
         assert_eq!(a.from, None);
         assert_eq!(a.backup_path, None, "no backup when there was no file");
         assert_eq!(
             fx.read_settings(),
             format!(
                 "{{\n  \"env\": {{\n    \"{KEY}\": \"{}\"\n  }}\n}}\n",
-                fx.ca_path()
+                bundle_of(&fx)
             )
         );
         assert_eq!(mode(&fx.settings()), 0o600);
@@ -1155,14 +1361,14 @@ mod tests {
             after.replace(
                 &format!(
                     ",\n    \"env\": {{\n        \"{KEY}\": \"{}\"\n    }}",
-                    fx.ca_path()
+                    bundle_of(&fx)
                 ),
                 ""
             ),
             original,
             "everything but the added member is byte-identical"
         );
-        assert_eq!(env_key(&fx), Some(fx.ca_path()));
+        assert_eq!(env_key(&fx), Some(bundle_of(&fx)));
         // Undo removes the key it added (and the env object it created), keeping the rest.
         let u = undo(&fx);
         assert_eq!(u.action, Action::Undone, "{u:?}");
@@ -1424,7 +1630,9 @@ mod tests {
         );
         assert!(fx.baks().is_empty(), "the stale backup is removed");
         assert!(
-            state_bytes(&fx).is_none(),
+            read_state(&CaDir::open_existing(&fx.ca_dir).unwrap().unwrap())
+                .pending
+                .is_none(),
             "no half-finished record is left"
         );
         // A retry now works from the new contents.
@@ -1475,7 +1683,7 @@ mod tests {
         assert_eq!(apply(&fx).action, Action::Applied);
         let ours = fx.read_settings();
         let settings = fx.settings();
-        let ca = fx.ca_path();
+        let ca = bundle_of(&fx);
         // Between undo's read of "only our key" and its delete, the user adds a key.
         on_cas(move |point| {
             if point == "undo" {
@@ -2265,25 +2473,214 @@ mod tests {
         }
     }
 
+    /// What an older cAInary left for a takeover-only user: `settings.json` pointing straight at
+    /// the collector certificate, with a backup of `original` and a record for it.
+    fn direct_record(fx: &Fx, original: &str) {
+        fx.write_settings(original);
+        let ca = CaDir::open_existing(&fx.ca_dir).unwrap().unwrap();
+        let settings = open_settings(&fx.env(), false).unwrap().unwrap();
+        let text = settings.text();
+        let new_text = jsonedit::parse(&text)
+            .unwrap()
+            .set_env_value(KEY, &fx.ca_path())
+            .unwrap();
+        let name = backup(&settings.dir, "settings.json", original.as_bytes(), "t").unwrap();
+        fs::write(fx.settings(), &new_text).unwrap();
+        let mut st = read_state(&ca);
+        st.claude = Some(ClaudeState {
+            settings_path: settings.path_str(),
+            original: None,
+            written: fx.ca_path(),
+            created_env: true,
+            created_file: false,
+            orig_sha: Some(sha_of(original.as_bytes())),
+            backup: Some(name),
+            new_sha: Some(sha_of(new_text.as_bytes())),
+            modes: vec![TAKEOVER.to_string()],
+            bundle_sha: None,
+            orig_fps: Vec::new(),
+        });
+        save_state(&ca, &st).unwrap();
+    }
+
+    fn claude_rec(fx: &Fx) -> ClaudeState {
+        read_state(&CaDir::open_existing(&fx.ca_dir).unwrap().unwrap())
+            .claude
+            .unwrap()
+    }
+
+    const OPUS: &str = "{\n  \"model\": \"opus\"\n}\n";
+
     #[test]
-    fn a_direct_path_claude_record_takes_no_second_mode_yet() {
-        let fx = Fx::new("direct-two", "");
-        assert_eq!(apply(&fx).action, Action::Applied);
+    fn new_apply_points_at_bundle() {
+        let fx = Fx::new("new-bundle", "");
+        fx.write_settings(OPUS);
+        let p = preview(&fx);
+        assert_eq!(p.to.as_deref(), Some(bundle_of(&fx).as_str()), "{p:?}");
+        let a = apply(&fx);
+        assert_eq!(a.action, Action::Applied, "{a:?}");
+        assert_eq!(a.to.as_deref(), Some(bundle_of(&fx).as_str()));
+        assert_eq!(env_key(&fx), Some(bundle_of(&fx)));
+        assert_eq!(certs_of(&fx, CLAUDE_BUNDLE), [CA1]);
+        let c = claude_rec(&fx);
+        assert_eq!((c.original, c.written), (None, bundle_of(&fx)));
+        assert_eq!(c.modes, [TAKEOVER]);
+        // A second mode is a plain rebuild now, and the last undo removes everything.
         fs::write(fx.ca_dir.join(PROXY_CA_FILE), PROXY_CA).unwrap();
-        let settings = fx.read_settings();
-        let a = apply_mode(&fx.env(), Target::ClaudeCode, PROXY);
-        assert_eq!(a.action, Action::Refused);
-        assert!(a.message.contains("isn't supported yet"));
-        assert_eq!(fx.read_settings(), settings);
+        let env = fx.env();
+        assert_eq!(
+            apply_mode(&env, Target::ClaudeCode, PROXY).action,
+            Action::Applied
+        );
+        assert_eq!(certs_of(&fx, CLAUDE_BUNDLE), [CA1, PROXY_CA]);
+        assert_eq!(
+            undo_mode(&env, Target::ClaudeCode, TAKEOVER).action,
+            Action::Undone
+        );
+        assert_eq!(certs_of(&fx, CLAUDE_BUNDLE), [PROXY_CA]);
+        assert_eq!(
+            undo_mode(&env, Target::ClaudeCode, PROXY).action,
+            Action::Undone
+        );
+        assert_eq!(fx.read_settings(), OPUS);
+        assert!(!fx.ca_dir.join(CLAUDE_BUNDLE).exists());
+    }
+
+    #[test]
+    fn direct_record_untouched_until_second_mode() {
+        let fx = Fx::new("direct-keep", "");
+        direct_record(&fx, OPUS);
+        let (settings, state) = (fx.read_settings(), state_bytes(&fx));
+        // Takeover again, and the proxy undo: nothing changes.
+        assert_eq!(apply(&fx).action, Action::Already);
         assert_eq!(
             undo_mode(&fx.env(), Target::ClaudeCode, PROXY).action,
             Action::NothingToUndo
         );
-        // Undoing the takeover is the full undo.
+        assert_eq!(fx.read_settings(), settings);
+        assert_eq!(state_bytes(&fx), state);
+        assert!(!fx.ca_dir.join(CLAUDE_BUNDLE).exists());
+        assert_eq!(env_key(&fx), Some(fx.ca_path()));
+    }
+
+    #[test]
+    fn direct_record_migrates_on_second_mode() {
+        let fx = Fx::new("direct-migrate", "");
+        direct_record(&fx, OPUS);
+        let before = claude_rec(&fx);
+        fs::write(fx.ca_dir.join(PROXY_CA_FILE), PROXY_CA).unwrap();
+        let a = apply_mode(&fx.env(), Target::ClaudeCode, PROXY);
+        assert_eq!(a.action, Action::Applied, "{a:?}");
+        assert_eq!(a.from.as_deref(), Some(fx.ca_path().as_str()));
+        assert_eq!(a.to.as_deref(), Some(bundle_of(&fx).as_str()));
+        assert_eq!(env_key(&fx), Some(bundle_of(&fx)));
+        assert_eq!(certs_of(&fx, CLAUDE_BUNDLE), [CA1, PROXY_CA]);
+        let after = claude_rec(&fx);
+        assert_eq!(after.modes, both());
+        assert_eq!(after.written, bundle_of(&fx));
         assert_eq!(
-            undo_mode(&fx.env(), Target::ClaudeCode, TAKEOVER).action,
+            after.bundle_sha,
+            Some(sha_of(
+                fs::read(fx.ca_dir.join(CLAUDE_BUNDLE)).unwrap().as_slice()
+            ))
+        );
+        assert_eq!(after.new_sha, Some(sha_of(fx.read_settings().as_bytes())));
+        assert_eq!(
+            (&after.original, &after.orig_sha, &after.backup),
+            (&before.original, &before.orig_sha, &before.backup)
+        );
+        assert_eq!(
+            (after.created_env, after.created_file),
+            (before.created_env, before.created_file)
+        );
+        let st = read_state(&CaDir::open_existing(&fx.ca_dir).unwrap().unwrap());
+        assert!(st.pending.is_none() && st.journal.is_empty());
+        // Already enabled: nothing more to do.
+        let again = apply_mode(&fx.env(), Target::ClaudeCode, PROXY);
+        assert_eq!(again.action, Action::Already, "{again:?}");
+    }
+
+    #[test]
+    fn migration_crash_before_settings_rolls_back_bundle() {
+        let fx = Fx::new("migrate-crash-a", "");
+        direct_record(&fx, OPUS);
+        let (settings, before) = (fx.read_settings(), claude_rec(&fx));
+        fs::write(fx.ca_dir.join(PROXY_CA_FILE), PROXY_CA).unwrap();
+        stop_at("after-bundle-publish");
+        let a = apply_mode(&fx.env(), Target::ClaudeCode, PROXY);
+        clear_hooks();
+        assert_eq!(a.action, Action::Refused, "{a:?}");
+        assert!(
+            fx.ca_dir.join(CLAUDE_BUNDLE).exists(),
+            "the orphan is on disk"
+        );
+        assert_eq!(fx.read_settings(), settings);
+        let s = status(&fx);
+        assert!(s["note"].as_str().is_some(), "{s}");
+        assert_eq!(claude_rec(&fx), before, "the direct record is kept");
+        assert_eq!(fx.read_settings(), settings);
+        assert!(
+            !fx.ca_dir.join(CLAUDE_BUNDLE).exists(),
+            "the orphan is deleted"
+        );
+        let st = read_state(&CaDir::open_existing(&fx.ca_dir).unwrap().unwrap());
+        assert!(st.pending.is_none() && st.journal.is_empty());
+        // And the migration can be run again.
+        let a = apply_mode(&fx.env(), Target::ClaudeCode, PROXY);
+        assert_eq!(a.action, Action::Applied, "{a:?}");
+    }
+
+    #[test]
+    fn migration_crash_after_settings_commits() {
+        let fx = Fx::new("migrate-crash-b", "");
+        direct_record(&fx, OPUS);
+        fs::write(fx.ca_dir.join(PROXY_CA_FILE), PROXY_CA).unwrap();
+        stop_at("after-rename");
+        let a = apply_mode(&fx.env(), Target::ClaudeCode, PROXY);
+        clear_hooks();
+        assert_eq!(a.action, Action::Refused, "{a:?}");
+        assert_eq!(env_key(&fx), Some(bundle_of(&fx)));
+        let s = status(&fx);
+        assert!(s["note"].as_str().is_some(), "{s}");
+        let c = claude_rec(&fx);
+        assert_eq!(
+            (c.written.as_str(), c.modes),
+            (bundle_of(&fx).as_str(), both())
+        );
+        assert_eq!(certs_of(&fx, CLAUDE_BUNDLE), [CA1, PROXY_CA]);
+        let st = read_state(&CaDir::open_existing(&fx.ca_dir).unwrap().unwrap());
+        assert!(st.pending.is_none() && st.journal.is_empty());
+        assert_eq!(
+            c.bundle_sha,
+            Some(sha_of(
+                fs::read(fx.ca_dir.join(CLAUDE_BUNDLE)).unwrap().as_slice()
+            ))
+        );
+    }
+
+    #[test]
+    fn undo_after_migration_restores_original_bytes() {
+        let fx = Fx::new("migrate-undo", "");
+        direct_record(&fx, OPUS);
+        fs::write(fx.ca_dir.join(PROXY_CA_FILE), PROXY_CA).unwrap();
+        let env = fx.env();
+        assert_eq!(
+            apply_mode(&env, Target::ClaudeCode, PROXY).action,
+            Action::Applied
+        );
+        assert_eq!(
+            undo_mode(&env, Target::ClaudeCode, TAKEOVER).action,
             Action::Undone
         );
-        assert!(!fx.settings().exists());
+        assert_eq!(certs_of(&fx, CLAUDE_BUNDLE), [PROXY_CA]);
+        let u = undo_mode(&env, Target::ClaudeCode, PROXY);
+        assert_eq!(u.action, Action::Undone, "{u:?}");
+        assert_eq!(fx.read_settings(), OPUS, "the user's original bytes");
+        assert!(!fx.ca_dir.join(CLAUDE_BUNDLE).exists());
+        assert!(
+            read_state(&CaDir::open_existing(&fx.ca_dir).unwrap().unwrap())
+                .claude
+                .is_none()
+        );
     }
 }
