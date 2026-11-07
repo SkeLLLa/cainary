@@ -407,7 +407,7 @@ fn check_n1(srcs: &[Src]) -> Vec<String> {
 }
 
 /// N2: `std::fs` only in `logfile.rs` (write), `redflag/file.rs` (read) and `peer_proc.rs` (the
-/// kernel's `/proc/net/tcp{,6}`, read); `OpenOptions` and
+/// kernel's `/proc/net/tcp{,6}` and two more fixed `/proc` files, read); `OpenOptions` and
 /// write-shaped calls only in `logfile.rs`; `std::env` and `std::process` only in `main.rs`.
 fn check_n2(srcs: &[Src]) -> Vec<String> {
     let mut bad = Vec::new();
@@ -419,7 +419,8 @@ fn check_n2(srcs: &[Src]) -> Vec<String> {
                         || s.rel == NET_REDFLAG_FILE
                         || s.rel == NET_CA_FILE
                         || s.rel == NET_TRUST_FILES
-                        // The kernel's /proc/net/tcp{,6} and /proc/self/status, read-only.
+                        // Four fixed kernel paths, read-only: /proc/net/tcp{,6}, /proc/self/status and
+                        // /proc/sys/kernel/overflowuid.
                         || s.rel == NET_PEER_PROC
                 }
                 "env" | "process" => s.rel == NET_MAIN,

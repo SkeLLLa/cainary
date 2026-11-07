@@ -282,8 +282,9 @@ struct Shared {
     /// Takeover mode: the configured hosts (empty in plain mode) and the ports a `Host` may name.
     tls_hosts: Vec<String>,
     host_ports: Vec<u16>,
-    /// Every port a client's socket may be connected to: the listening ports and the public one.
-    server_ports: Vec<u16>,
+    /// Takeover on a privileged port: the public port a redirect forwards from, when it isn't
+    /// the listening one. A client's socket is connected to the listening port or to this.
+    public_port: Option<u16>,
     #[cfg(feature = "tls")]
     tls: Option<crate::tls::Tls>,
     #[cfg(feature = "tls")]
@@ -480,6 +481,8 @@ pub fn start(cfg: Config, ready: Ready) -> Result<Server, SetupError> {
     #[allow(unused_mut)]
     let mut host_ports: Vec<u16> = Vec::new();
     #[allow(unused_mut)]
+    let mut public_port: Option<u16> = None;
+    #[allow(unused_mut)]
     let mut setup_info = setup::setup(&endpoint);
     #[allow(unused_mut)]
     let mut mode = "receiver";
@@ -492,6 +495,7 @@ pub fn start(cfg: Config, ready: Ready) -> Result<Server, SetupError> {
         host_ports = vec![port];
         if run.public_port != port {
             host_ports.push(run.public_port);
+            public_port = Some(run.public_port);
         }
         let ca_path = run.tls.ca_path.display().to_string();
         let fingerprint = run.tls.fingerprint();
@@ -553,10 +557,6 @@ pub fn start(cfg: Config, ready: Ready) -> Result<Server, SetupError> {
         .spawn(move || output::run(out_queue, out_cfg))
         .map_err(|e| setup_err(1, format!("can't start the output thread: {e}")))?;
 
-    let mut server_ports: Vec<u16> = addrs.iter().map(SocketAddr::port).collect();
-    server_ports.extend(&host_ports);
-    server_ports.sort_unstable();
-    server_ports.dedup();
     let error_window = cfg.tunables.error_window;
     let shared = Arc::new(Shared {
         ctx: Ctx {
@@ -575,7 +575,7 @@ pub fn start(cfg: Config, ready: Ready) -> Result<Server, SetupError> {
         hosts,
         tls_hosts,
         host_ports,
-        server_ports,
+        public_port,
         #[cfg(feature = "tls")]
         tls: cfg.tls.map(|r| r.tls),
         #[cfg(feature = "tls")]
@@ -793,17 +793,28 @@ impl Wire for Clipped {
 
 /// Whether the client's socket belongs to the user running the collector, else the refusal's
 /// message: another user's socket, or anything that can't be confirmed (no match, two matches, an
-/// unreadable table).
+/// unreadable table, a connection that changed while it was looked up).
 fn peer_check(stream: &TcpStream, sh: &Shared) -> Result<(), &'static str> {
     let found = match sh.t.peer_uid {
         PeerUid::Off => return Ok(()),
         PeerUid::Fake(l) => Ok(l),
         PeerUid::FakeUnreadable => Err(()),
-        PeerUid::System => system_lookup(stream, &sh.server_ports),
+        PeerUid::System => system_lookup(stream, sh.public_port),
     };
-    match (found, own_uid()) {
-        (Ok(Lookup::Uid(uid)), Some(own)) if uid == own => Ok(()),
-        (Ok(Lookup::Uid(_)), Some(_)) => Err(PEER_REFUSED),
+    judge(found, own_uid(), overflow_uid())
+}
+
+/// The decision. `overflow` is the uid the kernel shows for a user it can't map: if we are that
+/// user, or the socket's owner is, a match proves nothing.
+fn judge(found: Result<Lookup, ()>, own: Option<u32>, overflow: u32) -> Result<(), &'static str> {
+    match (found, own) {
+        (Ok(Lookup::Uid(uid)), Some(own)) if own != overflow && uid != overflow => {
+            if uid == own {
+                Ok(())
+            } else {
+                Err(PEER_REFUSED)
+            }
+        }
         _ => Err(PEER_UNCONFIRMED),
     }
 }
@@ -819,34 +830,75 @@ fn own_uid() -> Option<u32> {
 }
 
 #[cfg(target_os = "linux")]
-fn system_lookup(stream: &TcpStream, server_ports: &[u16]) -> Result<Lookup, ()> {
-    use crate::peer::{Endpoint, lookup_all};
-    let client = match stream.peer_addr().map_err(|_| ())? {
+fn overflow_uid() -> u32 {
+    crate::peer_proc::overflow_uid()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn overflow_uid() -> u32 {
+    65534
+}
+
+#[cfg(target_os = "linux")]
+fn endpoint_of(addr: SocketAddr) -> crate::peer::Endpoint {
+    use crate::peer::Endpoint;
+    match addr {
         SocketAddr::V4(a) => Endpoint::v4(a.ip().octets(), a.port()),
         SocketAddr::V6(a) => match a.ip().to_ipv4_mapped() {
             Some(v4) => Endpoint::v4(v4.octets(), a.port()),
             None => Endpoint::v6(a.ip().octets(), a.port()),
         },
-    };
-    // The kernel writes the tables in chunks, so a row can be missed while connections come and
-    // go; look again before concluding the client isn't there.
+    }
+}
+
+/// Read the tables until the client shows up. The kernel writes them in chunks, so a row can be
+/// missed while connections come and go: only `NotFound` is read again. `Ambiguous` is final.
+#[cfg(target_os = "linux")]
+fn lookup_retry(
+    mut read: impl FnMut() -> Result<Lookup, ()>,
+    attempts: u32,
+    pause: Duration,
+) -> Result<Lookup, ()> {
     let mut found = Lookup::NotFound;
-    for attempt in 0..PEER_LOOKUPS {
+    for attempt in 0..attempts {
         if attempt > 0 {
-            thread::sleep(Duration::from_millis(5));
+            thread::sleep(pause);
         }
-        let (tcp, tcp6) = crate::peer_proc::read_tables().map_err(|_| ())?;
-        found = lookup_all(&tcp, &tcp6, client, server_ports);
-        if matches!(found, Lookup::Uid(_)) {
+        found = read()?;
+        if found != Lookup::NotFound {
             break;
         }
     }
     Ok(found)
 }
 
+#[cfg(target_os = "linux")]
+fn system_lookup(stream: &TcpStream, public_port: Option<u16>) -> Result<Lookup, ()> {
+    let client_addr = stream.peer_addr().map_err(|_| ())?;
+    let server = crate::peer::Server {
+        endpoint: endpoint_of(stream.local_addr().map_err(|_| ())?),
+        public_port,
+    };
+    let client = endpoint_of(client_addr);
+    let found = lookup_retry(
+        || crate::peer_proc::lookup(client, server).map_err(|_| ()),
+        PEER_LOOKUPS,
+        Duration::from_millis(5),
+    )?;
+    // A uid is only worth something if it is still this connection's: no error has hit the
+    // socket and the peer is the address that was looked up.
+    if matches!(found, Lookup::Uid(_))
+        && !(matches!(stream.take_error(), Ok(None))
+            && matches!(stream.peer_addr(), Ok(a) if a == client_addr))
+    {
+        return Ok(Lookup::NotFound);
+    }
+    Ok(found)
+}
+
 /// No check off Linux (`PeerUid::system` is `Off` there), so nothing ever gets here.
 #[cfg(not(target_os = "linux"))]
-fn system_lookup(_: &TcpStream, _: &[u16]) -> Result<Lookup, ()> {
+fn system_lookup(_: &TcpStream, _: Option<u16>) -> Result<Lookup, ()> {
     Err(())
 }
 
@@ -1273,6 +1325,58 @@ fn io_close<S: Wire>(sh: &Shared, w: &mut BufReader<Guarded<S>>, e: &io::Error) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_decision() {
+        const OVERFLOW: u32 = 65534;
+        let ok = |found, own| judge(found, own, OVERFLOW);
+        assert_eq!(ok(Ok(Lookup::Uid(1000)), Some(1000)), Ok(()));
+        assert_eq!(ok(Ok(Lookup::Uid(1001)), Some(1000)), Err(PEER_REFUSED));
+        assert_eq!(ok(Ok(Lookup::Uid(0)), Some(1000)), Err(PEER_REFUSED));
+        for unconfirmed in [
+            ok(Ok(Lookup::NotFound), Some(1000)),
+            ok(Ok(Lookup::Ambiguous), Some(1000)),
+            ok(Err(()), Some(1000)),
+            // We can't say who we are.
+            ok(Ok(Lookup::Uid(1000)), None),
+            // The overflow uid stands for any unmapped user, ours or theirs.
+            ok(Ok(Lookup::Uid(OVERFLOW)), Some(OVERFLOW)),
+            ok(Ok(Lookup::Uid(OVERFLOW)), Some(1000)),
+            ok(Ok(Lookup::Uid(1000)), Some(OVERFLOW)),
+        ] {
+            assert_eq!(unconfirmed, Err(PEER_UNCONFIRMED));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn only_not_found_is_read_again() {
+        let seq = |results: Vec<Result<Lookup, ()>>| {
+            let mut it = results.into_iter();
+            let mut calls = 0;
+            let out = lookup_retry(
+                || {
+                    calls += 1;
+                    it.next().expect("no more reads than attempts")
+                },
+                3,
+                Duration::ZERO,
+            );
+            (out, calls)
+        };
+        let uid = Ok(Lookup::Uid(7));
+        let none = Ok(Lookup::NotFound);
+        assert_eq!(seq(vec![none, none, uid]), (uid, 3));
+        assert_eq!(seq(vec![none, uid]), (uid, 2));
+        assert_eq!(seq(vec![none, none, none]), (none, 3));
+        // Ambiguous is final, even when the next read would have found one socket.
+        assert_eq!(
+            seq(vec![Ok(Lookup::Ambiguous), uid]),
+            (Ok(Lookup::Ambiguous), 1)
+        );
+        assert_eq!(seq(vec![none, Err(()), uid]), (Err(()), 2));
+        assert_eq!(seq(vec![uid]), (uid, 1));
+    }
 
     #[test]
     fn listen_check() {

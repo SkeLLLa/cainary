@@ -1,45 +1,60 @@
-//! Reads `/proc/net/tcp`, `/proc/net/tcp6` and `/proc/self/status` for the own-user check
-//! (design D3). The only file here is the kernel's own, read-only and size-capped; parsing is
-//! `peer.rs`, which touches no file, so guard N2's `std::fs` exemption covers just this module.
+//! Reads `/proc/net/tcp`, `/proc/net/tcp6`, `/proc/self/status` and `/proc/sys/kernel/overflowuid`
+//! for the own-user check (design D3). The only files here are those four fixed kernel paths,
+//! read-only; parsing is `peer.rs`, which touches no file, so guard N2's `std::fs` exemption
+//! covers just this module.
 
-use crate::peer;
-use std::io::{self, Read};
+use crate::peer::{self, Endpoint, Lookup, Server};
+use std::io::{self, BufRead, BufReader, Read};
 
-/// A table longer than this is treated as unreadable: nothing is guessed from a truncated one.
-pub const MAX_TABLE_BYTES: u64 = 8 << 20;
-const MAX_STATUS_BYTES: u64 = 64 << 10;
+/// Tables are streamed through a buffer this size, a line at a time: constant memory however
+/// many sockets there are.
+const TABLE_BUFFER: usize = 64 << 10;
+const MAX_SMALL_FILE: u64 = 64 << 10;
+/// What the kernel maps an unmappable uid to unless `/proc/sys/kernel/overflowuid` says otherwise.
+const DEFAULT_OVERFLOW_UID: u32 = 65534;
 
-fn read_capped(path: &str, cap: u64) -> io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    std::fs::File::open(path)?
-        .take(cap + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > cap {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("{path} is over {cap} bytes"),
-        ));
-    }
-    Ok(bytes)
+fn table(path: &str) -> io::Result<BufReader<std::fs::File>> {
+    Ok(BufReader::with_capacity(
+        TABLE_BUFFER,
+        std::fs::File::open(path)?,
+    ))
 }
 
-/// The IPv4 and IPv6 tables. A missing `tcp6` (a kernel without IPv6) is an empty table.
-pub fn read_tables() -> io::Result<(Vec<u8>, Vec<u8>)> {
-    let tcp = read_capped("/proc/net/tcp", MAX_TABLE_BYTES)?;
-    let tcp6 = match read_capped("/proc/net/tcp6", MAX_TABLE_BYTES) {
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
-        other => other?,
+/// Find `client`'s socket in `/proc/net/tcp` and `tcp6`. A missing `tcp6` (a kernel without
+/// IPv6) is an empty table.
+pub fn lookup(client: Endpoint, server: Server) -> io::Result<Lookup> {
+    let tcp = table("/proc/net/tcp")?;
+    let tcp6: Box<dyn BufRead> = match table("/proc/net/tcp6") {
+        Ok(t) => Box::new(t),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Box::new(io::empty()),
+        Err(e) => return Err(e),
     };
-    Ok((tcp, tcp6))
+    peer::lookup_all(tcp, tcp6, client, server)
+}
+
+fn read_small(path: &str) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(MAX_SMALL_FILE)
+        .read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
 /// This process's effective uid, as the kernel reports it.
 pub fn euid() -> io::Result<u32> {
-    let status = read_capped("/proc/self/status", MAX_STATUS_BYTES)?;
-    peer::parse_euid(&status).ok_or_else(|| {
+    peer::parse_euid(&read_small("/proc/self/status")?).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             "no Uid line in /proc/self/status",
         )
     })
+}
+
+/// The uid the kernel shows for a user it can't map (another user namespace, and orphaned
+/// sockets in some kernels); a row with this uid says nothing about who owns the socket.
+pub fn overflow_uid() -> u32 {
+    read_small("/proc/sys/kernel/overflowuid")
+        .ok()
+        .and_then(|b| peer::parse_uid(&b))
+        .unwrap_or(DEFAULT_OVERFLOW_UID)
 }
