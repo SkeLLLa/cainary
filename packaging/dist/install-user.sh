@@ -48,7 +48,7 @@ install_desktop_entry() {
     mv "$target.tmp" "$target"
 }
 
-# Root-owned system files (the low-port helper and its polkit policy): a user install skips them.
+# Root-owned system files (the root helpers and their polkit policies): a user install skips them.
 system_file() {
     case "$1" in
         usr/libexec/* | usr/share/polkit-1/*) return 0 ;;
@@ -116,5 +116,11 @@ directory (these commands are only printed, not run; they work in sh and fish):
   sudo install -m 0644 -o root -g root "$ROOT_DIR/share/polkit-1/actions/ua.SkeLLLa.cAInary.policy" /usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.policy
 Remove:
   sudo rm /usr/libexec/cainary/cainary-bind-helper /usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.policy
+Adding host names to /etc/hosts from the tray ("Add to /etc/hosts...") needs a second root helper,
+installed the same way; it too asks for the admin password every time:
+  sudo install -m 0755 -o root -g root "$ROOT_DIR/libexec/cainary/cainary-hosts-helper" /usr/libexec/cainary/cainary-hosts-helper
+  sudo install -m 0644 -o root -g root "$ROOT_DIR/share/polkit-1/actions/ua.SkeLLLa.cAInary.hosts.policy" /usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.hosts.policy
+Remove:
+  sudo rm /usr/libexec/cainary/cainary-hosts-helper /usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.hosts.policy
   sudo rmdir /usr/libexec/cainary
 EOF

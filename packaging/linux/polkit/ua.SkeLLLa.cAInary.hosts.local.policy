@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD polkit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
+<policyconfig>
+  <vendor>cAInary</vendor>
+  <vendor_url>https://github.com/SkeLLLa/cainary</vendor_url>
+
+  <action id="ua.SkeLLLa.cAInary.edit-hosts.local">
+    <description>Let cAInary change the cAInary block in /etc/hosts</description>
+    <message>Authentication is required to let cAInary change /etc/hosts. Approving lets it redirect host names to this computer for every user and program, and the change stays after cAInary quits. Requested: $(command_line)</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/cainary/cainary-hosts-helper</annotate>
+  </action>
+</policyconfig>

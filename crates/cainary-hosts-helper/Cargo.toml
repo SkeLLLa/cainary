@@ -1,0 +1,20 @@
+[package]
+name = "cainary-hosts-helper"
+description = "Root helper: replaces or removes the cAInary managed block in /etc/hosts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+# Installed by an administrator, never from crates.io.
+publish = false
+
+[[bin]]
+name = "cainary-hosts-helper"
+path = "src/main.rs"
+
+[dependencies]
+libc.workspace = true

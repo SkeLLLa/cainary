@@ -96,7 +96,9 @@ looks for it:
 | `bin/cainary-otel-debug` | the static musl debug collector (crate `cainary-net`); inert until run |
 | `bin/cainary-tray` | the Qt 6 tray app |
 | `libexec/cainary/cainary-bind-helper` | the static musl root helper for ports below 1024: mode 0755 root:root, no setuid, no file capabilities; runs only through `pkexec` on an explicit click in the tray |
+| `libexec/cainary/cainary-hosts-helper` | the static musl root helper for the marked block in `/etc/hosts`: mode 0755 root:root, no setuid, no file capabilities; runs only through `pkexec` on an explicit click in the tray |
 | `share/polkit-1/actions/ua.SkeLLLa.cAInary.policy` | its polkit policy, action `ua.SkeLLLa.cAInary.bind-loopback-port` (`auth_admin`, active sessions only), mode 0644; the dev-only `.local.policy` is never packaged |
+| `share/polkit-1/actions/ua.SkeLLLa.cAInary.hosts.policy` | its polkit policy, action `ua.SkeLLLa.cAInary.edit-hosts` (`auth_admin`, active sessions only), mode 0644; the dev-only `.hosts.local.policy` is never packaged |
 | `share/applications/ua.SkeLLLa.cAInary.desktop` | desktop entry |
 | `share/metainfo/ua.SkeLLLa.cAInary.metainfo.xml` | AppStream metadata |
 | `share/doc/cainary/` | `README.md` |
@@ -112,10 +114,10 @@ cannot install root files) and prints the commands an administrator runs to inst
 unpacked tarball.
 
 **Build.** The CLI and the debug collector are built once per architecture as static musl from the root workspace
-(`make linux-cli`, `-p cainary -p cainary-net -p cainary-bind-helper`, `build-linux-cli`, on native x86_64 and aarch64 runners). The tray app links the
+(`make linux-cli`, `-p cainary -p cainary-net -p cainary-bind-helper -p cainary-hosts-helper`, `build-linux-cli`, on native x86_64 and aarch64 runners). The tray app links the
 distro's Qt, so it is built inside the distro it ships for: the tarball and .deb on
 `debian:trixie`, the .rpm on `fedora:44`, for both architectures. `packaging/linux.sh` checks that
-all four binaries report the release version (the helper as `cainary-bind-helper <version> protocol 1`), stages the tree, and builds the formats with `cargo-deb`
+all five binaries report the release version (the helpers as `cainary-bind-helper <version> protocol 1` and `cainary-hosts-helper <version> protocol 1`), stages the tree, and builds the formats with `cargo-deb`
 (`--no-build`, version exactly `<version>`) and `cargo-generate-rpm`. Their metadata is in
 `linux/crates/cainary-tray/Cargo.toml`. The tarball has a stable file order, owner and times
 (`SOURCE_DATE_EPOCH`, default the HEAD commit time). Locally, `make linux LINUX_FORMATS=tar,deb,rpm`

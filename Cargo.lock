@@ -98,6 +98,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cainary-hosts-helper"
+version = "0.5.2"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "cainary-net"
 version = "0.5.2"
 dependencies = [

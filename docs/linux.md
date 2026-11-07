@@ -259,6 +259,10 @@ and its polkit policy `/usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.policy` (a
 (see [Privileged ports](#privileged-ports-root-helper)). Polkit is a recommended dependency (.deb
 `pkexec | policykit-1`, .rpm `polkit`) or optional (AUR `polkit`).
 
+The packages also install the `/etc/hosts` helper `/usr/libexec/cainary/cainary-hosts-helper`
+(0755 root:root, same rules) and its policy `/usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.hosts.policy` (action
+`ua.SkeLLLa.cAInary.edit-hosts`); see [Adding host names to /etc/hosts](#adding-host-names-to-etchosts-root-helper).
+
 **Tarball.** Unpack `cainary-<version>-linux-<x86_64|aarch64>.tar.gz`, then run
 `./install-user.sh` from the directory. It installs to `~/.local/bin` and `~/.local/share`, with no
 root, and `./install-user.sh --uninstall` removes it. Put `~/.local/bin` on `PATH` to use the CLI
@@ -472,6 +476,43 @@ sudo install -m 0644 -o root -g root (pwd)/packaging/linux/polkit/ua.SkeLLLa.cAI
 sudo rm /usr/local/libexec/cainary/cainary-bind-helper /usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.local.policy
 sudo rmdir /usr/local/libexec/cainary
 ```
+
+### Adding host names to /etc/hosts (root helper)
+
+For the HTTPS takeover, the tool's host name must resolve to this computer. **Add to /etc/hosts…**
+does that for you; the manual lines you can copy from the guide always work too, and nothing
+requires the helper.
+
+What it does: `cainary-hosts-helper`, run only through `pkexec`, writes one marked block into
+`/etc/hosts` with a `127.0.0.1` and a `::1` line for each host name you chose. The block starts with
+`# >>> cAInary takeover: managed by cAInary, lines in here are replaced; remove with the app >>>`
+and ends with `# <<< cAInary takeover <<<`. Everything outside the block is left byte for byte as it
+was. Before the first change it saves a copy of the file as `/etc/hosts.cainary-backup` (0600,
+root-owned), and while it works it holds the lock `/etc/.cainary-hosts.lock`, so two edits never
+overlap. The helper is never setuid and has no file capabilities. It is not a general editor: it
+takes at most a few validated host names, refuses reserved names such as `localhost`, and refuses a
+symlinked, non-regular, hard-linked or writable-by-others `/etc/hosts`, or a file whose cAInary
+markers are damaged (the tray shows why; fix the file by hand, then try again).
+
+- It asks for the administrator password **every time**; nothing is cached. **Cancelled** or
+  **Not authorized** leave `/etc/hosts` as it was.
+- The change is **system-wide**: every user and program on this computer sees the host names as
+  this machine, and it **stays after the tray quits** (it is not undone on exit).
+- If the tray can't tell whether the edit landed (for example the helper was killed), it checks the
+  file again and does not retry on its own.
+
+To undo, use the tray's **Remove** button (it asks for the password again and deletes the block),
+or open `/etc/hosts` as an administrator and delete the lines from the `>>>` marker through the
+`<<<` marker, markers included. `/etc/hosts.cainary-backup` is only a safety copy; it is not
+restored automatically, and deleting it is safe.
+
+Packages (and the tarball, for an administrator) install the helper in `/usr/libexec/cainary/` with
+the policy `packaging/linux/polkit/ua.SkeLLLa.cAInary.hosts.policy` (`auth_admin`, active sessions
+only). `mise run linux:helper` builds it with the port helper and prints the install commands for
+both, using `/usr/local/libexec/cainary/` and `ua.SkeLLLa.cAInary.hosts.local.policy`. The helper
+prints `cainary-hosts-helper <version> protocol 1` for `--version`, needs no privilege for that, and
+answers with one line `cainary-hosts-helper/1 ok <set|clear> <changed|unchanged|changed-unsynced>` or
+`cainary-hosts-helper/1 error <token>`.
 
 ## 11. Logs
 

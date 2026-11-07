@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/cainary-core", "crates/cainary-cli", "crates/cainary-net", "crates/cainary-sig", "crates/cainary-bind-helper"]
+members = ["crates/cainary-core", "crates/cainary-cli", "crates/cainary-net", "crates/cainary-sig", "crates/cainary-bind-helper", "crates/cainary-hosts-helper"]
 exclude = ["linux"]
 
 [workspace.package]

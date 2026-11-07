@@ -133,7 +133,7 @@ description = "Static musl cainary for this machine's architecture (LINUX_ARCH=.
 run = "make linux-cli"
 
 [tasks."linux:helper"]
-description = "Build the root bind helper for low ports and print (never run) the admin install and uninstall commands"
+description = "Build the root helpers (low ports, /etc/hosts block) and print (never run) the admin install and uninstall commands"
 run = "make -s linux-helper"
 
 [tasks."linux:package"]

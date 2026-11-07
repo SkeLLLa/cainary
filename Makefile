@@ -64,8 +64,8 @@ help:
 	@echo "  app             build the SwiftUI app (macos/Sources)"
 	@echo "  bundle          assemble dist/cAInary.app and zip it"
 	@echo "  linux           Linux release artifacts in dist/ (LINUX_FORMATS=tar,deb,rpm; default tar)"
-	@echo "  linux-cli       static musl cainary, cainary-otel-debug and cainary-bind-helper for LINUX_ARCH (default: this machine)"
-	@echo "  linux-helper    static musl cainary-bind-helper; prints the admin install and uninstall commands"
+	@echo "  linux-cli       static musl cainary, cainary-otel-debug, cainary-bind-helper and cainary-hosts-helper for LINUX_ARCH (default: this machine)"
+	@echo "  linux-helper    static musl cainary-bind-helper and cainary-hosts-helper; prints the admin install and uninstall commands"
 	@echo "  linux-build     debug build of the Qt tray app (linux/)"
 	@echo "  linux-test      tray tests under dbus-run-session, QT_QPA_PLATFORM=offscreen"
 	@echo "  linux-fmt       cargo fmt for linux/ (in place)"
@@ -177,22 +177,29 @@ bundle: $(BUNDLE_DEPS)
 # The CLI and the debug collector are static musl from the root workspace; it runs on any distro. The tray app links the
 # distro's Qt 6, so it is built on (or in a container of) the distro it ships for.
 linux-cli:
-	$(CARGO_CMD) build $(MANIFEST) --release --locked --target $(LINUX_CLI_TARGET) -p cainary -p cainary-net -p cainary-bind-helper --features cainary-net/tls
+	$(CARGO_CMD) build $(MANIFEST) --release --locked --target $(LINUX_CLI_TARGET) -p cainary -p cainary-net -p cainary-bind-helper -p cainary-hosts-helper --features cainary-net/tls
 
-# The root helper for low ports (docs/linux.md). Builds it and PRINTS the admin commands; nothing
-# here installs anything or runs sudo. The commands are fish-compatible.
+# The root helpers (docs/linux.md): bind for low ports, hosts for the /etc/hosts block. Builds both
+# and PRINTS the admin commands; nothing here installs anything or runs sudo. The commands are
+# fish-compatible.
 HELPER_BIN = $(CURDIR)/target/$(LINUX_CLI_TARGET)/release/cainary-bind-helper
 HELPER_POLICY = $(CURDIR)/packaging/linux/polkit/ua.SkeLLLa.cAInary.local.policy
+HOSTS_HELPER_BIN = $(CURDIR)/target/$(LINUX_CLI_TARGET)/release/cainary-hosts-helper
+HOSTS_HELPER_POLICY = $(CURDIR)/packaging/linux/polkit/ua.SkeLLLa.cAInary.hosts.local.policy
 linux-helper:
-	$(CARGO_CMD) build $(MANIFEST) --release --locked --target $(LINUX_CLI_TARGET) -p cainary-bind-helper
+	$(CARGO_CMD) build $(MANIFEST) --release --locked --target $(LINUX_CLI_TARGET) -p cainary-bind-helper -p cainary-hosts-helper
 	@echo ""
 	@echo "Built $(HELPER_BIN)"
+	@echo "Built $(HOSTS_HELPER_BIN)"
 	@echo "Install as an administrator (not run for you):"
 	@echo "  sudo install -d -m 0755 -o root -g root /usr/local/libexec/cainary"
 	@echo "  sudo install -m 0755 -o root -g root $(HELPER_BIN) /usr/local/libexec/cainary/cainary-bind-helper"
 	@echo "  sudo install -m 0644 -o root -g root $(HELPER_POLICY) /usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.local.policy"
+	@echo "  sudo install -m 0755 -o root -g root $(HOSTS_HELPER_BIN) /usr/local/libexec/cainary/cainary-hosts-helper"
+	@echo "  sudo install -m 0644 -o root -g root $(HOSTS_HELPER_POLICY) /usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.hosts.local.policy"
 	@echo "Uninstall:"
 	@echo "  sudo rm /usr/local/libexec/cainary/cainary-bind-helper /usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.local.policy"
+	@echo "  sudo rm /usr/local/libexec/cainary/cainary-hosts-helper /usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.hosts.local.policy"
 	@echo "  sudo rmdir /usr/local/libexec/cainary"
 
 linux-build:
@@ -276,6 +283,7 @@ linux: linux-cli
 		--cli target/$(LINUX_CLI_TARGET)/release/cainary \
 		--otel-debug target/$(LINUX_CLI_TARGET)/release/cainary-otel-debug \
 		--bind-helper target/$(LINUX_CLI_TARGET)/release/cainary-bind-helper \
+		--hosts-helper target/$(LINUX_CLI_TARGET)/release/cainary-hosts-helper \
 		--tray linux/target/release/cainary-tray \
 		--formats $(LINUX_FORMATS) --out dist
 
