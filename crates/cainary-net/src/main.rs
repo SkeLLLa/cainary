@@ -14,7 +14,7 @@ use std::time::Duration;
 
 const USAGE: &str = "\
 usage:
-  cainary-otel-debug [--port <n>] [--listen <ip>]... [--json] [--show-values] [--once]
+  cainary-otel-debug [--port <n>] [--listen <ip>]... [--json] [--show-values] [--once] [--allow-root]
                      [--log-file <path> [--log-max-mib <n>] [--log-keep <n>]]
                      [--red-flag <name>=<text>]... [--red-flag-re <name>=<regex>]... [--match-case <name>]...
                      [--red-flags <file>] [--preset <name>]... [--no-default-red-flags] [--list-presets]
@@ -52,15 +52,48 @@ fn main() -> ExitCode {
     match std::panic::catch_unwind(|| run(&args)) {
         Ok(code) => ExitCode::from(code),
         Err(_) => {
+            if wants_json(&args) {
+                print!(
+                    "{}",
+                    output::error_line("startup", "internal", "internal error", None)
+                );
+            }
             eprintln!("cainary-otel-debug: internal error");
             ExitCode::from(3)
         }
     }
 }
 
+/// `--json` in the raw arguments, found before they are parsed: a usage error has to come out as
+/// a JSON `error` line too, and parsing is what failed.
+fn wants_json(args: &[String]) -> bool {
+    args.iter().any(|a| a == "--json")
+}
+
+/// Everything but a receiver run never binds, so it gives up the bind capability at once.
+fn drop_now(json: bool) -> Option<u8> {
+    let dropped = cainary_net::privdrop::drop_capabilities();
+    dropped.err().map(|e| {
+        let msg = format!("can't drop capabilities: {e}");
+        fatal(json, "startup", "privilege-drop", msg, 1)
+    })
+}
+
 fn run(args: &[String]) -> u8 {
-    match args::parse(args) {
+    let parsed = args::parse(args);
+    if !matches!(parsed, Ok(Action::Run(_)))
+        && let Some(code) = drop_now(wants_json(args))
+    {
+        return code;
+    }
+    match parsed {
         Err(e) => {
+            if wants_json(args) {
+                print!(
+                    "{}",
+                    output::error_line("startup", e.kind, &e.message, None)
+                );
+            }
             eprintln!("cainary-otel-debug: {}\n\n{USAGE}", e.message);
             e.code
         }
@@ -116,11 +149,8 @@ fn stdin_thread(
         // no use for it (design §16.7.5). It drops its copy, verified, and says so; the main
         // thread won't bind or accept until it has heard. The bind thread drops its own right
         // after binding.
-        #[cfg(feature = "tls")]
-        let dropped = cainary_net::tls::privdrop::drop_capabilities()
+        let dropped = cainary_net::privdrop::drop_capabilities()
             .map_err(|e| format!("can't drop capabilities in the stdin thread: {e}"));
-        #[cfg(not(feature = "tls"))]
-        let dropped: Result<(), String> = Ok(());
         let failed = dropped.is_err();
         let _ = ack_tx.send(dropped);
         if failed {
@@ -169,7 +199,10 @@ fn stdin_thread(
 fn refused_port(message: &str, port: u16, json: bool, args: &[String]) -> u8 {
     use std::os::unix::fs::MetadataExt;
     if json {
-        print!("{}", output::error_line("listen", message));
+        print!(
+            "{}",
+            output::error_line("listen", "port-privileged", message, Some(port))
+        );
     } else {
         eprintln!("cainary-otel-debug: {message}");
     }
@@ -200,6 +233,27 @@ fn refused_port(message: &str, port: u16, json: bool, args: &[String]) -> u8 {
 fn fail(msg: impl std::fmt::Display, code: u8) -> u8 {
     eprintln!("cainary-otel-debug: {msg}");
     code
+}
+
+/// A fatal startup failure of the receiver: the text on stderr as ever and, under `--json`,
+/// exactly one `error` line with a stable `code` on stdout.
+fn fatal(json: bool, source: &str, kind: &str, msg: impl std::fmt::Display, exit: u8) -> u8 {
+    fatal_port(json, source, kind, msg, exit, None)
+}
+
+fn fatal_port(
+    json: bool,
+    source: &str,
+    kind: &str,
+    msg: impl std::fmt::Display,
+    exit: u8,
+    port: Option<u16>,
+) -> u8 {
+    let msg = msg.to_string();
+    if json {
+        print!("{}", output::error_line(source, kind, &msg, port));
+    }
+    fail(msg, exit)
 }
 
 #[cfg(not(feature = "tls"))]
@@ -367,8 +421,28 @@ fn trust_status_cmd(_: bool) -> u8 {
 fn serve(o: Options, args: &[String]) -> u8 {
     #[cfg(not(feature = "tls"))]
     if o.tls {
-        return fail(NO_TLS, 2);
+        return fatal(o.json, "startup", "tls-unsupported", NO_TLS, 2);
     }
+    // Before anything is read or parsed: refuse root, bind (the one step that may need the
+    // capability) and drop it. Config, patterns, the log file and the TLS state all follow.
+    if let Err(m) = cainary_net::privdrop::refuse_root(cainary_net::privdrop::euid(), o.allow_root)
+    {
+        return fatal(o.json, "startup", "privilege-drop", m, 1);
+    }
+    let ready = match server::bind(&o.listen, o.port).and_then(server::Bound::drop_privileges) {
+        Ok(r) => r,
+        Err(e) => {
+            if let (Some(port), "port-privileged") = (e.port, e.kind) {
+                return refused_port(&e.message, port, o.json, args);
+            }
+            let source = if e.kind == "port-in-use" {
+                "listen"
+            } else {
+                "startup"
+            };
+            return fatal_port(o.json, source, e.kind, e.message, e.code, e.port);
+        }
+    };
     if o.show_values {
         let mut w = String::from(
             "warning: --show-values prints attribute values unmasked (emails, commands and any secrets in them)",
@@ -380,19 +454,29 @@ fn serve(o: Options, args: &[String]) -> u8 {
     }
 
     let stdin = (o.exit_on_stdin_eof || o.config_stdin).then(|| stdin_thread(o.config_stdin));
-    // The thread must have dropped (and verified) its capabilities before anything binds.
+    // Started after the drop, so it inherits a clean state; capabilities are per thread, though,
+    // so it drops (and verifies) its own too before it reads anything, and nothing else goes on
+    // until it has heard.
     if let Some((_, _, ack)) = &stdin {
         match ack.recv_timeout(Duration::from_secs(5)) {
             Ok(Ok(())) => {}
-            Ok(Err(m)) => return fail(m, 1),
-            Err(_) => return fail("the stdin thread did not report its capability drop", 1),
+            Ok(Err(m)) => return fatal(o.json, "startup", "privilege-drop", m, 1),
+            Err(_) => {
+                return fatal(
+                    o.json,
+                    "startup",
+                    "privilege-drop",
+                    "the stdin thread did not report its capability drop",
+                    1,
+                );
+            }
         }
     }
     let mut configs = Vec::new();
     if let Some(path) = &o.red_flags_file {
         match file::load(path) {
             Ok(c) => configs.push(c),
-            Err(e) => return fail(e.message(), e.code()),
+            Err(e) => return fatal(o.json, "startup", "config", e.message(), e.code()),
         }
     }
     if o.config_stdin {
@@ -400,10 +484,18 @@ fn serve(o: Options, args: &[String]) -> u8 {
         match rx.recv_timeout(Duration::from_secs(5)) {
             Ok(Ok(line)) => match config::parse(&line) {
                 Ok(c) => configs.push(c),
-                Err(m) => return fail(m, 2),
+                Err(m) => return fatal(o.json, "startup", "config", m, 2),
             },
-            Ok(Err(m)) => return fail(m, 2),
-            Err(_) => return fail("timed out waiting for the config on stdin", 2),
+            Ok(Err(m)) => return fatal(o.json, "startup", "config", m, 2),
+            Err(_) => {
+                return fatal(
+                    o.json,
+                    "startup",
+                    "config",
+                    "timed out waiting for the config on stdin",
+                    2,
+                );
+            }
         }
     }
     let sel = redflag::Selection {
@@ -414,7 +506,7 @@ fn serve(o: Options, args: &[String]) -> u8 {
     };
     let matcher = match redflag::resolve(&sel, &configs) {
         Ok(m) => Arc::new(m),
-        Err(e) => return fail(e.message, e.code),
+        Err(e) => return fatal(o.json, "startup", "config", e.message, e.code),
     };
 
     if let Some((_, go, _)) = &stdin {
@@ -423,7 +515,7 @@ fn serve(o: Options, args: &[String]) -> u8 {
     let log = match &o.log_file {
         Some(p) => match logfile::LogFile::open(p, o.log_max_mib << 20, o.log_keep) {
             Ok(l) => Some(l),
-            Err(m) => return fail(m, 1),
+            Err(m) => return fatal(o.json, "startup", "log-file", m, 1),
         },
         None => None,
     };
@@ -432,7 +524,7 @@ fn serve(o: Options, args: &[String]) -> u8 {
     let tls_run = if o.tls {
         let dir = match ca_dir() {
             Ok(d) => d,
-            Err(m) => return fail(m, 1),
+            Err(m) => return fatal(o.json, "startup", "tls-failed", m, 1),
         };
         match cainary_net::tls::Tls::start(&o.tls_hosts, &dir) {
             Ok(tls) => {
@@ -451,10 +543,11 @@ fn serve(o: Options, args: &[String]) -> u8 {
                     public_port: o.tls_public_port.unwrap_or(443),
                 })
             }
-            Err(
-                cainary_net::tls::StartError::Busy(m) | cainary_net::tls::StartError::Failed(m),
-            ) => {
-                return fail(m, 1);
+            Err(cainary_net::tls::StartError::Busy(m)) => {
+                return fatal(o.json, "startup", "tls-busy", m, 1);
+            }
+            Err(cainary_net::tls::StartError::Failed(m)) => {
+                return fatal(o.json, "startup", "tls-failed", m, 1);
             }
         }
     } else {
@@ -474,14 +567,9 @@ fn serve(o: Options, args: &[String]) -> u8 {
     cfg.once = o.once;
     cfg.log = log;
     cfg.status = Box::new(io::stderr());
-    let server = match server::run(cfg) {
+    let server = match server::start(cfg, ready) {
         Ok(s) => s,
-        Err(e) => {
-            if let Some(port) = e.denied_port {
-                return refused_port(&e.message, port, o.json, args);
-            }
-            return fail(e.message, e.code);
-        }
+        Err(e) => return fatal(o.json, "startup", e.kind, e.message, e.code),
     };
     match server.wait() {
         output::End::Once | output::End::Closed => 0,

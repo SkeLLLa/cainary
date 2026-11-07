@@ -11,6 +11,7 @@ pub mod jsonedit;
 pub mod logfile;
 pub mod otlp;
 pub mod output;
+pub mod privdrop;
 pub mod queue;
 pub mod redflag;
 pub mod server;

@@ -989,8 +989,8 @@ state.
     a file); `std::env` and `std::process` only in `main.rs`.
   - **N3:** no `Command` anywhere in the crate; `libc::` only in `logfile.rs` (the open flags and
     the effective uid), `tls/ca_file.rs` (the same, `flock`, `openat`), `trust/files.rs` (the same, `renameat`,
-    `unlinkat`, `fsync`) and `tls/privdrop.rs`
-    (`capset`, `prctl`). Guard 3's "`Command::new` exactly once" counts the whole workspace.
+    `unlinkat`, `fsync`) and `privdrop.rs`
+    (`capset`, `prctl`; in every build, not behind the `tls` feature). Guard 3's "`Command::new` exactly once" counts the whole workspace.
   - **N4 (manifests):** the `cainary-core` and `cainary-cli` manifests never mention
     `cainary-net`; the net manifest declares only `cainary-core`, `cainary-sig`, `libc`, `rcgen`, `regex`,
     `rustls`, `serde`, `serde_json`, `time` and `toml` (in any dependency table) and sets
@@ -1100,6 +1100,7 @@ cainary-otel-debug --version | --help
 | `--port` | 0–65535, default 4318; `0` picks a free port |
 | `--listen` | repeatable IP literal; each must satisfy `IpAddr::is_loopback()` (so `::ffff:127.0.0.1` is refused); replaces the default 127.0.0.1 then ::1 |
 | `--json` | JSON lines on stdout (§12.6); without it, a text rendering |
+| `--allow-root` | run as UID 0 (refused otherwise: clearing capabilities does not limit root) |
 | `--show-values` | print and log values raw (§12.3) |
 | `--once` | exit 0 after the first batch (and its alerts) |
 | `--log-file`, `--log-max-mib` (1–1024, default 10), `--log-keep` (0–9, default 3) | §12.4 |
@@ -1122,7 +1123,7 @@ pipe); `1` setup (port in use, log file or red-flags file unusable, a failed bin
 (including an invalid or oversized pattern, a non-loopback `--listen`, a bad `--tls-host` and `--tls` in a build without the feature); `3` a panic. A second `--tls` run for the same certificate directory, and `--delete-ca` while one runs, exit `1`.
 
 **A refused privileged port.** `--port <n>` chooses the port in every mode. When `bind` fails with
-`EACCES` the program exits `1` with a short fixed error (`{"v":1,"type":"error","source":"listen","message":"can't listen on <addr>: permission denied"}` on stdout under `--json`, text on stderr otherwise) and a note on stderr (`setup::privileged_port_note`; one plain line on other systems than Linux). The note gives three options, concrete for the run and printed, never run: a `cap_net_bind_service` capability on a root-owned copy (the running executable, read in `main.rs` only, counts as that when it and its directory are root-owned and writable by nobody else; otherwise `sudo install -D -m 755 -o root -g root <exe> /usr/local/libexec/cainary/cainary-otel-debug` comes first); an unprivileged port (`n + 8000`, or 8443) with a loopback-only, both-families `nft` redirect and its removal; and the `net.ipv4.ip_unprivileged_port_start` sysctl with its revert. Commands are written for both fish and bash.
+`EACCES` the program exits `1` with a short fixed error (`{"v":1,"type":"error","source":"listen","code":"port-privileged","message":"can't listen on <addr>: permission denied","port":<n>}` on stdout under `--json`, text on stderr otherwise) and a note on stderr (`setup::privileged_port_note`; one plain line on other systems than Linux). The note gives three options, concrete for the run and printed, never run: a `cap_net_bind_service` capability on a root-owned copy (the running executable, read in `main.rs` only, counts as that when it and its directory are root-owned and writable by nobody else; otherwise `sudo install -D -m 755 -o root -g root <exe> /usr/local/libexec/cainary/cainary-otel-debug` comes first); an unprivileged port (`n + 8000`, or 8443) with a loopback-only, both-families `nft` redirect and its removal; and the `net.ipv4.ip_unprivileged_port_start` sysctl with its revert. Commands are written for both fish and bash.
 
 ### 12.2 Server
 
@@ -1273,7 +1274,7 @@ line on stdout (and in the log file), with keys in this order: `v` (integer majo
 **Versioning.** `v` is an integer major. Within a major, changes are additive only: new optional
 keys, new `type`s and new values of open strings. Consumers ignore unknown `type`s and unknown
 keys, and refuse a `v` they don't know (the GUIs stop with "Update cAInary"). `error.source` is
-an **open string** (today `http`, `log-file`, `red-flags`); consumers tolerate others. A line is
+an **open string** (today `http`, `log-file`, `red-flags`, `startup`, `listen`); consumers tolerate others. A line is
 at most **1 MiB**: when a batch would exceed it, `resources` is dropped and `resourcesOmitted:
 true` is set, and the `summary` always stays.
 
@@ -1284,7 +1285,7 @@ true` is set, and the `summary` always stays.
 | `alert` | `seq`, `pattern`, `preset`, `signal`, `event` (record name or `null`), `events` (up to 8 names), `attribute` (key label or `null`), `where` (`key`, `value`, `body`, `resource`, `scope` or `name`), `count`, `match` |
 | `trust` | one per `--trust` call: `target` (`claude-code`, `codex`), `action` (`preview`, `applied`, `already`, `undone`, `nothing-to-undo`, `refused`), `message` (fixed text), `settingsPath`, `backupPath`, `key` (`NODE_EXTRA_CA_CERTS` or `null`), `from`, `to`, `bundlePath`, `command` (`null` where not applicable) |
 | `trust-status` | `claudeCode` (`{state: applied\|absent\|other-value\|managed, settingsPath, value}`), `codex` (`{state: ready\|absent, bundlePath, command}`), `caPath`, `caExists` (the collector certificate file exists), `note` (a sentence when an interrupted change was just finished or cleared, or that the state file is newer than this build; else `null`), `owned` (additive: every file cAInary recorded as its own, `[{modes, target, kind: settings\|backup\|bundle, path, key, fingerprints, caFingerprints, foreign, sha256}]`, §12.11) |
-| `error` | `source`, then either `status`, `method`, `path`, `message` (for `http`) or `dropped`, `message`, or `message` alone |
+| `error` | `source`, then either `status`, `method`, `path`, `message` (for `http`) or `dropped`, `message`, or `message` alone; a fatal startup failure (`source` `startup` or `listen`) is `source`, `code`, `message`, then `port` when it concerns one |
 
 - `summary` is `{identity: [keys], resource: [keys], records: [{name, kind, count, known, what?,
   attrs: [{key, group, flag?, known}]}]}`: what a GUI draws. `identity` and `resource` list the
@@ -1304,6 +1305,16 @@ true` is set, and the `summary` always stays.
   after a complete red-flag scan (§12.3); a wildcard catalog entry such as `vcs.ref.head.*` still
   classifies its keys (`known`, `group`) but they take the name rule.
 - A rejected request emits no `batch`, only an `error` line.
+- **Startup errors.** Under `--json`, every fatal startup path prints exactly one `error` line on
+  stdout before the process exits (the text stays on stderr), including argument errors (`--json` is
+  looked for in the raw arguments before they are parsed). Its `code` is a stable open string, and
+  `port` (an integer) is added where one is involved: `port-privileged` (`EACCES` on bind; `port`;
+  `source` `listen`), `port-in-use` (`EADDRINUSE`; `port`; `source` `listen`), `tls-no-host`
+  (`--tls` without `--tls-host`), `tls-unsupported` (a build without the `tls` feature), `tls-busy`
+  (another run owns the certificate file), `tls-failed` (any other takeover setup failure), `usage`
+  (bad arguments), `config` (red-flag file, preset or stdin config), `log-file`, `privilege-drop`
+  (the capability drop failed; fail closed), `internal`. `source` is `startup` unless stated.
+  Consumers tolerate codes they don't know.
 
 **Text mode** (no `--json`) prints per batch a header line (`── logs · claude-code 2.1.316 · 12
 records · 12:17:49Z`), a `resource` line, an `identity` line ("on every record"), then per record
@@ -1378,8 +1389,16 @@ users who can't change how the agent is launched. It is built only with the `tls
   for locally generated traffic (both address families, exact destinations) with its removal. As
   an alternative it documents `setcap cap_net_bind_service=+ep` only for an installed binary in a
   root-owned directory (`/usr/bin/cainary-otel-debug`), never a development path. If the process
-  holds `CAP_NET_BIND_SERVICE` it drops every capability right after binding and before the first
-  accept (`tls/privdrop.rs`; the stdin thread, started earlier, drops its own copy). It never
+  holds `CAP_NET_BIND_SERVICE` it clears its effective, permitted and inheritable sets and sets
+  `no_new_privs` right after binding (`privdrop.rs`; the bounding set is not cleared), in every
+  build and mode, plain receiver included, since a file capability applies to the executable
+  however it is started. Capabilities are per thread: the thread that bound drops before
+  anything else runs (the bind is one function, `server::bind`; arguments are validated first;
+  config, patterns, the log file, TLS and the stdin thread all come after), threads started later
+  inherit that state and the stdin thread drops its own copy as well. Commands that never bind
+  (`--help`, `--trust*`, `--list-presets`, usage errors) drop at startup. A failed drop is fatal
+  (`privilege-drop`). A receiver run refuses to start as UID 0, which clearing capabilities does
+  not limit, unless `--allow-root` is given (`privilege-drop`). It never
   calls `sudo`, `setcap`, `nft` or edits `/etc/hosts`.
 - **CA.** A new CA per start: ECDSA P-256, valid from an hour ago for 30 days, name-constrained
   (critical) to exactly the `--tls-host` names, `CA:true` with path length 0, `keyCertSign`. The

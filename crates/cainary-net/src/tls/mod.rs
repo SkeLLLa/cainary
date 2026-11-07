@@ -3,12 +3,10 @@
 //! The user points that host name at loopback; this accepts the connection with a certificate
 //! from an ephemeral, name-constrained CA whose public half is written to a file the exporting
 //! process can be told to trust. Nothing is forwarded: while it runs, the real collector gets
-//! nothing from this machine. `ca` holds the CA and the leaves, `ca_file` the one file write,
-//! `privdrop` the capability drop after binding.
+//! nothing from this machine. `ca` holds the CA and the leaves, `ca_file` the one file write.
 
 pub mod ca;
 pub mod ca_file;
-pub mod privdrop;
 
 use crate::server::{Clipped, Wire};
 use ca::Ca;

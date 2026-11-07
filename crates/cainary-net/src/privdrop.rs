@@ -1,8 +1,10 @@
 //! Dropping `CAP_NET_BIND_SERVICE` after the listeners are bound (design §16.7.5).
 //!
 //! The collector never runs as root. If it was given the capability (`setcap` on an installed
-//! binary), it needs it only for `bind`; this clears every capability set right after, before the
-//! first `accept`, and forbids regaining privilege. This file is the only user of `capset`.
+//! binary), it needs it only for `bind`; this clears the effective, permitted and inheritable sets
+//! of the calling thread right after (the bounding set stays) and sets no_new_privs. Capabilities
+//! are per thread: every thread that exists at the time drops its own. This file is the only user
+//! of `capset`.
 
 #[cfg(target_os = "linux")]
 mod imp {
@@ -137,9 +139,58 @@ pub fn drop_capabilities() -> std::io::Result<()> {
 
 pub use imp::holds_bind_capability;
 
+/// The effective user id of the process.
+pub fn euid() -> u32 {
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    unsafe { libc::geteuid() }
+}
+
+/// Clearing capabilities does nothing for UID 0, so the collector refuses to run as root unless
+/// `--allow-root` says so. `euid` is a parameter so the rule can be tested without root.
+pub fn refuse_root(euid: u32, allow_root: bool) -> Result<(), String> {
+    if euid == 0 && !allow_root {
+        return Err(
+            "refusing to run as root: dropping capabilities does not limit UID 0 \
+             (run as your own user, or pass --allow-root)"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn root_is_refused_unless_allowed() {
+        assert!(refuse_root(0, false).unwrap_err().contains("--allow-root"));
+        assert!(refuse_root(0, true).is_ok());
+        assert!(refuse_root(1000, false).is_ok());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn every_thread_drops_on_its_own() {
+        // Capabilities are per thread: each one clears its own set and sets no_new_privs, as
+        // /proc/thread-self/status shows.
+        let handles: Vec<_> = (0..3)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    drop_capabilities().unwrap();
+                    let st = std::fs::read_to_string("/proc/thread-self/status").unwrap();
+                    for key in ["CapInh:", "CapPrm:", "CapEff:"] {
+                        let l = st.lines().find(|l| l.starts_with(key)).unwrap();
+                        assert!(l[key.len()..].trim().chars().all(|c| c == '0'), "{l}");
+                    }
+                    assert!(st.lines().any(|l| l.trim_end() == "NoNewPrivs:\t1"), "{st}");
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+    }
 
     #[test]
     fn dropping_is_idempotent_and_leaves_nothing() {

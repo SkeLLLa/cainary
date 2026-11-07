@@ -115,17 +115,25 @@ impl Config {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupError {
+    /// The process exit code.
     pub code: u8,
+    /// The stable `code` of the JSON `error` line (`port-in-use`, `usage`, `internal`, ...).
+    pub kind: &'static str,
     pub message: String,
-    /// Set when `bind` was refused for lack of privilege: the port, so the caller can explain.
-    pub denied_port: Option<u16>,
+    /// The port a bind was refused on (`port-privileged`, `port-in-use`).
+    pub port: Option<u16>,
 }
 
 fn setup_err(code: u8, message: impl Into<String>) -> SetupError {
+    setup_kind("internal", code, message)
+}
+
+fn setup_kind(kind: &'static str, code: u8, message: impl Into<String>) -> SetupError {
     SetupError {
         code,
+        kind,
         message: message.into(),
-        denied_port: None,
+        port: None,
     }
 }
 
@@ -148,7 +156,7 @@ pub struct Server {
     /// Bound addresses.
     pub addrs: Vec<SocketAddr>,
     pub port: u16,
-    /// A verified capability drop happened between bind and accept (builds with `tls`).
+    /// A verified capability drop happened between bind and accept.
     pub caps_dropped: bool,
     stop: Arc<AtomicBool>,
     queue: Arc<Queue>,
@@ -245,25 +253,64 @@ impl Drop for Slot {
     }
 }
 
-fn bind_all(cfg: &Config) -> Result<(Vec<TcpListener>, Vec<String>), SetupError> {
-    let ips: Vec<IpAddr> = if cfg.listen.is_empty() {
+/// Listeners bound but not yet serving; the process may still hold the bind capability.
+pub struct Bound {
+    listeners: Vec<TcpListener>,
+    notes: Vec<String>,
+}
+
+/// Listeners bound and the calling thread's privileges dropped: all `start` takes.
+pub struct Ready {
+    listeners: Vec<TcpListener>,
+    notes: Vec<String>,
+}
+
+/// The one place that binds: validates `--listen` and the port and binds the loopback
+/// listeners. Nothing else is done with the capability, and nothing untrusted is read.
+pub fn bind(listen: &[String], port: u16) -> Result<Bound, SetupError> {
+    let (listeners, notes) = bind_all(listen, port)?;
+    Ok(Bound { listeners, notes })
+}
+
+impl Bound {
+    /// Whatever privilege bind needed is dropped here, on the calling thread (design §16.7.5):
+    /// in every mode of every build, since a file capability applies to the executable however
+    /// it is invoked. Threads started afterwards inherit the clean state; threads that exist
+    /// already must drop their own. Fail-closed: an error ends the run.
+    pub fn drop_privileges(self) -> Result<Ready, SetupError> {
+        crate::privdrop::drop_capabilities().map_err(|e| {
+            setup_kind(
+                "privilege-drop",
+                1,
+                format!("can't drop capabilities after binding: {e}"),
+            )
+        })?;
+        Ok(Ready {
+            listeners: self.listeners,
+            notes: self.notes,
+        })
+    }
+}
+
+fn bind_all(listen: &[String], port: u16) -> Result<(Vec<TcpListener>, Vec<String>), SetupError> {
+    let ips: Vec<IpAddr> = if listen.is_empty() {
         vec![
             IpAddr::from([127, 0, 0, 1]),
             IpAddr::from(std::net::Ipv6Addr::LOCALHOST),
         ]
     } else {
         let mut v = Vec::new();
-        for s in &cfg.listen {
-            check_listen(s).map_err(|m| setup_err(2, m))?;
+        for s in listen {
+            check_listen(s).map_err(|m| setup_kind("usage", 2, m))?;
             v.push(
                 s.parse::<IpAddr>()
-                    .map_err(|_| setup_err(2, "invalid --listen address"))?,
+                    .map_err(|_| setup_kind("usage", 2, "invalid --listen address"))?,
             );
         }
         v
     };
-    let defaults = cfg.listen.is_empty();
-    let mut port = cfg.port;
+    let defaults = listen.is_empty();
+    let mut port = port;
     let mut listeners = Vec::new();
     let mut notes = Vec::new();
     for (i, ip) in ips.iter().enumerate() {
@@ -275,7 +322,8 @@ fn bind_all(cfg: &Config) -> Result<(Vec<TcpListener>, Vec<String>), SetupError>
                     .map_err(|e| setup_err(1, format!("can't read the listening address: {e}")))?;
                 // Defence in depth: never serve on anything but loopback, whatever bind did.
                 if !local.ip().is_loopback() {
-                    return Err(setup_err(
+                    return Err(setup_kind(
+                        "usage",
                         2,
                         format!(
                             "refusing to listen on {}: only loopback addresses (127.0.0.0/8, ::1)",
@@ -290,15 +338,23 @@ fn bind_all(cfg: &Config) -> Result<(Vec<TcpListener>, Vec<String>), SetupError>
             Err(e) if defaults && i > 0 => notes.push(format!("{addr} (not available: {e})")),
             Err(e) if e.kind() == io::ErrorKind::AddrInUse => {
                 let next = port.saturating_add(1);
-                return Err(setup_err(
-                    1,
-                    format!("port {port} is in use (another collector?); try --port {next}"),
-                ));
+                return Err(SetupError {
+                    port: Some(port),
+                    ..setup_kind(
+                        "port-in-use",
+                        1,
+                        format!("port {port} is in use (another collector?); try --port {next}"),
+                    )
+                });
             }
             Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
                 return Err(SetupError {
-                    denied_port: Some(port),
-                    ..setup_err(1, format!("can't listen on {addr}: permission denied"))
+                    port: Some(port),
+                    ..setup_kind(
+                        "port-privileged",
+                        1,
+                        format!("can't listen on {addr}: permission denied"),
+                    )
                 });
             }
             Err(e) => return Err(setup_err(1, format!("can't listen on {addr}: {e}"))),
@@ -307,19 +363,17 @@ fn bind_all(cfg: &Config) -> Result<(Vec<TcpListener>, Vec<String>), SetupError>
     Ok((listeners, notes))
 }
 
+/// Bind, drop privileges, serve: the convenience used where nothing needs to happen between.
 pub fn run(cfg: Config) -> Result<Server, SetupError> {
-    let (listeners, notes) = bind_all(&cfg)?;
-    // Whatever privilege bind needed is dropped before the first accept (design §16.7.5): in
-    // every mode of a build that can hold the capability, since a file capability applies to
-    // the executable however it is invoked. Fail-closed: an error here ends the run.
-    #[cfg(feature = "tls")]
-    let caps_dropped = {
-        crate::tls::privdrop::drop_capabilities()
-            .map_err(|e| setup_err(1, format!("can't drop capabilities after binding: {e}")))?;
-        true
-    };
-    #[cfg(not(feature = "tls"))]
-    let caps_dropped = false;
+    let ready = bind(&cfg.listen, cfg.port)?.drop_privileges()?;
+    start(cfg, ready)
+}
+
+/// Starts serving on bound listeners whose privileges are already dropped (no thread exists
+/// before this, so every thread started here inherits the dropped state).
+pub fn start(cfg: Config, ready: Ready) -> Result<Server, SetupError> {
+    let Ready { listeners, notes } = ready;
+    let caps_dropped = true;
     let addrs: Vec<SocketAddr> = listeners
         .iter()
         .map(|l| l.local_addr().expect("bound"))

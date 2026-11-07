@@ -145,6 +145,21 @@ impl ErrorEvent {
         }
     }
 
+    /// A startup failure with its stable `code` and, for a refused bind, the `port`.
+    pub fn startup(source: &str, code: &str, message: &str, port: Option<u16>) -> ErrorEvent {
+        let mut m = Map::new();
+        m.insert("source".into(), json!(source));
+        m.insert("code".into(), json!(code));
+        m.insert("message".into(), json!(message));
+        if let Some(p) = port {
+            m.insert("port".into(), json!(p));
+        }
+        ErrorEvent {
+            tail: tail(m),
+            text: format!("error {source}: {message}"),
+        }
+    }
+
     pub fn other(source: &str, message: &str) -> ErrorEvent {
         let mut m = Map::new();
         m.insert("source".into(), json!(source));
@@ -244,10 +259,10 @@ impl Hello {
     }
 }
 
-/// A standalone `error` line (`source`, `message`) with the contract's envelope, for failures
-/// before the output thread exists (a refused listen).
-pub fn error_line(source: &str, message: &str) -> String {
-    let m = ErrorEvent::other(source, message);
+/// A standalone `error` line (`source`, `code`, `message`, `port`?) with the contract's
+/// envelope, for failures before the output thread exists (every fatal startup path).
+pub fn error_line(source: &str, code: &str, message: &str, port: Option<u16>) -> String {
+    let m = ErrorEvent::startup(source, code, message, port);
     line("error", &now(), None, &m.tail)
 }
 
@@ -426,16 +441,32 @@ mod tests {
 
     #[test]
     fn a_standalone_error_line_has_the_contract_shape() {
-        let l = error_line("listen", "can't listen on 127.0.0.1:443: permission denied");
+        let l = error_line(
+            "listen",
+            "port-privileged",
+            "can't listen on 127.0.0.1:443: permission denied",
+            Some(443),
+        );
         assert!(l.ends_with('\n') && l.matches('\n').count() == 1);
         let v: Value = serde_json::from_str(&l).unwrap();
         let keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
-        assert_eq!(keys, ["v", "type", "ts", "source", "message"]);
+        assert_eq!(
+            keys,
+            ["v", "type", "ts", "source", "code", "message", "port"]
+        );
+        assert_eq!(
+            (v["code"].clone(), v["port"].clone()),
+            (json!("port-privileged"), json!(443))
+        );
+        let l = error_line("startup", "usage", "bad flag", None);
+        let v: Value = serde_json::from_str(&l).unwrap();
+        let keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(keys, ["v", "type", "ts", "source", "code", "message"]);
         assert_eq!(
             (v["v"].clone(), v["type"].clone()),
             (json!(1), json!("error"))
         );
-        assert_eq!(v["source"], "listen");
+        assert_eq!(v["source"], "startup");
         assert!(v["ts"].as_str().unwrap().ends_with('Z'));
     }
 

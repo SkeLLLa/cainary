@@ -37,6 +37,8 @@ pub struct Options {
     pub json: bool,
     pub show_values: bool,
     pub once: bool,
+    /// `--allow-root`: run as UID 0 anyway (clearing capabilities changes nothing for root).
+    pub allow_root: bool,
     pub log_file: Option<PathBuf>,
     pub log_max_mib: u64,
     pub log_keep: u32,
@@ -66,6 +68,7 @@ impl Default for Options {
             json: false,
             show_values: false,
             once: false,
+            allow_root: false,
             log_file: None,
             log_max_mib: 10,
             log_keep: 3,
@@ -93,12 +96,15 @@ pub enum TrustTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArgError {
     pub code: u8,
+    /// The stable `code` of the JSON `error` line: `usage`, or `tls-no-host`.
+    pub kind: &'static str,
     pub message: String,
 }
 
 fn usage(message: impl Into<String>) -> ArgError {
     ArgError {
         code: 2,
+        kind: "usage",
         message: message.into(),
     }
 }
@@ -161,6 +167,7 @@ pub fn parse(args: &[String]) -> Result<Action, ArgError> {
             "--json" if bare => o.json = true,
             "--show-values" if bare => o.show_values = true,
             "--once" if bare => o.once = true,
+            "--allow-root" if bare => o.allow_root = true,
             "--exit-on-stdin-eof" if bare => o.exit_on_stdin_eof = true,
             "--config-stdin" if bare => {
                 o.config_stdin = true;
@@ -265,7 +272,10 @@ pub fn parse(args: &[String]) -> Result<Action, ArgError> {
         ));
     }
     if o.tls && o.tls_hosts.is_empty() {
-        return Err(usage("--tls needs at least one --tls-host <name>"));
+        return Err(ArgError {
+            kind: "tls-no-host",
+            ..usage("--tls needs at least one --tls-host <name>")
+        });
     }
     if !o.tls && (!o.tls_hosts.is_empty() || o.tls_public_port.is_some()) {
         return Err(usage("--tls-host and --tls-public-port need --tls"));

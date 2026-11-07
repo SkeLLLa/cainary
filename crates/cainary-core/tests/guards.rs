@@ -174,7 +174,7 @@ const NET_TLS: &str = "cainary-net/src/tls/";
 const NET_CA_FILE: &str = "cainary-net/src/tls/ca_file.rs";
 const NET_TLS_MOD: &str = "cainary-net/src/tls/mod.rs";
 const NET_TRUST_FILES: &str = "cainary-net/src/trust/files.rs";
-const NET_PRIVDROP: &str = "cainary-net/src/tls/privdrop.rs";
+const NET_PRIVDROP: &str = "cainary-net/src/privdrop.rs";
 const NET_MAIN: &str = "cainary-net/src/main.rs";
 
 /// Files in the net crate that may call `libc`: the log file (open flags, uid), the CA file
@@ -418,7 +418,7 @@ fn check_n2(srcs: &[Src]) -> Vec<String> {
 
 /// N3: no `Command` and no `libc::` in the net crate, except `libc::` in `logfile.rs` and
 /// `tls/ca_file.rs` (open flags, uid, flock), `trust/files.rs` (the same, for the Claude Code settings edit; the rest of `trust/` calls into it) and
-/// `tls/privdrop.rs` (capabilities). Guard 3's "exactly once" also counts `Command::new`.
+/// `privdrop.rs` (capabilities). Guard 3's "exactly once" also counts `Command::new`.
 fn check_n3(srcs: &[Src]) -> Vec<String> {
     let mut bad = Vec::new();
     for s in srcs.iter().filter(|s| in_net(&s.rel)) {
@@ -427,7 +427,7 @@ fn check_n3(srcs: &[Src]) -> Vec<String> {
         }
         if !net_libc_ok(&s.rel) && s.code.contains("libc::") {
             bad.push(format!(
-                "{}: libc:: outside logfile.rs, tls/ca_file.rs and tls/privdrop.rs",
+                "{}: libc:: outside logfile.rs, tls/ca_file.rs and privdrop.rs",
                 s.rel
             ));
         }
@@ -1289,9 +1289,9 @@ mod fires {
         assert!(!check_n2(&net("tls/mod.rs", "use std::fs;")).is_empty());
         assert!(!check_n2(&net("tls/leaf.rs", "let f = OpenOptions::new();")).is_empty());
         assert!(!check_n3(&net("tls/mod.rs", "libc::getuid();")).is_empty());
-        assert!(check_n3(&net("tls/privdrop.rs", "libc::prctl(1, 2);")).is_empty());
+        assert!(check_n3(&net("privdrop.rs", "libc::prctl(1, 2);")).is_empty());
         // privdrop.rs gets libc and nothing else.
-        assert!(!check_n2(&net("tls/privdrop.rs", "use std::fs;")).is_empty());
+        assert!(!check_n2(&net("privdrop.rs", "use std::fs;")).is_empty());
         let mut s = net("tls/ca_file.rs", "libc::flock(1, 2);");
         s.extend(src(PLATFORM_RS, "Command::new(\"/usr/sbin/scutil\");"));
         assert!(check_guard3(&s).is_empty());

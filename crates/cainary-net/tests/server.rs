@@ -1097,20 +1097,20 @@ fn fixtures_classify_against_their_catalogs_and_stream_masked() {
     srv.shutdown();
 }
 
-/// Port 1 is privileged for anyone but root; skip where it isn't (root, or a lowered sysctl).
-fn port_one_is_privileged() -> bool {
+/// Port `n` is privileged for anyone but root; skip where it isn't (root, or a lowered sysctl).
+fn port_is_privileged(n: u32) -> bool {
     let start: u32 = std::fs::read_to_string("/proc/sys/net/ipv4/ip_unprivileged_port_start")
         .ok()
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(1024);
     // SAFETY: geteuid has no preconditions and cannot fail.
     let root = unsafe { libc::geteuid() } == 0;
-    cfg!(target_os = "linux") && !root && start > 1
+    cfg!(target_os = "linux") && !root && start > n
 }
 
 #[test]
 fn a_refused_privileged_port_is_a_short_error_and_a_note_on_stderr() {
-    if !port_one_is_privileged() {
+    if !port_is_privileged(1) {
         return;
     }
     let out = bin()
@@ -1129,6 +1129,10 @@ fn a_refused_privileged_port_is_a_short_error_and_a_note_on_stderr() {
     assert_eq!(
         v["message"],
         "can't listen on 127.0.0.1:1: permission denied"
+    );
+    assert_eq!(
+        (v["code"].clone(), v["port"].clone()),
+        (json!("port-privileged"), json!(1))
     );
     assert_eq!(line.lines().count(), 1);
     // The note is on stderr and offers the three ways, concrete for this run.
@@ -1159,4 +1163,167 @@ fn a_refused_privileged_port_is_a_short_error_and_a_note_on_stderr() {
         String::from_utf8_lossy(&out.stderr)
             .contains("cainary-otel-debug: can't listen on 127.0.0.1:1: permission denied")
     );
+}
+
+/// The one `error` line a failed `--json` start prints on stdout: parsed, with nothing else there.
+fn only_error_line(out: &std::process::Output) -> Value {
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(text.lines().count(), 1, "{text}");
+    let v: Value = serde_json::from_str(text.trim()).unwrap();
+    assert_eq!(
+        (v["v"].clone(), v["type"].clone()),
+        (json!(1), json!("error"))
+    );
+    v
+}
+
+#[test]
+fn port_80_refused_is_port_privileged_with_the_port() {
+    if !port_is_privileged(80) {
+        return;
+    }
+    let out = bin()
+        .args(["--port", "80", "--listen", "127.0.0.1", "--json"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let v = only_error_line(&out);
+    assert_eq!(v["source"], "listen");
+    assert_eq!(v["code"], "port-privileged");
+    assert_eq!(v["port"], 80);
+}
+
+#[test]
+fn a_busy_port_is_port_in_use_with_the_port() {
+    let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = held.local_addr().unwrap().port();
+    let out = bin()
+        .args([
+            "--port",
+            &port.to_string(),
+            "--listen",
+            "127.0.0.1",
+            "--json",
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let v = only_error_line(&out);
+    assert_eq!(v["source"], "listen");
+    assert_eq!(v["code"], "port-in-use");
+    assert_eq!(v["port"], port);
+    assert!(v.get("port").is_some());
+    // Text mode is unchanged: stderr only.
+    let out = bin()
+        .args(["--port", &port.to_string(), "--listen", "127.0.0.1"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(out.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("is in use"));
+}
+
+#[test]
+fn every_fatal_startup_path_prints_one_coded_error_line_under_json() {
+    let cases: [(&[&str], i32, &str); 5] = [
+        (&["--tls", "--json"], 2, "tls-no-host"),
+        (&["--bogus-flag", "--json"], 2, "usage"),
+        (&["--json", "--port", "70000"], 2, "usage"),
+        (&["--json", "--listen", "0.0.0.0"], 2, "usage"),
+        (
+            &[
+                "--json",
+                "--red-flags",
+                "/nonexistent/cainary-red-flags.toml",
+            ],
+            1,
+            "config",
+        ),
+    ];
+    for (args, exit, code) in cases {
+        let out = bin().args(args).stdin(Stdio::null()).output().unwrap();
+        assert_eq!(out.status.code(), Some(exit), "{args:?}");
+        let v = only_error_line(&out);
+        assert_eq!(v["source"], "startup", "{args:?}");
+        assert_eq!(v["code"], code, "{args:?}");
+        assert!(v.get("port").is_none());
+        assert!(!out.stderr.is_empty(), "the text stays on stderr: {args:?}");
+    }
+    // Without --json nothing is on stdout.
+    let out = bin().args(["--tls"]).stdin(Stdio::null()).output().unwrap();
+    assert!(out.stdout.is_empty());
+}
+
+#[cfg(not(feature = "tls"))]
+#[test]
+fn tls_in_a_build_without_it_is_tls_unsupported() {
+    let out = bin()
+        .args(["--tls", "--tls-host", "example.com", "--json"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(only_error_line(&out)["code"], "tls-unsupported");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn capabilities_are_dropped_after_bind_in_every_build() {
+    let (srv, _out) = start();
+    assert!(srv.caps_dropped);
+    srv.shutdown();
+}
+
+/// Every thread of a running collector has no_new_privs set and no capabilities: the drop ran in
+/// the thread that bound and in the stdin thread, and the rest inherited it.
+#[cfg(target_os = "linux")]
+#[test]
+fn every_thread_of_the_running_collector_is_dropped() {
+    let mut child = bin()
+        .args([
+            "--json",
+            "--exit-on-stdin-eof",
+            "--port",
+            "0",
+            "--listen",
+            "127.0.0.1",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut out = std::io::BufReader::new(child.stdout.take().unwrap());
+    let _ = hello_port(&mut out);
+    let mut seen = 0;
+    for task in std::fs::read_dir(format!("/proc/{}/task", child.id())).unwrap() {
+        let st = std::fs::read_to_string(task.unwrap().path().join("status")).unwrap();
+        for key in ["CapInh:", "CapPrm:", "CapEff:"] {
+            let l = st.lines().find(|l| l.starts_with(key)).unwrap();
+            assert!(l[key.len()..].trim().chars().all(|c| c == '0'), "{l}");
+        }
+        assert!(st.lines().any(|l| l.trim_end() == "NoNewPrivs:\t1"), "{st}");
+        seen += 1;
+    }
+    assert!(seen >= 3, "main, stdin and output threads at least: {seen}");
+    drop(child.stdin.take());
+    let _ = child.wait();
+}
+
+#[test]
+fn commands_that_never_bind_still_work() {
+    for args in [
+        &["--version"][..],
+        &["--list-presets"],
+        &["--trust-status", "--json"],
+    ] {
+        let out = bin().args(args).stdin(Stdio::null()).output().unwrap();
+        assert!(
+            out.status.code().is_some_and(|c| c <= 2)
+                && !out.stderr.starts_with(b"cainary-otel-debug: can't drop"),
+            "{args:?}"
+        );
+    }
 }
