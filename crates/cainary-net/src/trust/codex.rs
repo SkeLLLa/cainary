@@ -2,9 +2,10 @@
 //! Codex's own configuration is touched.
 
 use super::bundle::{bundle, collector_ca, system_roots};
+use super::claude::recover;
 use super::files::{Replace, lock_trust, read_in, unlink_unchanged};
 use super::state::{
-    CodexState, Owned, Rec, Refused, check_owned, publish_bundle, read_state, reconcile, save_state,
+    CodexState, Owned, Rec, Refused, check_owned, publish_bundle, read_state, save_state,
 };
 use super::{Action, BUSY, CODEX_BUNDLE, Env, Line, NEWER, TAKEOVER, Target, dir_error, lock_wait};
 use crate::setup::quote;
@@ -35,20 +36,20 @@ pub fn codex(env: &Env<'_>, undo: bool) -> Line {
         }
         Err(_) => return dir_error(t, "collector certificate", &env.ca_dir),
     };
-    let _lock = match lock_trust(&ca_dir, lock_wait()) {
+    let lock = match lock_trust(&ca_dir, lock_wait()) {
         Ok(Some(l)) => l,
         Ok(None) => return Line::refused(t, BUSY),
         Err(_) => return Line::refused(t, "The trust lock could not be taken."),
     };
     let path = ca_dir.path().join(CODEX_BUNDLE).display().to_string();
+    // Whatever an earlier run left unfinished (the Claude Code settings transaction first, then
+    // bundle replacements) is settled before anything is checked or written.
+    let _ = recover(env, &ca_dir, &lock);
     let mut state = read_state(&ca_dir);
     if state.newer {
         return Line::refused(t, NEWER);
     }
     // A bundle replacement an earlier run didn't finish is settled from the file's hash first.
-    if reconcile(&ca_dir, &mut state) && save_state(&ca_dir, &state).is_err() {
-        return Line::refused(t, "The state file could not be written.");
-    }
     // The bundle is cAInary's own file only if the state file says so and its bytes are still what
     // cAInary wrote: anything else is never rewritten or deleted.
     let rec = match &state.codex {

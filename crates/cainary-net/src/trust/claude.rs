@@ -867,7 +867,6 @@ fn settings_sha(p: &Pending) -> Option<Option<String>> {
 /// file turns out to hold. Returns a sentence for the user when something was found. Needs the
 /// lock, so it can't clear a transaction another process is in the middle of.
 pub(super) fn recover(env: &Env<'_>, ca: &CaDir, _lock: &TrustLock) -> Option<String> {
-    let _ = env;
     let state = read_state(ca);
     if state.newer {
         return (state.pending.is_some() || !state.journal.is_empty()).then(|| NEWER.to_string());
@@ -906,8 +905,29 @@ pub(super) fn recover(env: &Env<'_>, ca: &CaDir, _lock: &TrustLock) -> Option<St
         });
     }
     // Bundle replacements that were journaled, settled from each file's hash.
-    if reconcile(ca, &mut next) {
-        note = note.or(Some("Settled an interrupted certificate bundle update."));
+    if !next.journal.is_empty() {
+        // Which settings decide whether an unrecorded bundle is still in use: the ones of the
+        // record (now settled), else the default location.
+        let settings_path = next.claude.as_ref().map_or_else(
+            || {
+                env.harness
+                    .tool_home(ToolHome::ClaudeConfig)
+                    .path()
+                    .join("settings.json")
+                    .display()
+                    .to_string()
+            },
+            |c| c.settings_path.clone(),
+        );
+        let bundle_path = ca.path().join(CLAUDE_BUNDLE).display().to_string();
+        let in_use = settings_view(&settings_path)
+            .is_some_and(|(_, v)| v.as_deref() == Some(bundle_path.as_str()));
+        let r = reconcile(ca, &mut next, in_use);
+        if r.ignored {
+            note = Some("A bundle update record that named an unexpected file was ignored.");
+        } else if r.changed {
+            note = note.or(Some("Settled an interrupted certificate bundle update."));
+        }
     }
     if save_state(ca, &next).is_err() {
         return Some(

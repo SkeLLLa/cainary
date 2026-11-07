@@ -27,9 +27,7 @@ use claude::{inspect_note, managed_sets_key, open_settings, recover, settings_vi
 use codex::codex_command;
 use files::{lock_trust, read_in};
 use serde_json::{Map, Value, json};
-use state::{
-    Owned, Rec, Refused, State, check_owned, publish_bundle, read_state, reconcile, save_state,
-};
+use state::{Owned, Rec, Refused, State, check_owned, publish_bundle, read_state, save_state};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -462,6 +460,7 @@ pub fn refresh(env: &Env<'_>) -> Vec<String> {
             ];
         }
     };
+    let _ = recover(env, &ca_dir, &_lock);
     let mut state = read_state(&ca_dir);
     if state.is_empty() {
         return warnings;
@@ -478,7 +477,7 @@ pub fn refresh(env: &Env<'_>) -> Vec<String> {
         }
     };
     // Replacements an earlier run didn't finish are settled from the files' hashes first.
-    let mut changed = reconcile(&ca_dir, &mut state);
+    let mut changed = false;
     let claude_bundle = state
         .claude
         .as_ref()

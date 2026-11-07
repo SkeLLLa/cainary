@@ -1532,6 +1532,13 @@ bundles), `claude.rs` and `codex.rs` (the two targets).
   hash is recorded (an orphaned Claude Code bundle with no record is removed); `oldSha` or still
   absent means it didn't, so the entry is dropped; anything else is foreign and left alone. A
   crash or failed state write can therefore never leave cAInary's own file looking foreign.
+- **Paths and recovery order.** Each target has exactly one bundle path (the Claude Code and Codex
+  bundle names in the collector directory). A journal entry, or a Codex record, naming any other
+  path is ignored: nothing is read, adopted or deleted (the status `note` says so). Every command
+  (`--trust` for either target, the `--tls` refresh, `--trust-status`) first runs one recovery under
+  the trust lock: the pending Claude Code settings transaction is resolved, and only then are
+  journal entries settled; if the transaction can't be resolved, the journal waits. A Claude Code
+  bundle with no record is removed only if the settings don't point at it.
 - **Check, stage, re-check.** For every replace the new content is staged first; then, under the
   trust lock, the target is read again and its bytes and identity (device, inode, size, mtime,
   through the directory descriptor) must equal what the ownership check saw; only then is it

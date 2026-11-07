@@ -6,7 +6,7 @@ use super::files::{
     Replace, Snapshot, read_in, read_snapshot, replace_checked, unlink_in, unlink_unchanged,
     write_atomic,
 };
-use super::{NEWER, STATE_FILE, TAKEOVER, Target, hook};
+use super::{CLAUDE_BUNDLE, CODEX_BUNDLE, NEWER, STATE_FILE, TAKEOVER, Target, hook};
 use crate::tls::ca_file::{CA_FILE, CaDir};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -293,11 +293,20 @@ impl State {
 }
 
 pub(super) fn read_state(ca: &CaDir) -> State {
-    read_in(ca, STATE_FILE)
+    let mut st = read_in(ca, STATE_FILE)
         .ok()
         .flatten()
         .map(|b| State::parse(&b))
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // The Codex bundle has one possible path. A record naming another is not a record of ours.
+    if st
+        .codex
+        .as_ref()
+        .is_some_and(|c| c.bundle_path != expected_path(ca, Target::Codex))
+    {
+        st.codex = None;
+    }
+    st
 }
 
 impl State {
@@ -492,19 +501,46 @@ impl State {
     }
 }
 
-/// Settles every journal entry from what the file holds now: the new hash means the replace
-/// happened (the hash is recorded, or an orphaned Claude Code bundle is removed); the old hash
-/// (or still absent) means it never did; anything else is foreign and left alone. Returns whether
-/// the state changed. Needs the trust lock.
-pub(super) fn reconcile(ca: &CaDir, st: &mut State) -> bool {
-    if st.journal.is_empty() {
-        return false;
+/// The one path each target's bundle may have: in the collector directory, under its fixed name.
+pub(super) fn bundle_file(target: Target) -> &'static str {
+    match target {
+        Target::ClaudeCode => CLAUDE_BUNDLE,
+        Target::Codex => CODEX_BUNDLE,
     }
+}
+
+fn expected_path(ca: &CaDir, target: Target) -> String {
+    ca.path().join(bundle_file(target)).display().to_string()
+}
+
+/// What `reconcile` did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct Reconciled {
+    pub(super) changed: bool,
+    /// An entry named a file other than its target's bundle and was dropped untouched.
+    pub(super) ignored: bool,
+}
+
+/// Settles every journal entry from what the file holds now: the new hash means the replace
+/// happened (the hash is recorded, or an orphaned Claude Code bundle that no settings file points
+/// at is removed); the old hash (or still absent) means it never did; anything else is foreign and
+/// left alone. An entry whose path isn't exactly its target's bundle is dropped without reading
+/// anything. `claude_bundle_in_use`: the Claude Code settings point at the bundle, so an unrecorded
+/// one is kept. Needs the trust lock, and the Claude Code settings transaction resolved first.
+pub(super) fn reconcile(ca: &CaDir, st: &mut State, claude_bundle_in_use: bool) -> Reconciled {
+    let mut out = Reconciled::default();
+    if st.journal.is_empty() {
+        return out;
+    }
+    out.changed = true;
     for j in std::mem::take(&mut st.journal) {
-        let Some(name) = j.name().map(str::to_string) else {
+        let expected = expected_path(ca, j.target);
+        if j.path != expected {
+            out.ignored = true;
             continue;
-        };
-        let now = match read_snapshot(ca, &name) {
+        }
+        let name = bundle_file(j.target);
+        let now = match read_snapshot(ca, name) {
             Ok(s) => s.map(|s| sha_of(&s.bytes)),
             Err(_) => continue,
         };
@@ -514,7 +550,7 @@ pub(super) fn reconcile(ca: &CaDir, st: &mut State) -> bool {
         let recorded = match j.target {
             Target::Codex => {
                 let c = st.codex.get_or_insert_with(|| CodexState {
-                    bundle_path: j.path.clone(),
+                    bundle_path: expected.clone(),
                     bundle_sha: None,
                     modes: default_modes(),
                 });
@@ -522,22 +558,20 @@ pub(super) fn reconcile(ca: &CaDir, st: &mut State) -> bool {
                 true
             }
             Target::ClaudeCode => match st.claude.as_mut() {
-                Some(c)
-                    if Path::new(&c.written).file_name().and_then(|n| n.to_str())
-                        == Some(&name) =>
-                {
+                Some(c) if c.written == expected => {
                     c.bundle_sha = Some(j.new_sha.clone());
                     true
                 }
                 _ => false,
             },
         };
-        if !recorded {
-            let _ = delete_owned(ca, &name, &Rec::Sha(j.new_sha.clone()));
+        if !recorded && !claude_bundle_in_use {
+            let _ = delete_owned(ca, name, &Rec::Sha(j.new_sha.clone()));
         }
     }
-    true
+    out
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -916,5 +950,84 @@ mod tests {
         clear_hooks();
         assert_eq!(u.action, Action::Refused, "{u:?}");
         assert_eq!(fs::read(&xb).unwrap(), b"raced again");
+    }
+
+    #[test]
+    fn forged_journal_path_is_ignored() {
+        let fx = Fx::new("forged", "");
+        fx.roots();
+        let ca_file = fx.ca_dir.join(CA_FILE);
+        let other = fx.ca_dir.join("other.pem");
+        fs::write(&other, "not ours").unwrap();
+        let sha = |p: &Path| sha_of(&fs::read(p).unwrap());
+        let entry = |target: &str, p: &Path| {
+            json!({"target": target, "path": p.display().to_string(),
+                   "oldSha": "00", "newSha": sha(p)})
+        };
+        let ca_bytes = fs::read(&ca_file).unwrap();
+        put_state(
+            &fx,
+            &json!({"v": 2, "pendingBundles": [entry("claude-code", &ca_file), entry("codex", &other)],
+                    "codex": {"bundlePath": other.display().to_string(), "bundleSha": sha(&other)}})
+            .to_string(),
+        );
+        let s = status(&fx);
+        assert!(
+            s["note"].as_str().unwrap().contains("unexpected file"),
+            "{s}"
+        );
+        assert_eq!(
+            fs::read(&ca_file).unwrap(),
+            ca_bytes,
+            "the collector CA is intact"
+        );
+        assert_eq!(fs::read(&other).unwrap(), b"not ours");
+        // The forged entries are gone, and neither a codex record nor the file was adopted.
+        assert!(state_bytes(&fx).is_none_or(|b| {
+            let v: Value = serde_json::from_slice(&b).unwrap();
+            v.get("pendingBundles").is_none() && v.get("codex").is_none()
+        }));
+        assert!(owned(&s).is_empty());
+    }
+
+    #[test]
+    fn claude_crash_after_settings_rename_keeps_bundle() {
+        for refresh_first in [false, true] {
+            let fx = Fx::new(&format!("order{refresh_first}"), "");
+            mine(&fx);
+            let cb = fx.ca_dir.join(CLAUDE_BUNDLE);
+            stop_at("after-rename");
+            let _ = apply(&fx);
+            clear_hooks();
+            let state = state_json(&fx);
+            assert!(state["pending"].is_object() && state.get("claudeCode").is_none());
+            assert!(cb.exists());
+            let bundle_path = cb.display().to_string();
+            // Neither a Codex apply nor a refresh may treat the bundle as an orphan.
+            let go = |fx: &Fx, refresh_it: bool| {
+                if refresh_it {
+                    assert!(refresh(&fx.env()).is_empty());
+                } else {
+                    assert_eq!(codex(&fx.env(), false).action, Action::Applied);
+                }
+            };
+            go(&fx, refresh_first);
+            assert!(cb.exists(), "the bundle was deleted");
+            assert_eq!(env_key(&fx), Some(bundle_path.clone()));
+            go(&fx, !refresh_first);
+            assert!(cb.exists());
+            let s = status(&fx);
+            assert_eq!(s["claudeCode"]["state"], "applied");
+            for o in owned(&s) {
+                assert_eq!(o["foreign"], false, "{o}");
+            }
+            let v = state_json(&fx);
+            assert_eq!(
+                v["claudeCode"]["bundleSha"],
+                sha_of(&fs::read(&cb).unwrap())
+            );
+            assert!(v.get("pending").is_none() && v.get("pendingBundles").is_none());
+            assert_eq!(undo(&fx).action, Action::Undone);
+        }
     }
 }
