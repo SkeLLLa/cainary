@@ -982,12 +982,14 @@ state.
     (`TcpStream::connect`, `.connect(`, `connect_timeout`, `UdpSocket`, `ToSocketAddrs`,
     `to_socket_addrs`, `lookup_host`, Unix sockets), the identifier `connect` is banned outright,
     and renaming `std`/`core`/`alloc`/`net` in a `use` is refused so an alias can't hide a dial.
-  - **N2:** `std::fs` only in `logfile.rs` (write), `redflag/file.rs` (read) and `tls/ca_file.rs`
-    (the certificate directory); `OpenOptions` and write-shaped calls only in `logfile.rs` and
-    `tls/ca_file.rs` (`.write(` is also allowed in `server.rs` and `tls/mod.rs`, which can't open
+  - **N2:** `std::fs` only in `logfile.rs` (write), `redflag/file.rs` (read), `tls/ca_file.rs`
+    (the certificate directory) and `trust/files.rs` (the `--trust` file operations; the rest of
+    `trust/` calls into it); `OpenOptions` and write-shaped calls only in `logfile.rs`,
+    `tls/ca_file.rs` and `trust/files.rs` (`.write(` is also allowed in `server.rs` and `tls/mod.rs`, which can't open
     a file); `std::env` and `std::process` only in `main.rs`.
   - **N3:** no `Command` anywhere in the crate; `libc::` only in `logfile.rs` (the open flags and
-    the effective uid), `tls/ca_file.rs` (the same, `flock`, `openat`) and `tls/privdrop.rs`
+    the effective uid), `tls/ca_file.rs` (the same, `flock`, `openat`), `trust/files.rs` (the same, `renameat`,
+    `unlinkat`, `fsync`) and `tls/privdrop.rs`
     (`capset`, `prctl`). Guard 3's "`Command::new` exactly once" counts the whole workspace.
   - **N4 (manifests):** the `cainary-core` and `cainary-cli` manifests never mention
     `cainary-net`; the net manifest declares only `cainary-core`, `cainary-sig`, `libc`, `rcgen`, `regex`,
@@ -1420,11 +1422,14 @@ users who can't change how the agent is launched. It is built only with the `tls
   certificate is published and restart it after every run, since each run makes a new CA;
   deleting the file doesn't revoke trust a process already loaded).
 
-### 12.11 Trusting the takeover CA (`--trust`, `src/trust.rs`)
+### 12.11 Trusting the takeover CA (`--trust`, `src/trust/`)
 
 The exporting process has to trust the takeover's CA, and the CA changes at every start. `--trust`
 makes that a one-time step. It is the only code that edits another program's file, on an explicit
-action only, and it needs the `tls` feature.
+action only, and it needs the `tls` feature. The code is split by concern under `src/trust/`:
+`mod.rs` (public API, status, refresh), `files.rs` (every file operation, the only file there
+the guards let use `std::fs` or `libc`), `state.rs` (the state file), `bundle.rs` (PEM
+bundles), `claude.rs` and `codex.rs` (the two targets).
 
 - **Claude Code** (`--trust claude-code [--dry-run] [--undo]`). Sets `env.NODE_EXTRA_CA_CERTS` in
   the user's `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR`) to the collector CA path, and

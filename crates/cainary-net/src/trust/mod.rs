@@ -1,0 +1,901 @@
+//! `--trust` (design §17): let Claude Code and Codex trust the takeover CA.
+//!
+//! On an explicit action only, this edits one key (`env.NODE_EXTRA_CA_CERTS`) in the user's
+//! Claude Code settings, after a backup, and can undo it; and it writes combined certificate
+//! bundles next to the collector CA. It never edits Codex configuration, shell profiles or any
+//! system trust store. Every file operation is relative to a validated directory descriptor.
+//! The managed-settings check is the core's own Claude Code config resolution, in-process and
+//! read-only. Certificate bundles of other programs are read narrowly here (`read_certs`),
+//! because the harness refuses `*.pem` by design.
+
+mod bundle;
+mod claude;
+mod codex;
+mod files;
+mod state;
+
+pub use bundle::pem_certs;
+pub use claude::claude_code;
+pub use codex::codex;
+
+use crate::jsonedit;
+use crate::setup::quote;
+use crate::tls::ca_file::{CA_FILE, CaDir};
+use bundle::{bundle, collector_ca, read_certs, system_roots};
+use cainary_core::harness::{Harness, ToolHome};
+use claude::{inspect_note, managed_sets_key, open_settings, recover};
+use codex::codex_command;
+use files::{lock_trust, read_in, write_atomic};
+use serde_json::{Map, Value, json};
+use state::{State, read_state};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
+
+pub const KEY: &str = "NODE_EXTRA_CA_CERTS";
+pub const CLAUDE_BUNDLE: &str = "otel-debug-claude-bundle.pem";
+pub const CODEX_BUNDLE: &str = "otel-debug-codex-bundle.pem";
+pub const STATE_FILE: &str = "otel-debug-trust.json";
+pub const LOCK_FILE: &str = "otel-debug-trust.lock";
+
+/// Where things are: the harness (home, managed settings, system roots) and the directory the
+/// collector CA lives in.
+pub struct Env<'h> {
+    pub harness: &'h Harness,
+    pub ca_dir: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Target {
+    ClaudeCode,
+    Codex,
+}
+
+impl Target {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Target::ClaudeCode => "claude-code",
+            Target::Codex => "codex",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    Preview,
+    Applied,
+    Already,
+    Undone,
+    NothingToUndo,
+    Refused,
+}
+
+impl Action {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Action::Preview => "preview",
+            Action::Applied => "applied",
+            Action::Already => "already",
+            Action::Undone => "undone",
+            Action::NothingToUndo => "nothing-to-undo",
+            Action::Refused => "refused",
+        }
+    }
+}
+
+/// One `trust` line (design §17.1). `message` is fixed text; everything variable is a field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Line {
+    pub target: Target,
+    pub action: Action,
+    pub message: String,
+    pub settings_path: Option<String>,
+    pub backup_path: Option<String>,
+    pub key: Option<&'static str>,
+    pub from: Option<String>,
+    pub to: Option<String>,
+    pub bundle_path: Option<String>,
+    pub command: Option<String>,
+}
+
+fn now_string(h: &Harness) -> String {
+    cainary_core::value::rfc3339(h.now())
+}
+
+impl Line {
+    fn new(target: Target, action: Action, message: impl Into<String>) -> Line {
+        Line {
+            target,
+            action,
+            message: message.into(),
+            settings_path: None,
+            backup_path: None,
+            key: None,
+            from: None,
+            to: None,
+            bundle_path: None,
+            command: None,
+        }
+    }
+
+    fn refused(target: Target, message: impl Into<String>) -> Line {
+        Line::new(target, Action::Refused, message)
+    }
+
+    /// Exit code: 1 for a refusal, 0 otherwise.
+    pub fn code(&self) -> u8 {
+        u8::from(self.action == Action::Refused)
+    }
+
+    pub fn json(&self, ts: &str) -> String {
+        let mut m = Map::new();
+        m.insert("v".into(), json!(1));
+        m.insert("type".into(), json!("trust"));
+        m.insert("ts".into(), json!(ts));
+        m.insert("target".into(), json!(self.target.as_str()));
+        m.insert("action".into(), json!(self.action.as_str()));
+        m.insert("message".into(), json!(self.message));
+        m.insert("settingsPath".into(), json!(self.settings_path));
+        m.insert("backupPath".into(), json!(self.backup_path));
+        m.insert("key".into(), json!(self.key));
+        m.insert("from".into(), json!(self.from));
+        m.insert("to".into(), json!(self.to));
+        m.insert("bundlePath".into(), json!(self.bundle_path));
+        m.insert("command".into(), json!(self.command));
+        format!("{}\n", Value::Object(m))
+    }
+
+    /// The same, for a person: the message, then what changes.
+    pub fn text(&self) -> String {
+        use crate::output::escape;
+        let mut t = format!("{}: {}\n", self.action.as_str(), self.message);
+        let mut row = |label: &str, v: &Option<String>| {
+            if let Some(v) = v {
+                t.push_str(&format!("  {label}: {}\n", escape(v)));
+            }
+        };
+        row("settings", &self.settings_path);
+        row("backup", &self.backup_path);
+        row("was", &self.from);
+        row("now", &self.to);
+        row("bundle", &self.bundle_path);
+        row("run", &self.command);
+        t
+    }
+}
+
+// ── fixed texts ──────────────────────────────────────────────────────────────────────────────
+
+const ORG_NOTE: &str =
+    "While the HTTPS takeover is active, your organization's collector receives nothing.";
+const RESTART: &str = "Close Claude Code before applying this, and restart it afterwards.";
+const SHELL_WINS: &str = "Your shell sets NODE_EXTRA_CA_CERTS, which wins over the settings value.";
+
+fn with_shell(h: &Harness, base: &str) -> String {
+    if h.env(KEY).is_some() {
+        format!("{base} {SHELL_WINS}")
+    } else {
+        base.to_string()
+    }
+}
+
+/// `20261106T154658Z` from an RFC 3339 UTC time.
+fn stamp(rfc: &str) -> String {
+    rfc.chars().filter(|c| *c != '-' && *c != ':').collect()
+}
+
+fn dir_error(target: Target, what: &str, dir: &Path) -> Line {
+    Line::refused(
+        target,
+        format!(
+            "The {what} directory {} is not safe to edit (a symlink, not owned by you, or writable by group or others). If it is group- or other-writable, run: chmod go-w {}",
+            crate::output::escape(&dir.display().to_string()),
+            quote(&dir.display().to_string())
+        ),
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Apply { dry_run: bool },
+    Undo { dry_run: bool },
+}
+
+const BUSY: &str =
+    "Another cainary-otel-debug --trust call is working on this right now; try again in a moment.";
+#[cfg_attr(test, allow(dead_code))]
+const LOCK_WAIT: Duration = Duration::from_secs(10);
+
+fn lock_wait() -> Duration {
+    #[cfg(test)]
+    return Duration::from_millis(300);
+    #[cfg(not(test))]
+    LOCK_WAIT
+}
+
+fn status_wait() -> Duration {
+    #[cfg(test)]
+    return Duration::from_millis(100);
+    #[cfg(not(test))]
+    STATUS_WAIT
+}
+/// `--trust-status` waits this long for the lock, then only inspects.
+#[cfg_attr(test, allow(dead_code))]
+const STATUS_WAIT: Duration = Duration::from_secs(2);
+
+// ── status ───────────────────────────────────────────────────────────────────────────────────
+
+/// The `trust-status` line.
+pub fn status_json(env: &Env<'_>, ts: &str) -> String {
+    let h = env.harness;
+    let ca_path = env.ca_dir.join(CA_FILE).display().to_string();
+    let ca_open = CaDir::open_existing(&env.ca_dir).ok().flatten();
+    // With the lock, an interrupted transaction is finished (or cleared) first, so the status is
+    // of the result. Without it (another call is working; this waits `STATUS_WAIT`) the status
+    // only inspects: it must never clear a transaction that is in progress.
+    let lock = ca_open
+        .as_ref()
+        .and_then(|c| lock_trust(c, status_wait()).ok().flatten());
+    let note = match (&ca_open, &lock) {
+        (Some(c), Some(l)) => recover(env, c, l),
+        (Some(c), None) => Some(
+            inspect_note(env, c).unwrap_or_else(|| {
+                "Another cainary-otel-debug --trust call is working; this is the state of the files right now.".to_string()
+            }),
+        ),
+        _ => None,
+    };
+    let (state, claude_dir) = match ca_open {
+        Some(d) => (read_state(&d), Some(d)),
+        None => (State::default(), None),
+    };
+    let ca_exists = claude_dir.as_ref().is_some_and(|d| collector_ca(d).is_ok());
+    let settings_path = h
+        .tool_home(ToolHome::ClaudeConfig)
+        .path()
+        .join("settings.json")
+        .display()
+        .to_string();
+    let (claude_state, value) = if managed_sets_key(h) {
+        ("managed", None)
+    } else {
+        match open_settings(env, false) {
+            Ok(Some(s)) => {
+                let text = s.text();
+                let value = jsonedit::parse(&text)
+                    .ok()
+                    .and_then(|d| d.env_value(KEY).ok().flatten());
+                match value {
+                    // A record only counts for the settings it was made for.
+                    Some(v)
+                        if v == ca_path
+                            || state.claude.as_ref().is_some_and(|c| {
+                                c.written == v && c.settings_path == s.path_str()
+                            }) =>
+                    {
+                        ("applied", Some(v))
+                    }
+                    Some(v) => ("other-value", Some(v)),
+                    None => ("absent", None),
+                }
+            }
+            _ => ("absent", None),
+        }
+    };
+    let codex_path = claude_dir
+        .as_ref()
+        .map(|d| d.path().join(CODEX_BUNDLE).display().to_string());
+    let ready = claude_dir
+        .as_ref()
+        .is_some_and(|d| matches!(read_in(d, CODEX_BUNDLE), Ok(Some(_))));
+    let mut m = Map::new();
+    m.insert("v".into(), json!(1));
+    m.insert("type".into(), json!("trust-status"));
+    m.insert("ts".into(), json!(ts));
+    m.insert(
+        "claudeCode".into(),
+        json!({"state": claude_state, "settingsPath": settings_path, "value": value}),
+    );
+    m.insert(
+        "codex".into(),
+        json!({
+            "state": if ready { "ready" } else { "absent" },
+            "bundlePath": codex_path.as_ref().filter(|_| ready),
+            "command": codex_path.as_ref().filter(|_| ready).map(|p| codex_command(p)),
+        }),
+    );
+    m.insert("caPath".into(), json!(ca_path));
+    m.insert("caExists".into(), json!(ca_exists));
+    m.insert("note".into(), json!(note));
+    format!("{}\n", Value::Object(m))
+}
+
+/// A person's version of the status.
+pub fn status_text(env: &Env<'_>) -> String {
+    let v: Value = serde_json::from_str(&status_json(env, "")).expect("our own JSON");
+    let s = |p: &Value| p.as_str().unwrap_or("-").to_string();
+    format!(
+        "claude code: {} ({})\ncodex: {}\ncertificate: {}\n",
+        s(&v["claudeCode"]["state"]),
+        crate::output::escape(&s(&v["claudeCode"]["settingsPath"])),
+        s(&v["codex"]["state"]),
+        crate::output::escape(&s(&v["caPath"])),
+    )
+}
+
+// ── each `--tls` start ───────────────────────────────────────────────────────────────────────
+
+/// After a new CA is published: regenerate the combined bundles recorded in the state file from
+/// their originals plus this run's certificate. The paths never change; the clients must still
+/// be restarted. Returns what could not be refreshed.
+pub fn refresh(env: &Env<'_>) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let Ok(Some(ca_dir)) = CaDir::open_existing(&env.ca_dir) else {
+        return warnings;
+    };
+    let _lock = match lock_trust(&ca_dir, Duration::from_secs(5)) {
+        Ok(Some(l)) => l,
+        _ => {
+            return vec![
+                "another trust command is running; the trust bundles were not refreshed".into(),
+            ];
+        }
+    };
+    let state = read_state(&ca_dir);
+    if state.is_empty() {
+        return warnings;
+    }
+    let ca = match collector_ca(&ca_dir) {
+        Ok(c) => c,
+        Err(_) => {
+            return vec![
+                "the collector certificate is missing; trust bundles were not refreshed".into(),
+            ];
+        }
+    };
+    if let Some(cs) = &state.claude {
+        let bundle_path = ca_dir.path().join(CLAUDE_BUNDLE).display().to_string();
+        if cs.written == bundle_path {
+            let certs = cs
+                .original
+                .as_deref()
+                .and_then(|p| read_certs(Path::new(p)));
+            match certs {
+                Some(certs) => {
+                    let b = bundle(&certs, &ca);
+                    if write_atomic(&ca_dir, CLAUDE_BUNDLE, b.as_bytes(), 0o644).is_err() {
+                        warnings.push("the Claude Code trust bundle could not be rewritten".into());
+                    }
+                }
+                None => warnings.push("the file your Claude Code bundle was made from can't be read; the bundle was not refreshed".into()),
+            }
+        }
+    }
+    if state.codex_bundle.is_some() {
+        match system_roots(env.harness) {
+            Some(roots) => {
+                let b = bundle(&roots, &ca);
+                if write_atomic(&ca_dir, CODEX_BUNDLE, b.as_bytes(), 0o644).is_err() {
+                    warnings.push("the Codex bundle could not be rewritten".into());
+                }
+            }
+            None => warnings.push(
+                "no system certificate bundle was found; the Codex bundle was not refreshed".into(),
+            ),
+        }
+    }
+    warnings
+}
+
+/// For the tests and the CLI: the time stamp used in backup names.
+pub fn backup_stamp(t: SystemTime) -> String {
+    stamp(&cainary_core::value::rfc3339(t))
+}
+/// Test-only fault injection: a simulated crash at a named point, a failing state write, and a
+/// callback just before the compare-then-swap. Compiled to nothing outside tests.
+mod hook {
+    #[cfg(not(test))]
+    pub fn stop(_: &str) -> bool {
+        false
+    }
+    #[cfg(not(test))]
+    pub fn fail_save() -> bool {
+        false
+    }
+    #[cfg(not(test))]
+    pub fn before_cas(_: &str) {}
+    #[cfg(not(test))]
+    pub fn fail_sync() -> bool {
+        false
+    }
+    #[cfg(not(test))]
+    pub fn after_stat(_: &str) {}
+
+    #[cfg(test)]
+    pub type CasHook = Box<dyn FnMut(&str)>;
+
+    #[cfg(test)]
+    thread_local! {
+        pub static STOP: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+        pub static FAIL_SAVES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+        pub static FAIL_SYNCS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+        pub static CAS: std::cell::RefCell<Option<CasHook>> = std::cell::RefCell::new(None);
+        pub static AFTER_STAT: std::cell::RefCell<Option<CasHook>> = std::cell::RefCell::new(None);
+        pub static FAKE_EUID: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
+    }
+    #[cfg(test)]
+    pub fn stop(at: &str) -> bool {
+        STOP.with(|s| s.get() == Some(at))
+    }
+    #[cfg(test)]
+    pub fn fail_save() -> bool {
+        FAIL_SAVES.with(|c| {
+            let n = c.get();
+            if n > 0 {
+                c.set(n - 1);
+            }
+            n > 0
+        })
+    }
+    #[cfg(test)]
+    pub fn fail_sync() -> bool {
+        FAIL_SYNCS.with(|c| {
+            let n = c.get();
+            if n > 0 {
+                c.set(n - 1);
+            }
+            n > 0
+        })
+    }
+    #[cfg(test)]
+    pub fn after_stat(name: &str) {
+        AFTER_STAT.with(|c| {
+            if let Some(f) = c.borrow_mut().as_mut() {
+                f(name);
+            }
+        });
+    }
+    #[cfg(test)]
+    pub fn before_cas(point: &str) {
+        CAS.with(|c| {
+            if let Some(f) = c.borrow_mut().as_mut() {
+                f(point);
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::files::TrustLock;
+    use super::*;
+    use cainary_core::harness::platform::Os;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    pub(super) use super::hook::FAKE_EUID;
+
+    pub(super) const CA1: &str =
+        "-----BEGIN CERTIFICATE-----\nQ09MTEVDVE9SLU9ORQ==\n-----END CERTIFICATE-----\n";
+    pub(super) const CA2: &str =
+        "-----BEGIN CERTIFICATE-----\nQ09MTEVDVE9SLVRXTw==\n-----END CERTIFICATE-----\n";
+    pub(super) const ROOT_A: &str =
+        "-----BEGIN CERTIFICATE-----\nUk9PVC1B\n-----END CERTIFICATE-----\n";
+    pub(super) const ROOT_B: &str =
+        "-----BEGIN CERTIFICATE-----\nUk9PVC1C\n-----END CERTIFICATE-----\n";
+    pub(super) const ROOT_C: &str =
+        "-----BEGIN CERTIFICATE-----\nUk9PVC1D\n-----END CERTIFICATE-----\n";
+
+    pub(super) struct Fx {
+        pub(super) base: PathBuf,
+        pub(super) harness: Harness,
+        pub(super) ca_dir: PathBuf,
+        pub(super) _lock: Option<crate::tls::ca_file::Published>,
+    }
+
+    impl Fx {
+        pub(super) fn new(tag: &str, fixture_env: &str) -> Fx {
+            let base =
+                std::env::temp_dir().join(format!("cainary-trust-{tag}-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&base);
+            fs::create_dir_all(base.join("fx/root")).unwrap();
+            fs::create_dir_all(base.join("fx/home")).unwrap();
+            fs::write(
+                base.join("fx/fixture.json"),
+                format!(r#"{{"os":"linux","user":"alice","now":"2026-01-01T00:00:00Z","tools":["claude-code"],"env":{{{fixture_env}}}}}"#),
+            )
+            .unwrap();
+            let harness = Harness::from_fixture(&base.join("fx")).unwrap();
+            let _ = Os::Linux;
+            let ca_dir = base.join("state dir/cainary");
+            // The collector's published certificate (a fake PEM: only the blocks matter here).
+            let lock = crate::tls::ca_file::publish(&ca_dir, CA1).unwrap();
+            Fx {
+                base,
+                harness,
+                ca_dir,
+                _lock: Some(lock),
+            }
+        }
+
+        pub(super) fn env(&self) -> Env<'_> {
+            Env {
+                harness: &self.harness,
+                ca_dir: self.ca_dir.clone(),
+            }
+        }
+
+        pub(super) fn claude_dir(&self) -> PathBuf {
+            self.base.join("fx/home/.claude")
+        }
+
+        pub(super) fn settings(&self) -> PathBuf {
+            self.claude_dir().join("settings.json")
+        }
+
+        pub(super) fn write_settings(&self, text: &str) {
+            fs::create_dir_all(self.claude_dir()).unwrap();
+            fs::write(self.settings(), text).unwrap();
+        }
+
+        pub(super) fn read_settings(&self) -> String {
+            fs::read_to_string(self.settings()).unwrap()
+        }
+
+        pub(super) fn managed(&self, json: &str) {
+            let d = self.base.join("fx/root/etc/claude-code");
+            fs::create_dir_all(&d).unwrap();
+            fs::write(d.join("managed-settings.json"), json).unwrap();
+        }
+
+        pub(super) fn roots(&self) {
+            let d = self.base.join("fx/root/etc/ssl/certs");
+            fs::create_dir_all(&d).unwrap();
+            fs::write(
+                d.join("ca-certificates.crt"),
+                format!("{ROOT_A}{ROOT_B}{ROOT_C}"),
+            )
+            .unwrap();
+        }
+
+        pub(super) fn baks(&self) -> Vec<String> {
+            let mut v: Vec<String> = fs::read_dir(self.claude_dir())
+                .map(|d| {
+                    d.map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                        .collect()
+                })
+                .unwrap_or_default();
+            v.retain(|n| n.ends_with(".bak"));
+            v.sort();
+            v
+        }
+
+        pub(super) fn ca_path(&self) -> String {
+            self.ca_dir.join(CA_FILE).display().to_string()
+        }
+    }
+
+    impl Drop for Fx {
+        fn drop(&mut self) {
+            self._lock = None;
+            let _ = fs::remove_dir_all(&self.base);
+        }
+    }
+
+    pub(super) fn apply(fx: &Fx) -> Line {
+        claude_code(&fx.env(), Mode::Apply { dry_run: false })
+    }
+    pub(super) fn preview(fx: &Fx) -> Line {
+        claude_code(&fx.env(), Mode::Apply { dry_run: true })
+    }
+    pub(super) fn undo(fx: &Fx) -> Line {
+        claude_code(&fx.env(), Mode::Undo { dry_run: false })
+    }
+    pub(super) fn mode(p: &Path) -> u32 {
+        fs::metadata(p).unwrap().permissions().mode() & 0o777
+    }
+    pub(super) fn env_key(fx: &Fx) -> Option<String> {
+        let v: Value = serde_json::from_str(&fx.read_settings()).unwrap();
+        v["env"][KEY].as_str().map(str::to_string)
+    }
+
+    // ── transactions, compare-and-swap, fidelity, locations ──
+    pub(super) fn stop_at(point: &'static str) {
+        hook::STOP.with(|s| s.set(Some(point)));
+    }
+    pub(super) fn clear_hooks() {
+        hook::STOP.with(|s| s.set(None));
+        hook::FAIL_SYNCS.with(|c| c.set(0));
+        hook::AFTER_STAT.with(|c| *c.borrow_mut() = None);
+        hook::FAIL_SAVES.with(|c| c.set(0));
+        hook::CAS.with(|c| *c.borrow_mut() = None);
+    }
+    pub(super) fn on_cas(f: impl FnMut(&str) + 'static) {
+        hook::CAS.with(|c| *c.borrow_mut() = Some(Box::new(f)));
+    }
+    pub(super) fn state_bytes(fx: &Fx) -> Option<Vec<u8>> {
+        fs::read(fx.ca_dir.join(STATE_FILE)).ok()
+    }
+    pub(super) fn status(fx: &Fx) -> Value {
+        serde_json::from_str(&status_json(&fx.env(), "T")).unwrap()
+    }
+
+    pub(super) fn hold(fx: &Fx) -> (CaDir, TrustLock) {
+        let ca = CaDir::open_existing(&fx.ca_dir).unwrap().unwrap();
+        let lock = lock_trust(&ca, Duration::from_secs(1))
+            .unwrap()
+            .expect("free");
+        (ca, lock)
+    }
+
+    #[test]
+    fn status_reports_each_state() {
+        let fx = Fx::new("status", "");
+        let st = |fx: &Fx| -> Value { serde_json::from_str(&status_json(&fx.env(), "T")).unwrap() };
+        assert_eq!(st(&fx)["claudeCode"]["state"], "absent");
+        assert_eq!(st(&fx)["codex"]["state"], "absent");
+        fx.write_settings(&format!("{{\"env\":{{\"{KEY}\":\"/theirs.pem\"}}}}\n"));
+        assert_eq!(st(&fx)["claudeCode"]["state"], "other-value");
+        assert_eq!(st(&fx)["claudeCode"]["value"], "/theirs.pem");
+        fs::remove_file(fx.settings()).unwrap();
+        apply(&fx);
+        let s = st(&fx);
+        assert_eq!(s["claudeCode"]["state"], "applied");
+        assert_eq!(s["claudeCode"]["value"], fx.ca_path());
+        assert_eq!(s["caPath"], fx.ca_path());
+        // The documented shape, in order.
+        let line = status_json(&fx.env(), "T");
+        let v: Map<String, Value> = serde_json::from_str(&line).unwrap();
+        assert_eq!(
+            v.keys().collect::<Vec<_>>(),
+            [
+                "v",
+                "type",
+                "ts",
+                "claudeCode",
+                "codex",
+                "caPath",
+                "caExists",
+                "note"
+            ]
+        );
+        assert_eq!(v["caExists"], true);
+        assert!(v["note"].is_null());
+        assert_eq!(
+            v["claudeCode"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .collect::<Vec<_>>(),
+            ["state", "settingsPath", "value"]
+        );
+        assert_eq!(
+            v["codex"].as_object().unwrap().keys().collect::<Vec<_>>(),
+            ["state", "bundlePath", "command"]
+        );
+        assert_eq!(v["type"], "trust-status");
+        assert!(line.ends_with("}\n"));
+    }
+
+    #[test]
+    fn trust_lines_have_the_documented_shape() {
+        let fx = Fx::new("shape", "");
+        let l = apply(&fx);
+        let json = l.json("2026-01-01T00:00:00Z");
+        let v: Map<String, Value> = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            v.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "v",
+                "type",
+                "ts",
+                "target",
+                "action",
+                "message",
+                "settingsPath",
+                "backupPath",
+                "key",
+                "from",
+                "to",
+                "bundlePath",
+                "command"
+            ]
+        );
+        assert_eq!(
+            (
+                v["v"].clone(),
+                v["type"].clone(),
+                v["target"].clone(),
+                v["action"].clone()
+            ),
+            (
+                json!(1),
+                json!("trust"),
+                json!("claude-code"),
+                json!("applied")
+            )
+        );
+        assert!(
+            v["backupPath"].is_null()
+                && v["from"].is_null()
+                && v["bundlePath"].is_null()
+                && v["command"].is_null()
+        );
+        assert_eq!(v["key"], KEY);
+        assert_eq!(json.lines().count(), 1);
+        for a in [
+            Action::Preview,
+            Action::Applied,
+            Action::Already,
+            Action::Undone,
+            Action::NothingToUndo,
+            Action::Refused,
+        ] {
+            assert!(
+                [
+                    "preview",
+                    "applied",
+                    "already",
+                    "undone",
+                    "nothing-to-undo",
+                    "refused"
+                ]
+                .contains(&a.as_str())
+            );
+        }
+    }
+
+    #[test]
+    fn a_new_tls_start_regenerates_the_bundles_at_the_same_paths() {
+        let fx = Fx::new("refresh", "");
+        fx.roots();
+        let mine = fx.base.join("mine.pem");
+        fs::write(&mine, ROOT_A).unwrap();
+        fx.write_settings(&format!(
+            "{{\"env\":{{\"{KEY}\":\"{}\"}}}}\n",
+            mine.display()
+        ));
+        assert_eq!(apply(&fx).action, Action::Applied);
+        assert_eq!(codex(&fx.env(), false).action, Action::Applied);
+        let (cb, xb) = (fx.ca_dir.join(CLAUDE_BUNDLE), fx.ca_dir.join(CODEX_BUNDLE));
+        // A new run publishes a new certificate over the old one.
+        fs::write(fx.ca_dir.join(CA_FILE), CA2).unwrap();
+        let w = refresh(&fx.env());
+        assert!(w.is_empty(), "{w:?}");
+        assert_eq!(pem_certs(&fs::read_to_string(&cb).unwrap()), [ROOT_A, CA2]);
+        assert_eq!(
+            pem_certs(&fs::read_to_string(&xb).unwrap()),
+            [ROOT_A, ROOT_B, ROOT_C, CA2]
+        );
+        assert_eq!(
+            env_key(&fx),
+            Some(cb.display().to_string()),
+            "the settings still point at the same path"
+        );
+        // Nothing recorded, nothing refreshed.
+        let empty = Fx::new("refresh-empty", "");
+        assert!(refresh(&empty.env()).is_empty());
+        assert!(!empty.ca_dir.join(CLAUDE_BUNDLE).exists());
+        // A bundle whose source vanished is reported, not silently stale.
+        fs::remove_file(&mine).unwrap();
+        let w = refresh(&fx.env());
+        assert!(w.iter().any(|m| m.contains("Claude Code bundle")), "{w:?}");
+    }
+
+    #[test]
+    fn status_says_whether_the_ca_exists() {
+        let fx = Fx::new("caexists", "");
+        assert_eq!(status(&fx)["caExists"], true);
+        fs::remove_file(fx.ca_dir.join(CA_FILE)).unwrap();
+        assert_eq!(status(&fx)["caExists"], false);
+        let none = Fx::new("caexists-none", "");
+        fs::remove_dir_all(&none.ca_dir).ok();
+        let env = Env {
+            harness: &none.harness,
+            ca_dir: none.base.join("nowhere/cainary"),
+        };
+        let s: Value = serde_json::from_str(&status_json(&env, "T")).unwrap();
+        assert_eq!(s["caExists"], false);
+    }
+
+    #[test]
+    fn calls_are_serialized_by_one_lock_and_a_status_cannot_clear_a_transaction_in_progress() {
+        let fx = Fx::new("lock", "");
+        fx.write_settings("{\"model\":\"opus\"}\n");
+        // Another process is mid-transaction: a pending record exists and it holds the lock.
+        stop_at("after-rename");
+        let _ = apply(&fx);
+        clear_hooks();
+        let (_ca, held) = hold(&fx);
+        let before = state_bytes(&fx);
+        assert!(String::from_utf8_lossy(before.as_ref().unwrap()).contains("pending"));
+        // Every writer is refused with the same fixed answer, and nothing moves.
+        let a = apply(&fx);
+        assert_eq!(
+            (a.action, a.message.as_str()),
+            (Action::Refused, BUSY),
+            "{a:?}"
+        );
+        let u = undo(&fx);
+        assert_eq!((u.action, u.message.as_str()), (Action::Refused, BUSY));
+        let c = codex(&fx.env(), false);
+        assert_eq!((c.action, c.message.as_str()), (Action::Refused, BUSY));
+        assert_eq!(codex(&fx.env(), true).message, BUSY);
+        assert!(
+            refresh(&fx.env())
+                .iter()
+                .any(|w| w.contains("another trust command"))
+        );
+        // A status waits briefly, then only inspects: it reports and leaves the record alone.
+        let s = status(&fx);
+        assert!(s["note"].as_str().unwrap().contains("pending"), "{s}");
+        assert_eq!(state_bytes(&fx), before, "the transaction is untouched");
+        // Previews take no lock at all and write nothing.
+        let p = preview(&fx);
+        assert_ne!(p.action, Action::Refused, "{p:?}");
+        assert_eq!(state_bytes(&fx), before);
+        drop(held);
+        // With the lock free, the next status finishes it.
+        let s = status(&fx);
+        assert!(
+            s["note"]
+                .as_str()
+                .unwrap()
+                .contains("Finished an interrupted"),
+            "{s}"
+        );
+        assert_eq!(s["claudeCode"]["state"], "applied");
+    }
+
+    #[test]
+    fn inspection_never_writes_state_or_deletes_bundles() {
+        let fx = Fx::new("inspect", "");
+        let mine = fx.base.join("mine.pem");
+        fs::write(&mine, ROOT_A).unwrap();
+        fx.write_settings(&format!(
+            "{{\"env\":{{\"{KEY}\":\"{}\"}}}}\n",
+            mine.display()
+        ));
+        assert_eq!(apply(&fx).action, Action::Applied);
+        let bundle = fx.ca_dir.join(CLAUDE_BUNDLE);
+        assert!(bundle.exists());
+        // An undo that stops after the swap: settings restored, bundle and transaction left.
+        stop_at("after-rename");
+        let _ = undo(&fx);
+        clear_hooks();
+        let before = state_bytes(&fx);
+        let listing = |fx: &Fx| -> Vec<String> {
+            let mut v: Vec<String> = fs::read_dir(&fx.ca_dir)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .filter(|n| n != "otel-debug-trust.lock")
+                .collect();
+            v.sort();
+            v
+        };
+        let files = listing(&fx);
+        for l in [
+            preview(&fx),
+            claude_code(&fx.env(), Mode::Undo { dry_run: true }),
+        ] {
+            // (The undo preview may say the setting is no longer the one cAInary wrote: the
+            // interrupted undo had already restored it. It still must not touch anything.)
+            assert!(l.message.contains("pending"), "{}", l.message);
+        }
+        // A status that can't take the lock only inspects.
+        let (_ca, held) = hold(&fx);
+        let s = status(&fx);
+        assert!(s["note"].as_str().unwrap().contains("pending"), "{s}");
+        drop(held);
+        assert_eq!(state_bytes(&fx), before, "no state written");
+        assert_eq!(listing(&fx), files, "no file created or deleted");
+        assert!(bundle.exists(), "the bundle is still there");
+        // The real thing finishes it, and removes the bundle then.
+        let s = status(&fx);
+        assert!(
+            s["note"].as_str().unwrap().contains("interrupted undo"),
+            "{s}"
+        );
+        assert!(!bundle.exists());
+        assert!(state_bytes(&fx).is_none());
+    }
+}
