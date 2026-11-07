@@ -27,7 +27,7 @@ use serde_json::{Map, Number, Value};
 /// Message nesting deeper than this is refused.
 const MAX_DEPTH: usize = 100;
 /// JSON values (scalars, objects, arrays and array elements) one request may produce.
-const MAX_VALUES: usize = 500_000;
+const MAX_VALUES: usize = 600_000;
 const MAX_FIELD_NUMBER: u64 = (1 << 29) - 1;
 
 /// The HTTP answer for a body that cannot be transcoded.
@@ -821,11 +821,11 @@ mod tests {
         let out = &doc["resourceLogs"][0]["scopeLogs"][0]["logRecords"];
         assert_eq!(out.as_array().unwrap().len(), 10_000);
 
-        // Metrics: 10k histogram points of two attributes, with 10 bucket counts and 9 bounds
-        // each; the bucket arrays count per element and are the costliest shape. (20 buckets
-        // would need about 540k values: 10k points at that size is past this cap.)
-        let counts: Vec<u8> = (0..10u64).flat_map(|i| i.to_le_bytes()).collect();
-        let bounds: Vec<u8> = (0..9u64)
+        // Metrics: 10k histogram points of two attributes, with 20 bucket counts and 19 bounds
+        // each; the bucket arrays count per element and are the costliest shape (about 540k
+        // values in all).
+        let counts: Vec<u8> = (0..20u64).flat_map(|i| i.to_le_bytes()).collect();
+        let bounds: Vec<u8> = (0..19u64)
             .flat_map(|i| (i as f64 * 0.5).to_le_bytes())
             .collect();
         let point = cat(&[
@@ -833,7 +833,7 @@ mod tests {
             ld(9, &string_attr("type", "input")),
             fx64(2, 1),
             fx64(3, 2),
-            fx64(4, 10),
+            fx64(4, 20),
             fx64(5, 3),
             ld(6, &counts),
             ld(7, &bounds),
@@ -844,6 +844,14 @@ mod tests {
         let out =
             &doc["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["histogram"]["dataPoints"];
         assert_eq!(out.as_array().unwrap().len(), 10_000);
+
+        // The same shape with 12k points is about 650k values: over the cap.
+        let points: Vec<u8> = (0..12_000).flat_map(|_| ld(1, &point)).collect();
+        let metrics = ld(1, &ld(2, &ld(2, &ld(9, &points))));
+        assert_eq!(
+            err(Signal::Metrics, &metrics),
+            (413, "too many records or attributes in one request")
+        );
     }
 
     #[test]
