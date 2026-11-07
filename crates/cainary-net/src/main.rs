@@ -237,11 +237,38 @@ fn ca_dir() -> Result<std::path::PathBuf, String> {
 #[cfg(feature = "tls")]
 fn delete_ca() -> u8 {
     use cainary_net::tls::ca_file;
+    use cainary_net::trust;
     let dir = match ca_dir() {
         Ok(d) => d,
         Err(m) => return fail(m, 1),
     };
-    match ca_file::delete(&dir) {
+    // The trust that points at this CA is undone first, under the run lock; if that is refused
+    // the CA stays (deleting it would leave a bundle or setting dangling).
+    let (harness, trust_dir) = match trust_env() {
+        Ok(e) => e,
+        Err(m) => return fail(m, 1),
+    };
+    let env = trust::Env {
+        harness: &harness,
+        ca_dir: trust_dir,
+    };
+    let mut refused = false;
+    let mut lines = Vec::new();
+    let result = ca_file::delete(&dir, |_| {
+        lines = trust::undo_mode_everywhere(&env, trust::TAKEOVER);
+        refused = lines.iter().any(|l| l.code() != 0);
+        !refused
+    });
+    for l in &lines {
+        print!("{}", l.text());
+    }
+    if refused {
+        eprintln!(
+            "cainary-otel-debug: the certificate was kept: trust could not be undone (see above)"
+        );
+        return 1;
+    }
+    match result {
         Ok(true) => {
             println!("removed {}", dir.join(ca_file::CA_FILE).display());
             0

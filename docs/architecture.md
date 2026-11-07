@@ -1283,7 +1283,7 @@ true` is set, and the `summary` always stays.
 | `batch` | `seq`, `signal` (`logs`, `metrics`, `traces`), `path` (`/v1/<signal>`, or the fixed marker `<custom path>` in takeover mode: request paths are never printed), `host` (takeover only: the validated host name), `bytes`, `vendor` (`claude-code`, `codex` or `null`), `service` (`{name, version}` or `null`), `catalog` (the catalog label or `null`), `records`, `notInCatalog`, `summary`, `resources` or `resourcesOmitted`, and `scanIncomplete` when set |
 | `alert` | `seq`, `pattern`, `preset`, `signal`, `event` (record name or `null`), `events` (up to 8 names), `attribute` (key label or `null`), `where` (`key`, `value`, `body`, `resource`, `scope` or `name`), `count`, `match` |
 | `trust` | one per `--trust` call: `target` (`claude-code`, `codex`), `action` (`preview`, `applied`, `already`, `undone`, `nothing-to-undo`, `refused`), `message` (fixed text), `settingsPath`, `backupPath`, `key` (`NODE_EXTRA_CA_CERTS` or `null`), `from`, `to`, `bundlePath`, `command` (`null` where not applicable) |
-| `trust-status` | `claudeCode` (`{state: applied\|absent\|other-value\|managed, settingsPath, value}`), `codex` (`{state: ready\|absent, bundlePath, command}`), `caPath`, `caExists` (the collector certificate file exists), `note` (a sentence when an interrupted change was just finished or cleared, or that the state file is newer than this build; else `null`), `owned` (additive: every file cAInary recorded as its own, `[{mode, target, kind: settings\|backup\|bundle, path, key, fingerprints, foreign, sha256}]`, §12.11) |
+| `trust-status` | `claudeCode` (`{state: applied\|absent\|other-value\|managed, settingsPath, value}`), `codex` (`{state: ready\|absent, bundlePath, command}`), `caPath`, `caExists` (the collector certificate file exists), `note` (a sentence when an interrupted change was just finished or cleared, or that the state file is newer than this build; else `null`), `owned` (additive: every file cAInary recorded as its own, `[{modes, target, kind: settings\|backup\|bundle, path, key, fingerprints, caFingerprints, foreign, sha256}]`, §12.11) |
 | `error` | `source`, then either `status`, `method`, `path`, `message` (for `http`) or `dropped`, `message`, or `message` alone |
 
 - `summary` is `{identity: [keys], resource: [keys], records: [{name, kind, count, known, what?,
@@ -1372,8 +1372,8 @@ users who can't change how the agent is launched. It is built only with the `tls
 - **Flags.** `--tls --tls-host <name>` (repeatable, 1–32; DNS names of at least two labels, no
   wildcard or IP, ≤ 253 bytes, lowercased and deduplicated). The default port is **8443**; binding
   is loopback only, as ever. `--tls-public-port` (default 443 when the bound port isn't 443) is the
-  port an exporter's URL uses. `--delete-ca` removes the certificate file (and refuses while a run
-  holds the lock).
+  port an exporter's URL uses. `--delete-ca` removes the certificate file after undoing the
+  `takeover` trust that points at it (§12.11), and refuses while a run holds the lock.
 - **Privilege.** The program prints, and never runs, a loopback-only `nft` redirect of 443 to 8443
   for locally generated traffic (both address families, exact destinations) with its removal. As
   an alternative it documents `setcap cap_net_bind_service=+ep` only for an installed binary in a
@@ -1550,12 +1550,16 @@ bundles), `claude.rs` and `codex.rs` (the two targets).
   as the other writer made it. This narrows the window to a few system calls but cannot close it
   against a malicious same-user writer racing the rename; same-user processes are outside
   cAInary's threat model here as elsewhere.
-- **`owned[]` in `trust-status`.** One entry per owned file and enabled mode: `mode`, `target`
-  (`claude-code`, `codex`), `kind` (`settings`, `backup`, `bundle`), `path`, `key` (the settings
-  key, else `null`), `fingerprints` (for a bundle: the preserved originals, then the mode's
-  certificate; else `[]`), `foreign` and `sha256` (the file now, `null` if missing). The text
-  status adds one `owned: <mode> <target> <kind> (<path>)` line per entry, with ` foreign` when
-  it is. Every other field of the line is unchanged, so older readers ignore `owned`.
+- **`owned[]` in `trust-status`.** One entry per owned file: `modes` (the modes the file serves,
+  in registry order), `target` (`claude-code`, `codex`), `kind` (`settings`, `backup`, `bundle`),
+  `path`, `key` (the settings key, else `null`), `fingerprints` (for a bundle: the preserved
+  originals, then the certificate of each mode; else `[]`), `caFingerprints` (`{<mode>: <sha-256
+  hex of that mode's certificate>}` for a bundle's CAs; `{}` for the settings file and the
+  backup), `foreign` and `sha256` (the file now, `null` if missing). The text status adds one
+  `owned: <modes, comma separated> <target> <kind> (<path>)` line per entry, with ` foreign` when
+  it is. Every other field of the line is unchanged, so older readers ignore `owned` (the Linux
+  tray and the macOS app don't read it). Before T3 an entry was per file *and* mode with a single
+  `mode`; nothing consumed it.
 - **Mode registry and bundle composition.** `trust::MODES` lists every mode with the file its
   certificate lives in, in a fixed order that is also the bundle order: `takeover`
   (`otel-debug-ca.pem`), then `proxy` (`otel-debug-proxy-ca.pem`, its public certificate kept
@@ -1572,6 +1576,26 @@ bundles), `claude.rs` and `codex.rs` (the two targets).
   certificate of each enabled mode. If one is missing (or isn't exactly one certificate), the
   rebuild is skipped with a warning and the bundle is left as it is: a CA is never silently
   dropped.
+- **Claude Code and the bundle.** A new Claude Code apply points `NODE_EXTRA_CA_CERTS` at
+  `otel-debug-claude-bundle.pem` (the user's original certificates, when the key held one, plus
+  one certificate per enabled mode), so adding or removing a mode is a bundle rebuild and the
+  settings value never changes again. A record from before T3 that points straight at the
+  collector CA migrates to the bundle only when a second mode is added; with `takeover` alone it
+  is left as it is. Removing the last mode undoes the target completely (settings restored, bundle
+  deleted).
+- **`--delete-ca` undoes trust first.** `--delete-ca` takes the run lock, then (still holding it)
+  undoes the `takeover` mode for every target that has it (`undo_mode_everywhere`, which takes the
+  trust lock itself), and unlinks the certificate only if every undo went through. If any is
+  refused (a foreign bundle, changed settings, a busy trust lock, a newer state file) the
+  certificate and everything else stay, the refusal lines are printed and the exit code is 1.
+  With no trust recorded it prints and exits as before. A running `--tls` still makes it fail as
+  busy. **Lock order is always the run lock, then the trust lock** (a `--tls` start publishes, then
+  refreshes); never the reverse. A target that also has `proxy` keeps its bundle, now holding the
+  proxy certificate only.
+- **The proxy CA persists.** The proxy mode's public certificate must stay at
+  `otel-debug-proxy-ca.pem` between sessions (step 5 of the plan): a bundle that includes the
+  `proxy` mode is rebuilt from it, and a missing file blocks the rebuild rather than silently
+  dropping the CA.
 - **Each `--tls` start** regenerates the recorded bundles from their sources and the current
   mode certificates, so the paths never change; the client still has to be restarted. Nothing is
   refreshed, and a warning is printed, if a source file or an enabled mode's certificate has gone.

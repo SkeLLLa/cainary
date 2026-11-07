@@ -1326,3 +1326,61 @@ fn rcgen_cert(name: &str) -> String {
     let _ = std::fs::remove_dir_all(tmp("rcgen-cert"));
     pem
 }
+
+/// A home with the collector CA published and `--trust claude-code` applied over the user's bundle.
+fn trusted_home(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let home = tmp(tag);
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let state = home.join("state/cainary");
+    drop(Tls::start(&[HOST.to_string()], &state).unwrap());
+    let mine = home.join("corp.pem");
+    std::fs::write(&mine, rcgen_cert("corp root")).unwrap();
+    std::fs::create_dir_all(home.join(".claude")).unwrap();
+    let settings = home.join(".claude/settings.json");
+    std::fs::write(
+        &settings,
+        format!(
+            "{{\"env\":{{\"NODE_EXTRA_CA_CERTS\":\"{}\"}}}}\n",
+            mine.display()
+        ),
+    )
+    .unwrap();
+    let out = trust_bin(&home)
+        .args(["--trust", "claude-code", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(json_line(&out)["action"], "applied");
+    (home, settings, state)
+}
+
+#[test]
+fn delete_ca_undoes_first() {
+    let (home, settings, state) = trusted_home("delete-undoes");
+    let corp = format!("{}", home.join("corp.pem").display());
+    let del = trust_bin(&home).arg("--delete-ca").output().unwrap();
+    assert_eq!(del.status.code(), Some(0), "{del:?}");
+    let text = String::from_utf8_lossy(&del.stdout);
+    assert!(text.contains("undone:"), "{text}");
+    assert!(text.contains("removed "), "{text}");
+    assert!(!state.join("otel-debug-ca.pem").exists());
+    assert!(!state.join("otel-debug-claude-bundle.pem").exists());
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+    assert_eq!(v["env"]["NODE_EXTRA_CA_CERTS"], corp, "restored");
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn delete_ca_refused_if_undo_refused() {
+    let (home, settings, state) = trusted_home("delete-refused");
+    let bundle = state.join("otel-debug-claude-bundle.pem");
+    std::fs::write(&bundle, "someone else's bundle").unwrap();
+    let before = std::fs::read(&settings).unwrap();
+    let del = trust_bin(&home).arg("--delete-ca").output().unwrap();
+    assert_eq!(del.status.code(), Some(1), "{del:?}");
+    assert!(String::from_utf8_lossy(&del.stdout).contains("refused:"));
+    assert!(state.join("otel-debug-ca.pem").exists(), "the CA stays");
+    assert_eq!(std::fs::read(&settings).unwrap(), before);
+    assert_eq!(std::fs::read(&bundle).unwrap(), b"someone else's bundle");
+    let _ = std::fs::remove_dir_all(&home);
+}

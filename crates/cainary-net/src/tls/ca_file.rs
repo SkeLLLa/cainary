@@ -443,13 +443,18 @@ pub fn publish(dir: &Path, pem: &str) -> Result<Published, CaFileError> {
     })
 }
 
-/// `--delete-ca`: removes the certificate file. Refuses while a run holds the lock.
-pub fn delete(dir: &Path) -> Result<bool, CaFileError> {
+/// `--delete-ca`: removes the certificate file. Refuses while a run holds the lock. `before` runs
+/// with the run lock held (so no `--tls` start can publish meanwhile) and the file is unlinked only
+/// if it returns true. Lock order is always the run lock, then the trust lock.
+pub fn delete(dir: &Path, before: impl FnOnce(&CaDir) -> bool) -> Result<bool, CaFileError> {
     let Some(d) = CaDir::walk(dir, false)? else {
         return Ok(false);
     };
     let _lock = d.lock()?;
     let existed = d.exists(CA_FILE);
+    if !before(&d) {
+        return Ok(existed);
+    }
     if !d.unlink(CA_FILE) {
         return failed("can't delete the certificate file");
     }
@@ -505,7 +510,7 @@ mod tests {
         }
         assert_eq!(fs::read_to_string(d.join(CA_FILE)).unwrap(), "one");
         // `--delete-ca` can't pull the file out from under a live run either.
-        assert!(matches!(delete(&d), Err(CaFileError::Busy(_))));
+        assert!(matches!(delete(&d, |_| true), Err(CaFileError::Busy(_))));
         drop(first);
         assert!(publish(&d, "three").is_ok());
         assert_eq!(fs::read_to_string(d.join(CA_FILE)).unwrap(), "three");
@@ -515,11 +520,37 @@ mod tests {
     #[test]
     fn delete_removes_the_file_and_is_quiet_when_absent() {
         let d = tmp("delete");
-        assert!(!delete(&d).unwrap(), "no directory");
+        assert!(!delete(&d, |_| true).unwrap(), "no directory");
         drop(publish(&d, "x").unwrap());
-        assert!(delete(&d).unwrap());
+        assert!(delete(&d, |_| true).unwrap());
         assert!(!d.join(CA_FILE).exists());
-        assert!(!delete(&d).unwrap());
+        assert!(!delete(&d, |_| true).unwrap());
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn delete_ca_still_busy_while_running() {
+        let d = tmp("delete-busy");
+        let first = publish(&d, "x").unwrap();
+        let mut called = false;
+        let r = delete(&d, |_| {
+            called = true;
+            true
+        });
+        assert!(matches!(r, Err(CaFileError::Busy(_))));
+        assert!(!called, "`before` never runs without the run lock");
+        drop(first);
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn delete_keeps_the_file_when_before_says_no() {
+        let d = tmp("delete-keep");
+        drop(publish(&d, "x").unwrap());
+        assert!(delete(&d, |c| c.path() == d).unwrap());
+        drop(publish(&d, "x").unwrap());
+        assert!(delete(&d, |_| false).unwrap(), "reports it exists");
+        assert!(d.join(CA_FILE).exists());
         fs::remove_dir_all(&d).unwrap();
     }
 
@@ -585,7 +616,10 @@ mod tests {
                 Err(CaFileError::Failed(m)) => assert!(m.contains("symlink"), "{m}"),
                 other => panic!("expected a refusal, got {:?}", other.err()),
             }
-            assert!(matches!(delete(&target), Err(CaFileError::Failed(_))));
+            assert!(matches!(
+                delete(&target, |_| true),
+                Err(CaFileError::Failed(_))
+            ));
         }
         assert!(
             !real.join("cainary").exists(),
@@ -634,7 +668,7 @@ mod tests {
                 Err(CaFileError::Failed(m)) => assert!(m.contains("'.' or '..'"), "{m}"),
                 other => panic!("{}: {:?}", p.display(), other.err()),
             }
-            assert!(matches!(delete(&p), Err(CaFileError::Failed(_))));
+            assert!(matches!(delete(&p, |_| true), Err(CaFileError::Failed(_))));
         }
         assert!(!base.join("a/state").exists() && !base.join("state").exists());
         // An interior `.` and redundant slashes are harmless, and the advertised path is built from the components.

@@ -832,7 +832,7 @@ mod tests {
         assert_eq!(owned(&s).len(), 4, "{s}");
         let sha = |p: &Path| sha_of(&fs::read(p).unwrap());
         let st = entry(&s, "claude-code", "settings");
-        assert_eq!(st["mode"], "takeover");
+        assert_eq!(st["modes"], json!(["takeover"]));
         assert_eq!(st["key"], KEY);
         assert_eq!(st["path"], fx.settings().display().to_string());
         assert_eq!(st["sha256"], sha(&fx.settings()));
@@ -1597,5 +1597,76 @@ mod tests {
             Action::Undone
         );
         assert!(!fx.ca_dir.join(CODEX_BUNDLE).exists());
+    }
+
+    #[test]
+    fn status_owned_lists_modes() {
+        let fx = Fx::new("owned-modes", "");
+        mine(&fx);
+        assert_eq!(apply(&fx).action, Action::Applied);
+        assert_eq!(codex(&fx.env(), false).action, Action::Applied);
+        let s = status(&fx);
+        let b = entry(&s, "claude-code", "bundle");
+        assert_eq!(b["modes"], json!([TAKEOVER]));
+        assert_eq!(
+            b["caFingerprints"],
+            json!({TAKEOVER: cert_fingerprint(CA1)})
+        );
+        assert!(b.get("mode").is_none());
+        assert_eq!(
+            entry(&s, "claude-code", "settings")["caFingerprints"],
+            json!({})
+        );
+        fs::write(fx.ca_dir.join(PROXY_CA_FILE), PROXY_CA).unwrap();
+        for t in [Target::ClaudeCode, Target::Codex] {
+            assert_eq!(apply_mode(&fx.env(), t, PROXY).action, Action::Applied);
+        }
+        let s = status(&fx);
+        assert_eq!(owned(&s).len(), 4, "one entry per file: {s}");
+        for (t, k) in [("claude-code", "bundle"), ("codex", "bundle")] {
+            let e = entry(&s, t, k);
+            assert_eq!(e["modes"], json!([TAKEOVER, PROXY]), "{e}");
+            assert_eq!(
+                e["caFingerprints"],
+                json!({TAKEOVER: cert_fingerprint(CA1), PROXY: cert_fingerprint(PROXY_CA)})
+            );
+        }
+        assert_eq!(
+            entry(&s, "claude-code", "settings")["modes"],
+            json!([TAKEOVER, PROXY])
+        );
+        assert!(status_text(&fx.env()).contains("owned: takeover,proxy codex bundle ("));
+    }
+
+    #[test]
+    fn undo_everywhere_removes_takeover_and_keeps_proxy() {
+        let fx = Fx::new("undo-everywhere", "");
+        mine(&fx);
+        assert_eq!(apply(&fx).action, Action::Applied);
+        assert_eq!(codex(&fx.env(), false).action, Action::Applied);
+        fs::write(fx.ca_dir.join(PROXY_CA_FILE), PROXY_CA).unwrap();
+        for t in [Target::ClaudeCode, Target::Codex] {
+            assert_eq!(apply_mode(&fx.env(), t, PROXY).action, Action::Applied);
+        }
+        let lines = undo_mode_everywhere(&fx.env(), TAKEOVER);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines.iter().all(|l| l.code() == 0), "{lines:?}");
+        let s = status(&fx);
+        assert_eq!(entry(&s, "codex", "bundle")["modes"], json!([PROXY]));
+        // Nothing left for takeover: no lines.
+        assert!(undo_mode_everywhere(&fx.env(), TAKEOVER).is_empty());
+    }
+
+    #[test]
+    fn undo_everywhere_refused_on_a_foreign_bundle() {
+        let fx = Fx::new("undo-foreign", "");
+        mine(&fx);
+        assert_eq!(codex(&fx.env(), false).action, Action::Applied);
+        let xb = fx.ca_dir.join(CODEX_BUNDLE);
+        fs::write(&xb, "other").unwrap();
+        let lines = undo_mode_everywhere(&fx.env(), TAKEOVER);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].action, Action::Refused, "{lines:?}");
+        assert_eq!(fs::read(&xb).unwrap(), b"other");
     }
 }

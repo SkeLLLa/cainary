@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 /// The modes a bundle can trust (the `modes` table of the state file is keyed by name).
-pub(super) const TAKEOVER: &str = "takeover";
+pub const TAKEOVER: &str = "takeover";
 pub(super) const PROXY: &str = "proxy";
 /// Every mode with the file its certificate lives in. This order is the bundle order.
 pub(super) const MODES: [(&str, &str); 2] = [(TAKEOVER, CA_FILE), (PROXY, PROXY_CA_FILE)];
@@ -322,20 +322,23 @@ pub fn status_json(env: &Env<'_>, ts: &str) -> String {
     format!("{}\n", Value::Object(m))
 }
 
-/// One `owned[]` entry of the status line.
+/// One `owned[]` entry of the status line: a file, the modes it serves (registry order), and the
+/// fingerprint of each mode's certificate when the file is a bundle.
 #[allow(clippy::too_many_arguments)]
 fn owned_entry(
-    mode: &str,
+    modes: &[&str],
     target: Target,
     kind: &str,
     path: &str,
     key: Option<&str>,
     fingerprints: &[String],
+    ca_fingerprints: Map<String, Value>,
     sha: Option<String>,
     foreign: bool,
 ) -> Value {
-    json!({"mode": mode, "target": target.as_str(), "kind": kind, "path": path, "key": key,
-           "fingerprints": fingerprints, "foreign": foreign, "sha256": sha})
+    json!({"modes": modes, "target": target.as_str(), "kind": kind, "path": path, "key": key,
+           "fingerprints": fingerprints, "caFingerprints": ca_fingerprints, "foreign": foreign,
+           "sha256": sha})
 }
 
 /// Every file cAInary recorded as its own, with whether it is still what cAInary wrote. A file
@@ -343,12 +346,24 @@ fn owned_entry(
 /// so it is foreign only when our key no longer holds our value.
 fn owned_entries(state: &State, ca: Option<&CaDir>) -> Vec<Value> {
     let mut out = Vec::new();
-    // The certificates a bundle holds: those of the modes its target is enabled for.
-    let mode_fps = |modes: &[String]| -> Vec<String> {
+    // The target's modes in registry order (the order the bundle is built in).
+    let in_order = |modes: &[String]| -> Vec<&'static str> {
         MODES
             .iter()
-            .filter(|(m, _)| modes.iter().any(|x| x == m))
-            .filter_map(|(m, _)| state.modes.get(*m).map(|c| c.fingerprint.clone()))
+            .map(|(m, _)| *m)
+            .filter(|m| modes.iter().any(|x| x == m))
+            .collect()
+    };
+    // The certificates a bundle holds: those of the modes its target is enabled for.
+    let mode_fps = |modes: &[&str]| -> Map<String, Value> {
+        modes
+            .iter()
+            .filter_map(|m| {
+                state
+                    .modes
+                    .get(*m)
+                    .map(|c| ((*m).to_string(), json!(c.fingerprint)))
+            })
             .collect()
     };
     let bundle_state = |name: &str, written: Option<&str>| match ca {
@@ -361,67 +376,78 @@ fn owned_entries(state: &State, ca: Option<&CaDir>) -> Vec<Value> {
     if let Some(cs) = &state.claude {
         let dir = Path::new(&cs.settings_path).parent();
         let bundle_path = ca.map(|d| d.path().join(CLAUDE_BUNDLE).display().to_string());
-        let collector_fp = mode_fps(&cs.modes);
-        for mode in &cs.modes {
-            let view = settings_view(&cs.settings_path);
-            let foreign = view
-                .as_ref()
-                .is_some_and(|(_, v)| v.as_deref() != Some(cs.written.as_str()));
+        let modes = in_order(&cs.modes);
+        let view = settings_view(&cs.settings_path);
+        let foreign = view
+            .as_ref()
+            .is_some_and(|(_, v)| v.as_deref() != Some(cs.written.as_str()));
+        out.push(owned_entry(
+            &modes,
+            Target::ClaudeCode,
+            "settings",
+            &cs.settings_path,
+            Some(KEY),
+            &[],
+            Map::new(),
+            view.map(|(s, _)| s),
+            foreign,
+        ));
+        if let (Some(name), Some(dir)) = (&cs.backup, dir) {
+            let sha = sibling_sha(&cs.settings_path, name);
+            let foreign = sha.is_some() && cs.orig_sha.is_some() && sha != cs.orig_sha;
             out.push(owned_entry(
-                mode,
+                &modes,
                 Target::ClaudeCode,
-                "settings",
-                &cs.settings_path,
-                Some(KEY),
-                &[],
-                view.map(|(s, _)| s),
-                foreign,
-            ));
-            if let (Some(name), Some(dir)) = (&cs.backup, dir) {
-                let sha = sibling_sha(&cs.settings_path, name);
-                let foreign = sha.is_some() && cs.orig_sha.is_some() && sha != cs.orig_sha;
-                out.push(owned_entry(
-                    mode,
-                    Target::ClaudeCode,
-                    "backup",
-                    &dir.join(name).display().to_string(),
-                    None,
-                    &[],
-                    sha,
-                    foreign,
-                ));
-            }
-            if let Some(bp) = bundle_path.as_ref().filter(|p| **p == cs.written) {
-                let (foreign, sha) = bundle_state(CLAUDE_BUNDLE, cs.bundle_sha.as_deref());
-                let fps: Vec<String> = cs.orig_fps.iter().chain(&collector_fp).cloned().collect();
-                out.push(owned_entry(
-                    mode,
-                    Target::ClaudeCode,
-                    "bundle",
-                    bp,
-                    None,
-                    &fps,
-                    sha,
-                    foreign,
-                ));
-            }
-        }
-    }
-    if let Some(c) = &state.codex {
-        let collector_fp = mode_fps(&c.modes);
-        for mode in &c.modes {
-            let (foreign, sha) = bundle_state(CODEX_BUNDLE, c.bundle_sha.as_deref());
-            out.push(owned_entry(
-                mode,
-                Target::Codex,
-                "bundle",
-                &c.bundle_path,
+                "backup",
+                &dir.join(name).display().to_string(),
                 None,
-                &collector_fp,
+                &[],
+                Map::new(),
                 sha,
                 foreign,
             ));
         }
+        if let Some(bp) = bundle_path.as_ref().filter(|p| **p == cs.written) {
+            let (foreign, sha) = bundle_state(CLAUDE_BUNDLE, cs.bundle_sha.as_deref());
+            let cas = mode_fps(&modes);
+            let fps: Vec<String> = cs
+                .orig_fps
+                .iter()
+                .cloned()
+                .chain(cas.values().filter_map(|v| v.as_str().map(str::to_string)))
+                .collect();
+            out.push(owned_entry(
+                &modes,
+                Target::ClaudeCode,
+                "bundle",
+                bp,
+                None,
+                &fps,
+                cas,
+                sha,
+                foreign,
+            ));
+        }
+    }
+    if let Some(c) = &state.codex {
+        let modes = in_order(&c.modes);
+        let (foreign, sha) = bundle_state(CODEX_BUNDLE, c.bundle_sha.as_deref());
+        let cas = mode_fps(&modes);
+        let fps: Vec<String> = cas
+            .values()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect();
+        out.push(owned_entry(
+            &modes,
+            Target::Codex,
+            "bundle",
+            &c.bundle_path,
+            None,
+            &fps,
+            cas,
+            sha,
+            foreign,
+        ));
     }
     out
 }
@@ -440,7 +466,10 @@ pub fn status_text(env: &Env<'_>) -> String {
     for o in v["owned"].as_array().into_iter().flatten() {
         text.push_str(&format!(
             "owned: {} {} {} ({}){}\n",
-            s(&o["mode"]),
+            o["modes"]
+                .as_array()
+                .map(|m| m.iter().map(&s).collect::<Vec<_>>().join(","))
+                .unwrap_or_default(),
             s(&o["target"]),
             s(&o["kind"]),
             crate::output::escape(&s(&o["path"])),
@@ -528,6 +557,45 @@ pub(crate) fn undo_mode(env: &Env<'_>, target: Target, mode: &str) -> Line {
         Target::ClaudeCode => claude::claude_mode(env, mode, true),
         Target::Codex => codex::codex_mode(env, mode, true),
     }
+}
+
+/// `--delete-ca`'s first step, called with the run lock held: removes `mode` from every target
+/// that has it (the trust lock is taken here, after the run lock, never the other way round).
+/// A target without the mode is left alone, so with no trust recorded there are no lines.
+pub fn undo_mode_everywhere(env: &Env<'_>, mode: &str) -> Vec<Line> {
+    let Ok(Some(ca)) = CaDir::open_existing(&env.ca_dir) else {
+        return Vec::new();
+    };
+    let lock = match lock_trust(&ca, lock_wait()) {
+        Ok(Some(l)) => l,
+        Ok(None) => return vec![Line::refused(Target::ClaudeCode, BUSY)],
+        Err(_) => {
+            return vec![Line::refused(
+                Target::ClaudeCode,
+                "The trust lock could not be taken.",
+            )];
+        }
+    };
+    let _ = recover(env, &ca, &lock);
+    let state = read_state(&ca);
+    if state.newer {
+        return vec![Line::refused(Target::ClaudeCode, NEWER)];
+    }
+    let has = |modes: &[String]| modes.iter().any(|m| m == mode);
+    let mut targets = Vec::new();
+    if state.claude.as_ref().is_some_and(|c| has(&c.modes)) {
+        targets.push(Target::ClaudeCode);
+    }
+    if state.codex.as_ref().is_some_and(|c| has(&c.modes)) {
+        targets.push(Target::Codex);
+    }
+    // `undo_mode` takes the trust lock itself; this one is released first.
+    drop(lock);
+    drop(ca);
+    targets
+        .into_iter()
+        .map(|t| undo_mode(env, t, mode))
+        .collect()
 }
 
 /// For the tests and the CLI: the time stamp used in backup names.
