@@ -89,7 +89,7 @@ fn tree(tag: &str) -> Tree {
 
 fn version_ok(_: &Path) -> Result<String, String> {
     Ok(format!(
-        "cainary-bind-helper/1 {}\n",
+        "cainary-bind-helper {} protocol 1\n",
         env!("CARGO_PKG_VERSION")
     ))
 }
@@ -311,17 +311,21 @@ fn rejects_unsafe_policy_file() {
 #[test]
 fn version_mismatch_warns_and_protocol_mismatch_blocks() {
     let tree = tree("version");
-    let other = |_: &Path| Ok("cainary-bind-helper/1 0.0.1".to_owned());
+    let other = |_: &Path| Ok("cainary-bind-helper 0.0.1 protocol 1".to_owned());
     assert!(matches!(
         state(&tree, other),
         PrivState::Mismatch { warn, .. } if warn.contains("0.0.1")
     ));
-    let newer = |_: &Path| Ok("cainary-bind-helper/2 9.9.9".to_owned());
+    let newer = |_: &Path| Ok("cainary-bind-helper 9.9.9 protocol 2".to_owned());
     assert!(no_helper_reason(state(&tree, newer)).contains("Update the helper"));
     let failing = |_: &Path| Err("boom".to_owned());
     assert!(no_helper_reason(state(&tree, failing)).contains("boom"));
     assert!(matches!(
         privport::check_version("garbage", "1"),
+        VersionCheck::Blocked(_)
+    ));
+    assert!(matches!(
+        privport::check_version("cainary-bind-helper/1 0.5.2", "0.5.2"),
         VersionCheck::Blocked(_)
     ));
 }
@@ -373,5 +377,78 @@ fn replies_parse_strictly() {
     assert_eq!(
         privport::parse_reply(&[0xff, 0xfe]),
         Err(ReplyError::Malformed)
+    );
+}
+
+fn repo_file(relative: &str) -> String {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .join(relative);
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
+#[test]
+fn real_policy_files_match_their_own_helper_only() {
+    use cainary_tray_model::privport::{ACTION_LOCAL, HELPER_LOCAL};
+    let packaged = repo_file("packaging/linux/polkit/ua.SkeLLLa.cAInary.policy");
+    let local = repo_file("packaging/linux/polkit/ua.SkeLLLa.cAInary.local.policy");
+    assert_eq!(
+        privport::check_policy_text(&packaged, ACTION_PACKAGED, HELPER_PACKAGED),
+        Ok(())
+    );
+    assert_eq!(
+        privport::check_policy_text(&local, ACTION_LOCAL, HELPER_LOCAL),
+        Ok(())
+    );
+    assert!(privport::check_policy_text(&packaged, ACTION_LOCAL, HELPER_LOCAL).is_err());
+    assert!(privport::check_policy_text(&local, ACTION_PACKAGED, HELPER_PACKAGED).is_err());
+    assert!(privport::check_policy_text(&packaged, ACTION_PACKAGED, HELPER_LOCAL).is_err());
+    assert!(privport::check_policy_text(&local, ACTION_LOCAL, HELPER_PACKAGED).is_err());
+}
+
+/// The real helper's `--version` line, and the reply builders, as written in its source: if the
+/// helper changes them, this fails and the parsers here must follow.
+#[test]
+fn real_helper_output_formats_still_parse() {
+    let source = repo_file("crates/cainary-bind-helper/src/helper.rs");
+    assert!(
+        source.contains(r#"format!("cainary-bind-helper {VERSION} protocol 1\n")"#),
+        "helper --version format changed"
+    );
+    assert!(source.contains(r#"format!("{PROTOCOL} ok {port} {count} {VERSION}{warn}")"#));
+    assert!(source.contains(r#"format!("{PROTOCOL} error {}", fail.token())"#));
+    assert!(source.contains(r#"const PROTOCOL: &str = "cainary-bind-helper/1";"#));
+    for token in [
+        "bad-args",
+        "not-pkexec",
+        "bad-channel",
+        "port-in-use",
+        "bind-failed",
+        "send-failed",
+    ] {
+        assert!(source.contains(&format!("\"{token}\"")), "{token}");
+        let reply = format!("cainary-bind-helper/1 error {token}");
+        assert!(
+            matches!(privport::parse_reply(reply.as_bytes()), Ok(Reply::Error(_))),
+            "{token}"
+        );
+    }
+    let version = env!("CARGO_PKG_VERSION");
+    assert_eq!(
+        privport::check_version(
+            &format!("cainary-bind-helper {version} protocol 1\n"),
+            version
+        ),
+        VersionCheck::Match
+    );
+    assert!(
+        privport::parse_reply(format!("cainary-bind-helper/1 ok 443 2 {version}").as_bytes())
+            .is_ok()
+    );
+    assert!(
+        privport::parse_reply(
+            format!("cainary-bind-helper/1 ok 80 1 {version} ipv6-unavailable").as_bytes()
+        )
+        .is_ok()
     );
 }

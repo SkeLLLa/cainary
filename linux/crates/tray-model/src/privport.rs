@@ -24,6 +24,7 @@ pub const ACTION_LOCAL: &str = "ua.SkeLLLa.cAInary.bind-loopback-port.local";
 
 /// The word the helper's `--version` output and replies start with, up to the protocol number.
 const PROTOCOL_PREFIX: &str = "cainary-bind-helper/";
+const PROGRAM: &str = "cainary-bind-helper";
 /// The protocol this tray speaks.
 pub const PROTOCOL: u32 = 1;
 const UNPRIVILEGED_PORT_START: &str = "/proc/sys/net/ipv4/ip_unprivileged_port_start";
@@ -398,29 +399,27 @@ pub enum VersionCheck {
     Blocked(String),
 }
 
-/// `cainary-bind-helper/<protocol> <version>`, as the first line of the helper's `--version`.
+/// `cainary-bind-helper <version> protocol <N>`, the helper's `--version` line. The tray runs it
+/// unprivileged and directly (never through pkexec), with a short timeout and bounded stdout.
 pub fn check_version(output: &str, expected_version: &str) -> VersionCheck {
     let line = output.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
-    let mut words = line.split_whitespace();
-    let Some(protocol) = words
-        .next()
-        .and_then(|word| word.strip_prefix(PROTOCOL_PREFIX))
-    else {
+    let words: Vec<&str> = line.split_whitespace().collect();
+    let [PROGRAM, version, "protocol", protocol] = words.as_slice() else {
         return VersionCheck::Blocked(
             "the helper didn't identify itself. Update the helper".into(),
         );
     };
-    if protocol != PROTOCOL.to_string() {
+    if *protocol != PROTOCOL.to_string() {
         return VersionCheck::Blocked(format!(
             "the helper speaks protocol {protocol}, this app speaks {PROTOCOL}. Update the helper"
         ));
     }
-    match words.next() {
-        Some(version) if version == expected_version => VersionCheck::Match,
-        Some(version) => VersionCheck::Mismatch(format!(
+    if *version == expected_version {
+        VersionCheck::Match
+    } else {
+        VersionCheck::Mismatch(format!(
             "the helper is version {version}, this app is {expected_version}"
-        )),
-        None => VersionCheck::Mismatch("the helper didn't report its version".into()),
+        ))
     }
 }
 
@@ -490,6 +489,7 @@ pub enum HelperError {
     BadChannel,
     BindFailed,
     NotPkexec,
+    SendFailed,
 }
 
 impl HelperError {
@@ -500,6 +500,7 @@ impl HelperError {
             "bad-channel" => Self::BadChannel,
             "bind-failed" => Self::BindFailed,
             "not-pkexec" => Self::NotPkexec,
+            "send-failed" => Self::SendFailed,
             _ => return None,
         })
     }
