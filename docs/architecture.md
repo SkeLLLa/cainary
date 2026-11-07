@@ -22,7 +22,7 @@ Design rules, in priority order:
    listens only on loopback (127.0.0.1 and ::1) and never opens an outbound connection. It
    refuses requests whose `Host` isn't a loopback name with its port and any request that carries
    an `Origin` or `Sec-Fetch-*` header, so a web page can't reach it. It is unauthenticated, as
-   any loopback listener is: any local process can post to it. It writes only to a log file the
+   any loopback listener is: any local process can post to it (on Linux, only processes of the same user: §12.2). It writes only to a log file the
    user names, and runs only while the user runs it: from a terminal, or through the explicit
    "OTel debug collector" toggle in the macOS app or the Linux tray, which start it as a child
    process and stop it with the app. `cainary scan` and `status` never start or contact it.
@@ -116,12 +116,15 @@ daemon: no autostart, pidfile or service), auto-update, and any server-side visi
       tests/cli.rs           runs the binary on fixtures; text/status/sources/explain goldens in tests/golden/
     cainary-net/             binary `cainary-otel-debug` (§12); `publish = false`; never linked by the core or CLI
       src/main.rs            args, `--config-stdin` / stdin lifeline thread, exit codes; the only `std::env`/`std::process`
-      src/lib.rs             `pub mod args, config, http, logfile, otlp, output, queue, redflag, server, setup`
+      src/lib.rs             `pub mod args, config, decode, http, logfile, otlp, otlp_pb, output, peer, queue, redflag, server, setup`
       src/args.rs            hand-written parser → `Options`; exit-2 usage errors
       src/config.rs          `--config-stdin`: the one JSON config line (≤ 1 MiB), strict
       src/server.rs          the only `std::net`: bind, accept, per-connection threads, limits, Host/Origin checks
       src/http.rs            pure HTTP/1.1 parsing and response bytes (strict framing)
-      src/otlp.rs            routes, content checks, OTLP/JSON walk, naming policy, alerts → events
+      src/decode.rs          Content-Type/Content-Encoding checks, gzip, protobuf → OTLP/JSON `Value`
+      src/otlp_pb.rs         the hand-written protobuf wire → OTLP/JSON transcoder (logs, metrics, traces)
+      src/peer.rs            pure `/proc/net/tcp{,6}` parsers: which local user owns a loopback client (Linux)
+      src/otlp.rs            routes, OTLP/JSON walk, naming policy, alerts → events
       src/output.rs          the output thread: JSON lines, text rendering, escaping
       src/queue.rs           the job semaphore and the output queue (bounded by items and bytes)
       src/logfile.rs         the only file writer: 0600 log, rotation, descriptor-validated open
@@ -1080,7 +1083,7 @@ state.
 ## 12. OTel debug collector (`cainary-otel-debug`)
 
 A separate, opt-in program (crate `cainary-net`, `publish = false`) that receives OTLP/JSON
-exports on loopback and prints what they carry, so a user can see what a tool's telemetry
+exports (JSON or protobuf) on loopback and prints what they carry, so a user can see what a tool's telemetry
 actually contains, as opposed to what the payload preview (§3.7) predicts from config. It is the
 one place in the repository that listens on a socket (§1). It is inbound-only: it never opens an
 outbound connection, never resolves a name, starts no process, and reads only the red-flags file
@@ -1088,7 +1091,8 @@ the user names. `cainary` never starts or contacts it. It is not a daemon: it ru
 runs it (a terminal, or a child of a GUI toggle), and leaves no pidfile, service or autostart.
 
 The collector is **unauthenticated**. Any local process can post to it, so the stream shows what
-was *received*, and the vendor is inferred from the payload, not proven by the sender.
+was *received*, and the vendor is inferred from the payload, not proven by the sender. On Linux
+it does check the sender's user (§12.2): a connection from another local user is refused.
 
 ### 12.1 Command line
 
@@ -1169,11 +1173,15 @@ pipe); `1` setup (port in use, log file or red-flags file unusable, a failed bin
 
 | Request | Answer |
 | --- | --- |
-| `POST /v1/logs`, `/v1/metrics`, `/v1/traces` | `200` `{}` (`application/json`), written **before** the batch is emitted, after room in the output queue is reserved |
+| `POST /v1/logs`, `/v1/metrics`, `/v1/traces` | `200` `{}` (`application/json`); for a protobuf request `200` with an empty body and the request's media type. Written **before** the batch is emitted, after room in the output queue is reserved |
 | other path | `404` |
 | known path, other method | `405` with `Allow: POST` |
-| `Content-Type` not `application/json` (parameters ignored) | `415`, saying to set `OTEL_EXPORTER_OTLP_PROTOCOL=http/json` (or `protocol = "json"` for Codex) |
-| `Content-Encoding` other than `identity` | `415`, saying to unset `OTEL_EXPORTER_OTLP_COMPRESSION` |
+| `Content-Type` not `application/json`, `application/x-protobuf` or `application/protobuf` (parameters ignored) | `415`, saying to set `OTEL_EXPORTER_OTLP_PROTOCOL` to `http/json` or `http/protobuf` (or `protocol` to `"json"` or `"binary"` for Codex); gRPC isn't supported |
+| `Content-Encoding` other than absent, `identity`, `gzip`, `x-gzip` | `415`, saying to set `OTEL_EXPORTER_OTLP_COMPRESSION` to `gzip` or `none` |
+| duplicate `Content-Type` or `Content-Encoding` | `400` |
+| corrupt gzip, or bytes after the stream | `400` `invalid gzip body` |
+| gzip body over 16 MiB decoded | `413` `decompressed body too large` |
+| protobuf without a `/v1/<signal>` path in takeover mode | `400` `can't tell which signal this is (protobuf needs a /v1/<signal> path)` |
 | body not JSON | `400` `invalid JSON (line L, column C)` |
 | not an OTLP document of that signal | `400` `not an OTLP <signal> document` |
 | over the record or attribute limit | `413` |
@@ -1184,8 +1192,17 @@ Error bodies are `{"code":3,"message":"…"}` with fixed messages. Exporters ret
 5xx, so a 4xx doesn't cause a retry storm. Each rejection also emits an `error` line, rate-limited
 to **10 per second**, then one summary line with `dropped`.
 
-Protobuf and gzip are not supported (the default OTLP protocol is protobuf; the setup lines ask
-for `http/json`).
+Protobuf and gzip are read (the default OTLP protocol is protobuf, and under takeover the
+organization's settings choose it); the setup lines still ask for `http/json`. gRPC and zstd are
+not supported. A protobuf request gets protobuf answers: an empty `200`, and `google.rpc.Status`
+error bodies. Limits and details: otel-payload-preview.md §18.
+
+**Own-user check (Linux).** Before TLS and before a byte is read, the client's socket is looked
+up in `/proc/net/tcp` and `/proc/net/tcp6` (`peer.rs`): local address = the peer address, remote
+address = loopback on the listen or public port, state ESTABLISHED or FIN_WAIT1/2. Exactly one
+match owned by the collector's effective uid passes. Anything else is refused: plain mode `403`
+`connection from another local user refused`; TLS and takeover close without a reply. There is
+no check on macOS (no `/proc`; see macos.md). Details: otel-payload-preview.md §14.4.
 
 ### 12.3 What is printed (one policy for every payload-derived string)
 
@@ -1372,7 +1389,9 @@ endpoint:
   Claude Code keeps sending to your organization's collector
   (<https://code.claude.com/docs/en/monitoring-usage#how-managed-settings-lock-the-otlp-destination>).
   Codex `requirements.toml` `[otel]` overrides `config.toml`. `cainary scan` shows which of these
-  your organization sets. The collector is unauthenticated.
+  your organization sets. `http/protobuf` and gzip are accepted too; gRPC isn't. A process behind
+  `HTTPS_PROXY` needs `127.0.0.1`, `::1` and `localhost` in its `NO_PROXY`. On Linux only your own
+  user's programs can send. The collector is unauthenticated.
 
 ### 12.9 Goal 3 compatibility
 

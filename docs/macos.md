@@ -352,7 +352,8 @@ the app never talks to it over the network: it reads the child's stdout.
 - **The log file** is written by the child (mode 0600, in a 0700 directory it creates), not by the
   app, so "writes only its prefs domain" still holds for the app itself.
 - The collector is unauthenticated: any local process can post to it, so the pane shows what it
-  *received*.
+  *received*. The Linux collector refuses other local users' connections (it reads `/proc/net/tcp`);
+  macOS has no such file, so nothing is checked here.
 
 ## 3. Files (`macos/`: macOS 14+, SwiftUI, Swift 6, swiftc via Makefile, no SwiftPM)
 

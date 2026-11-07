@@ -372,7 +372,9 @@ settings file without that table still loads with the collector disabled. If it 
 the collector starts again when the tray next launches.
 
 The receiver listens on loopback only and makes no outbound connections. It is unauthenticated,
-so any local process can send it telemetry. Details shows the endpoint, setup lines, red-flag
+so any local process of your own user can send it telemetry; connections from other local users are
+refused (the collector looks the sender up in `/proc/net/tcp`). It reads OTLP over HTTP as JSON or
+protobuf, gzip or not; gRPC isn't supported. Details shows the endpoint, setup lines, red-flag
 alerts, and a bounded recent batch summary. Collector output stays in memory: the tray retains at
 most 16 MiB of lines, 50 batches, and 200 alerts. Desktop notifications for red flags are enabled
 by default and limited to one per pattern every 60 seconds.
