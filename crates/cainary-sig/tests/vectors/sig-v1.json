@@ -1,0 +1,390 @@
+[
+ {
+  "name": "absent",
+  "key_hex": null,
+  "domain": null,
+  "fields": {
+   "t": "absent"
+  },
+  "encoding_hex": "0000000000",
+  "digest_hex": null
+ },
+ {
+  "name": "null",
+  "key_hex": null,
+  "domain": null,
+  "fields": {
+   "t": "null"
+  },
+  "encoding_hex": "0100000000",
+  "digest_hex": null
+ },
+ {
+  "name": "bool",
+  "key_hex": null,
+  "domain": null,
+  "fields": {
+   "t": "list",
+   "v": [
+    {
+     "t": "bool",
+     "v": false
+    },
+    {
+     "t": "bool",
+     "v": true
+    }
+   ]
+  },
+  "encoding_hex": "070000000c020000000100020000000101",
+  "digest_hex": null
+ },
+ {
+  "name": "u64-max",
+  "key_hex": null,
+  "domain": null,
+  "fields": {
+   "t": "u64",
+   "v": "18446744073709551615"
+  },
+  "encoding_hex": "0300000008ffffffffffffffff",
+  "digest_hex": null
+ },
+ {
+  "name": "i64-negative",
+  "key_hex": null,
+  "domain": null,
+  "fields": {
+   "t": "list",
+   "v": [
+    {
+     "t": "i64",
+     "v": "-5"
+    },
+    {
+     "t": "i64",
+     "v": "-9223372036854775808"
+    },
+    {
+     "t": "i64",
+     "v": "9223372036854775807"
+    }
+   ]
+  },
+  "encoding_hex": "07000000270400000008fffffffffffffffb0400000008800000000000000004000000087fffffffffffffff",
+  "digest_hex": null
+ },
+ {
+  "name": "bytes-and-str",
+  "key_hex": null,
+  "domain": null,
+  "fields": {
+   "t": "list",
+   "v": [
+    {
+     "t": "bytes",
+     "v": "00ff10"
+    },
+    {
+     "t": "bytes",
+     "v": ""
+    },
+    {
+     "t": "str",
+     "v": ""
+    },
+    {
+     "t": "str",
+     "v": "héllo ☃"
+    }
+   ]
+  },
+  "encoding_hex": "0700000021050000000300ff1005000000000600000000060000000a68c3a96c6c6f20e29883",
+  "digest_hex": null
+ },
+ {
+  "name": "absent-vs-null-in-list",
+  "key_hex": null,
+  "domain": null,
+  "fields": {
+   "t": "list",
+   "v": [
+    {
+     "t": "absent"
+    },
+    {
+     "t": "null"
+    }
+   ]
+  },
+  "encoding_hex": "070000000a00000000000100000000",
+  "digest_hex": null
+ },
+ {
+  "name": "empty-map",
+  "key_hex": null,
+  "domain": null,
+  "fields": {
+   "t": "map",
+   "v": []
+  },
+  "encoding_hex": "0800000000",
+  "digest_hex": null
+ },
+ {
+  "name": "map-sorted-non-ascii",
+  "key_hex": null,
+  "domain": null,
+  "fields": {
+   "t": "map",
+   "v": [
+    [
+     "zeta",
+     {
+      "t": "u64",
+      "v": "1"
+     }
+    ],
+    [
+     "é",
+     {
+      "t": "u64",
+      "v": "2"
+     }
+    ],
+    [
+     "alpha",
+     {
+      "t": "u64",
+      "v": "3"
+     }
+    ],
+    [
+     "Z",
+     {
+      "t": "u64",
+      "v": "4"
+     }
+    ],
+    [
+     "中",
+     {
+      "t": "u64",
+      "v": "5"
+     }
+    ],
+    [
+     "😀",
+     {
+      "t": "u64",
+      "v": "6"
+     }
+    ],
+    [
+     "a",
+     {
+      "t": "u64",
+      "v": "7"
+     }
+    ]
+   ]
+  },
+  "encoding_hex": "080000009206000000015a03000000080000000000000004060000000161030000000800000000000000070600000005616c7068610300000008000000000000000306000000047a657461030000000800000000000000010600000002c3a9030000000800000000000000020600000003e4b8ad030000000800000000000000050600000004f09f988003000000080000000000000006",
+  "digest_hex": null
+ },
+ {
+  "name": "nested-list-map",
+  "key_hex": null,
+  "domain": null,
+  "fields": {
+   "t": "map",
+   "v": [
+    [
+     "items",
+     {
+      "t": "list",
+      "v": [
+       {
+        "t": "map",
+        "v": [
+         [
+          "b",
+          {
+           "t": "u64",
+           "v": "1"
+          }
+         ],
+         [
+          "a",
+          {
+           "t": "null"
+          }
+         ]
+        ]
+       },
+       {
+        "t": "list",
+        "v": []
+       },
+       {
+        "t": "absent"
+       }
+      ]
+     }
+    ],
+    [
+     "flag",
+     {
+      "t": "bool",
+      "v": true
+     }
+    ]
+   ]
+  },
+  "encoding_hex": "080000004b0600000004666c616702000000010106000000056974656d73070000002d080000001e06000000016101000000000600000001620300000008000000000000000107000000000000000000",
+  "digest_hex": null
+ },
+ {
+  "name": "sign-empty-fields-key-id",
+  "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "domain": "key-id/v1",
+  "fields": {
+   "t": "map",
+   "v": []
+  },
+  "encoding_hex": "0700000030060000000b6361696e6172792d7369670300000008000000000000000106000000096b65792d69642f76310800000000",
+  "digest_hex": "048c4b1913f2dcacb52100942533f29089ea402ace3d8b9b601c7989a3c9438b"
+ },
+ {
+  "name": "sign-value-at-location",
+  "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "domain": "alert/value-at-location/v1",
+  "fields": {
+   "t": "map",
+   "v": [
+    [
+     "service",
+     {
+      "t": "str",
+      "v": "claude-code"
+     }
+    ],
+    [
+     "signal",
+     {
+      "t": "str",
+      "v": "logs"
+     }
+    ],
+    [
+     "event",
+     {
+      "t": "str",
+      "v": "tool_result"
+     }
+    ],
+    [
+     "attribute",
+     {
+      "t": "str",
+      "v": "tool_parameters"
+     }
+    ],
+    [
+     "where",
+     {
+      "t": "str",
+      "v": "body"
+     }
+    ],
+    [
+     "pattern",
+     {
+      "t": "str",
+      "v": "p-aws"
+     }
+    ],
+    [
+     "match",
+     {
+      "t": "str",
+      "v": "AKIAIOSFODNN7EXAMPLE"
+     }
+    ]
+   ]
+  },
+  "encoding_hex": "07000000f9060000000b6361696e6172792d73696703000000080000000000000001060000001a616c6572742f76616c75652d61742d6c6f636174696f6e2f763108000000b80600000009617474726962757465060000000f746f6f6c5f706172616d657465727306000000056576656e74060000000b746f6f6c5f726573756c7406000000056d617463680600000014414b4941494f53464f444e4e374558414d504c4506000000077061747465726e0600000005702d617773060000000773657276696365060000000b636c617564652d636f646506000000067369676e616c06000000046c6f6773060000000577686572650600000004626f6479",
+  "digest_hex": "5947b096f7476b79cf31539b94621decc8dec59bb657cfcfdeaf4965381a1411"
+ },
+ {
+  "name": "sign-unsorted-nested",
+  "key_hex": "abababababababababababababababababababababababababababababababab",
+  "domain": "otel-shape/v1",
+  "fields": {
+   "t": "map",
+   "v": [
+    [
+     "version",
+     {
+      "t": "u64",
+      "v": "2"
+     }
+    ],
+    [
+     "paths",
+     {
+      "t": "list",
+      "v": [
+       {
+        "t": "map",
+        "v": [
+         [
+          "path",
+          {
+           "t": "str",
+           "v": "resource/service.name"
+          }
+         ],
+         [
+          "type",
+          {
+           "t": "str",
+           "v": "str"
+          }
+         ]
+        ]
+       },
+       {
+        "t": "map",
+        "v": [
+         [
+          "path",
+          {
+           "t": "str",
+           "v": "record/é"
+          }
+         ],
+         [
+          "type",
+          {
+           "t": "absent"
+          }
+         ]
+        ]
+       }
+      ]
+     }
+    ],
+    [
+     "count",
+     {
+      "t": "i64",
+      "v": "-1"
+     }
+    ]
+   ]
+  },
+  "encoding_hex": "07000000d6060000000b6361696e6172792d73696703000000080000000000000001060000000d6f74656c2d73686170652f763108000000a20600000005636f756e740400000008ffffffffffffffff060000000570617468730700000063080000003406000000047061746806000000157265736f757263652f736572766963652e6e616d650600000004747970650600000003737472080000002506000000047061746806000000097265636f72642fc3a90600000004747970650000000000060000000776657273696f6e03000000080000000000000002",
+  "digest_hex": "818d05b4607cdb471da7ae2a621c0f7535c3ab775c26e3e5abe24a20c29e4e57"
+ }
+]
