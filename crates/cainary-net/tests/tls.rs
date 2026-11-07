@@ -6,8 +6,9 @@
 mod formats;
 
 use cainary_net::decode::TYPE_MESSAGE;
+use cainary_net::peer::Lookup;
 use cainary_net::redflag::{Matcher, presets};
-use cainary_net::server::{self, Config, Server, TlsRun};
+use cainary_net::server::{self, Config, PEER_REFUSED, PeerUid, Server, TlsRun};
 use cainary_net::tls::Tls;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, ServerName};
@@ -1110,7 +1111,9 @@ fn a_client_that_does_not_trust_the_ca_gets_a_message_that_says_how_to_fix_it() 
 
 #[test]
 fn every_handshake_failure_category_has_its_own_fixed_message() {
-    let run = start("categories");
+    // Off: "a client that connects and leaves" is gone before the own-user lookup, which would
+    // refuse it before the handshake ever starts.
+    let run = start_with("categories", |c| c.tunables.peer_uid = PeerUid::Off);
     let a = run.srv.addrs[0];
     let ok_cfg = client_config(&run.ca_pem, &[b"http/1.1"]);
     // SNI not configured (the name is omitted), and no SNI.
@@ -1145,6 +1148,87 @@ fn every_handshake_failure_category_has_its_own_fixed_message() {
     }
     let all = run.out.text();
     assert!(!all.contains("evil.example.test"));
+    run.srv.shutdown();
+    let _ = std::fs::remove_dir_all(&run.dir);
+}
+
+// ── own-user check (design D3) ─────────────────────────────────────────────────────────────
+
+/// The `/proc/net/tcp` parsing end to end, over TLS: this process is the client, and it is us.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_system_check_serves_a_tls_client_of_the_same_user() {
+    let run = start_with("peer-system", |c| c.tunables.peer_uid = PeerUid::System);
+    let r = post(
+        &run,
+        HOST,
+        Some(&host_port(&run, HOST)),
+        "/v1/logs",
+        &fixture("codex-0.166.0/logs.json"),
+    )
+    .expect("a reply");
+    assert_eq!(r.status, 200, "{}", r.body);
+    run.srv.shutdown();
+    let _ = std::fs::remove_dir_all(&run.dir);
+}
+
+/// Another user, no match, two matches, an unreadable table: the connection is closed before the
+/// handshake, with no reply, and one `error` line says so.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_refused_peer_is_closed_before_the_handshake() {
+    let uid = cainary_net::peer_proc::euid().unwrap();
+    for fake in [
+        PeerUid::Fake(Lookup::Uid(uid.wrapping_add(1))),
+        PeerUid::Fake(Lookup::NotFound),
+        PeerUid::Fake(Lookup::Ambiguous),
+        PeerUid::FakeUnreadable,
+    ] {
+        let run = start_with("peer-refused", |c| c.tunables.peer_uid = fake);
+        let a = run.srv.addrs[0];
+        // The client speaks first and the server never answers: no ServerHello, no plaintext.
+        let mut tcp = TcpStream::connect(a).unwrap();
+        tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let _ = tcp.write_all(&[0x16, 0x03, 0x01, 0x00, 0x05, 0x01, 0x00, 0x00, 0x01, 0x00]);
+        let mut got = Vec::new();
+        let _ = tcp.read_to_end(&mut got);
+        assert!(got.is_empty(), "{fake:?}: the server said {got:?}");
+        let cfg = client_config(&run.ca_pem, &[b"http/1.1"]);
+        assert!(connect(a, &cfg, HOST).is_err(), "{fake:?}");
+        let errs: Vec<Value> = run.out.wait_for("error", 2);
+        assert_eq!(errs.len(), 2, "{fake:?}: {errs:?}");
+        assert!(
+            errs.iter().all(|e| e["message"] == PEER_REFUSED),
+            "{errs:?}"
+        );
+        assert!(
+            errs.iter()
+                .all(|e| e["source"] == "http" && e["status"] == 403)
+        );
+        run.srv.shutdown();
+        let _ = std::fs::remove_dir_all(&run.dir);
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn tls_refusals_share_the_rate_limit() {
+    let uid = cainary_net::peer_proc::euid().unwrap();
+    let run = start_with("peer-limit", |c| {
+        c.tunables.peer_uid = PeerUid::Fake(Lookup::Uid(uid.wrapping_add(1)));
+        c.tunables.error_window = Duration::from_secs(3600);
+    });
+    let a = run.srv.addrs[0];
+    for _ in 0..30 {
+        let _ = TcpStream::connect(a).and_then(|mut t| {
+            t.set_read_timeout(Some(Duration::from_secs(5)))?;
+            t.read(&mut [0u8; 1])
+        });
+    }
+    run.out.wait_for("error", 10);
+    std::thread::sleep(Duration::from_millis(200));
+    let errs = run.out.wait_for("error", 0);
+    assert_eq!(errs.len(), 10, "{errs:?}");
     run.srv.shutdown();
     let _ = std::fs::remove_dir_all(&run.dir);
 }

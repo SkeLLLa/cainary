@@ -4,8 +4,9 @@ mod formats;
 
 use cainary_net::decode::{ENCODING_MESSAGE, TYPE_MESSAGE};
 use cainary_net::logfile::LogFile;
+use cainary_net::peer::Lookup;
 use cainary_net::redflag::{Matcher, presets};
-use cainary_net::server::{self, Config, Server};
+use cainary_net::server::{self, Config, PEER_REFUSED, PeerUid, Server};
 use serde_json::{Value, json};
 use std::io::{BufRead, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -948,6 +949,134 @@ fn rejection_lines_are_rate_limited() {
     std::thread::sleep(Duration::from_millis(200));
     let errs = out.wait_for("error", 0);
     assert_eq!(errs.len(), 10, "{errs:?}");
+    srv.shutdown();
+}
+
+// ── own-user check (design D3) ─────────────────────────────────────────────────────────────
+
+#[cfg(target_os = "linux")]
+fn euid() -> u32 {
+    cainary_net::peer_proc::euid().expect("this process's uid")
+}
+
+fn get_logs(addr: SocketAddr) -> Option<Reply> {
+    raw(
+        addr,
+        format!(
+            "GET /v1/logs HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
+            addr.port()
+        )
+        .as_bytes(),
+    )
+}
+
+/// The `/proc/net/tcp` parsing end to end: this process is the client, and it is us.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_system_check_serves_a_client_of_the_same_user() {
+    let (srv, out) = start_with(|c| c.tunables.peer_uid = PeerUid::System);
+    let a = srv.addrs[0];
+    let r = post_json(
+        a,
+        "/v1/logs",
+        &logs_doc(vec![("event.name", "tool_result")]),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+    // Several in a row: each connection is looked up once, at accept.
+    for _ in 0..3 {
+        let doc = logs_doc(vec![("event.name", "tool_result")]);
+        assert_eq!(post_json(a, "/v1/logs", &doc).status, 200);
+    }
+    out.wait_for("batch", 4);
+    srv.shutdown();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_fake_lookup_of_our_own_uid_is_served() {
+    let (srv, _out) = start_with(|c| c.tunables.peer_uid = PeerUid::Fake(Lookup::Uid(euid())));
+    assert_eq!(get_logs(srv.addrs[0]).expect("a reply").status, 405);
+    srv.shutdown();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn another_users_client_gets_a_403_and_one_error_line() {
+    let (srv, out) =
+        start_with(|c| c.tunables.peer_uid = PeerUid::Fake(Lookup::Uid(euid().wrapping_add(1))));
+    let a = srv.addrs[0];
+    // The request is never read: a valid POST is refused the same way and nothing is streamed.
+    let mut s = connect(a);
+    let body = logs_doc(vec![("event.name", "tool_result")]).to_string();
+    let _ = s.write_all(
+        format!(
+            "POST /v1/logs HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            a.port(),
+            body.len()
+        )
+        .as_bytes(),
+    );
+    let r = read_reply(&mut s).expect("a 403");
+    assert_eq!(r.status, 403);
+    assert!(r.headers.contains("Connection: close"), "{}", r.headers);
+    let doc: Value = serde_json::from_str(&r.body).unwrap();
+    assert_eq!(doc["message"], PEER_REFUSED);
+    assert_eq!(PEER_REFUSED, "connection from another local user refused");
+
+    let errs = out.wait_for("error", 1);
+    assert_eq!(errs.len(), 1, "{errs:?}");
+    assert_eq!(errs[0]["status"], 403);
+    assert_eq!(errs[0]["message"], PEER_REFUSED);
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(
+        out.lines()
+            .iter()
+            .all(|v| v["type"] != "batch" && v["type"] != "alert")
+    );
+    srv.shutdown();
+}
+
+/// No match, two matches and an unreadable table are refused like another user.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_unknown_or_ambiguous_client_is_refused() {
+    for fake in [
+        PeerUid::Fake(Lookup::NotFound),
+        PeerUid::Fake(Lookup::Ambiguous),
+        PeerUid::FakeUnreadable,
+    ] {
+        let (srv, out) = start_with(|c| c.tunables.peer_uid = fake);
+        let r = get_logs(srv.addrs[0]).unwrap_or_else(|| panic!("{fake:?}: a 403"));
+        assert_eq!(r.status, 403, "{fake:?}");
+        assert!(r.body.contains(PEER_REFUSED), "{fake:?}: {}", r.body);
+        assert_eq!(out.wait_for("error", 1).len(), 1, "{fake:?}");
+        srv.shutdown();
+    }
+}
+
+#[test]
+fn the_check_can_be_off_for_the_tests() {
+    let (srv, _out) = start_with(|c| c.tunables.peer_uid = PeerUid::Off);
+    assert_eq!(get_logs(srv.addrs[0]).expect("a reply").status, 405);
+    srv.shutdown();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn refusals_share_the_rate_limit() {
+    let (srv, out) = start_with(|c| {
+        c.tunables.peer_uid = PeerUid::Fake(Lookup::Uid(euid().wrapping_add(1)));
+        c.tunables.error_window = Duration::from_secs(3600);
+    });
+    let a = srv.addrs[0];
+    for _ in 0..40 {
+        let _ = get_logs(a);
+    }
+    out.wait_for("error", 10);
+    std::thread::sleep(Duration::from_millis(200));
+    let errs = out.wait_for("error", 0);
+    assert_eq!(errs.len(), 10, "{errs:?}");
+    assert!(errs.iter().all(|e| e["message"] == PEER_REFUSED));
     srv.shutdown();
 }
 
