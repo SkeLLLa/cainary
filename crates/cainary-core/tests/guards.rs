@@ -175,12 +175,17 @@ const NET_CA_FILE: &str = "cainary-net/src/tls/ca_file.rs";
 const NET_TLS_MOD: &str = "cainary-net/src/tls/mod.rs";
 const NET_TRUST_FILES: &str = "cainary-net/src/trust/files.rs";
 const NET_PRIVDROP: &str = "cainary-net/src/privdrop.rs";
+const NET_LISTENFD: &str = "cainary-net/src/listenfd.rs";
 const NET_MAIN: &str = "cainary-net/src/main.rs";
 
 /// Files in the net crate that may call `libc`: the log file (open flags, uid), the CA file
 /// (same) and the capability drop.
 fn net_libc_ok(rel: &str) -> bool {
-    rel == NET_LOGFILE || rel == NET_CA_FILE || rel == NET_PRIVDROP || rel == NET_TRUST_FILES
+    rel == NET_LOGFILE
+        || rel == NET_CA_FILE
+        || rel == NET_PRIVDROP
+        || rel == NET_LISTENFD
+        || rel == NET_TRUST_FILES
 }
 
 fn in_net(rel: &str) -> bool {
@@ -1465,6 +1470,8 @@ mod fires {
             1
         );
         assert!(check_n3(&net("logfile.rs", "let n = libc::geteuid();")).is_empty());
+        assert!(check_n3(&net("listenfd.rs", "libc::getsockopt(fd);")).is_empty());
+        assert_eq!(check_n3(&net("args.rs", "libc::getsockopt(fd);")).len(), 1);
         // Guard 3 also stops libc and counts Command::new across the whole workspace.
         let mut s = net("server.rs", "libc::getuid();");
         s.extend(src(PLATFORM_RS, "Command::new(\"/usr/sbin/scutil\");"));

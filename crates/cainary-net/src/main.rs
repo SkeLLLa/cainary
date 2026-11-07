@@ -14,7 +14,7 @@ use std::time::Duration;
 
 const USAGE: &str = "\
 usage:
-  cainary-otel-debug [--port <n>] [--listen <ip>]... [--json] [--show-values] [--once] [--allow-root]
+  cainary-otel-debug [--port <n>] [--listen <ip>]... [--listen-fd <n>]... [--json] [--show-values] [--once] [--allow-root]
                      [--log-file <path> [--log-max-mib <n>] [--log-keep <n>]]
                      [--red-flag <name>=<text>]... [--red-flag-re <name>=<regex>]... [--match-case <name>]...
                      [--red-flags <file>] [--preset <name>]... [--no-default-red-flags] [--list-presets]
@@ -418,7 +418,9 @@ fn serve(o: Options, args: &[String]) -> u8 {
     {
         return fatal(o.json, "startup", "privilege-drop", m, 1);
     }
-    let ready = match server::bind(&o.listen, o.port).and_then(server::Bound::drop_privileges) {
+    let ready = match server::bind(&o.listen, &o.listen_fds, o.port)
+        .and_then(server::Bound::drop_privileges)
+    {
         Ok(r) => r,
         Err(e) => {
             if let (Some(port), "port-privileged") = (e.port, e.kind) {

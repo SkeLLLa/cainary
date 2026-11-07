@@ -1327,3 +1327,413 @@ fn commands_that_never_bind_still_work() {
         );
     }
 }
+
+// ---- --listen-fd: sockets inherited from the parent (design §12.1) ----
+
+mod listen_fd {
+    use super::*;
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+    use std::os::unix::process::CommandExt;
+    use std::process::{Child, Output};
+
+    /// A raw TCP/UDP socket, optionally listening, bound to `ip:port` (port 0 picks one).
+    /// `v6only` is set before the bind when given; `None` leaves the system default.
+    fn sock(
+        v6: bool,
+        ty: libc::c_int,
+        ip: &str,
+        port: u16,
+        listen: bool,
+        v6only: Option<bool>,
+    ) -> Option<(OwnedFd, u16)> {
+        let af = if v6 { libc::AF_INET6 } else { libc::AF_INET };
+        // SAFETY: plain socket calls on a descriptor owned right here; structs are zeroed
+        // and live for each call.
+        unsafe {
+            let fd = libc::socket(af, ty | libc::SOCK_CLOEXEC, 0);
+            assert!(fd >= 0, "socket");
+            let owned = OwnedFd::from_raw_fd(fd);
+            // Only so a test can hold two listeners of one family on one port.
+            let one: libc::c_int = 1;
+            let r = libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_REUSEPORT,
+                &one as *const _ as *const libc::c_void,
+                4,
+            );
+            assert_eq!(r, 0);
+            if let (true, Some(on)) = (v6, v6only) {
+                let v = on as libc::c_int;
+                let r = libc::setsockopt(
+                    fd,
+                    libc::IPPROTO_IPV6,
+                    libc::IPV6_V6ONLY,
+                    &v as *const _ as *const libc::c_void,
+                    4,
+                );
+                assert_eq!(r, 0);
+            }
+            let r = if v6 {
+                let mut a: libc::sockaddr_in6 = std::mem::zeroed();
+                a.sin6_family = libc::AF_INET6 as libc::sa_family_t;
+                a.sin6_port = port.to_be();
+                a.sin6_addr.s6_addr = ip.parse::<std::net::Ipv6Addr>().unwrap().octets();
+                libc::bind(
+                    fd,
+                    &a as *const _ as *const libc::sockaddr,
+                    std::mem::size_of_val(&a) as u32,
+                )
+            } else {
+                let mut a: libc::sockaddr_in = std::mem::zeroed();
+                a.sin_family = libc::AF_INET as libc::sa_family_t;
+                a.sin_port = port.to_be();
+                a.sin_addr.s_addr =
+                    u32::from_ne_bytes(ip.parse::<std::net::Ipv4Addr>().unwrap().octets());
+                libc::bind(
+                    fd,
+                    &a as *const _ as *const libc::sockaddr,
+                    std::mem::size_of_val(&a) as u32,
+                )
+            };
+            if r != 0 {
+                return None;
+            }
+            if listen && ty == libc::SOCK_STREAM {
+                assert_eq!(libc::listen(fd, 16), 0);
+            }
+            let mut ss: libc::sockaddr_storage = std::mem::zeroed();
+            let mut len = std::mem::size_of_val(&ss) as u32;
+            assert_eq!(
+                libc::getsockname(fd, &mut ss as *mut _ as *mut libc::sockaddr, &mut len),
+                0
+            );
+            let port = if v6 {
+                u16::from_be((*(&ss as *const _ as *const libc::sockaddr_in6)).sin6_port)
+            } else {
+                u16::from_be((*(&ss as *const _ as *const libc::sockaddr_in)).sin_port)
+            };
+            Some((owned, port))
+        }
+    }
+
+    fn tcp4() -> (OwnedFd, u16) {
+        sock(false, libc::SOCK_STREAM, "127.0.0.1", 0, true, None).unwrap()
+    }
+
+    /// Spawns the collector with `fds[i]` placed at descriptor `3 + i` (and nothing else extra).
+    fn spawn(args: &[&str], fds: &[&OwnedFd]) -> Child {
+        // Temporaries above 100 so no source can be clobbered by a target slot.
+        let temps: Vec<RawFd> = fds
+            .iter()
+            .map(|f| {
+                // SAFETY: F_DUPFD_CLOEXEC on a descriptor we hold.
+                let t = unsafe { libc::fcntl(f.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 100) };
+                assert!(t >= 100);
+                t
+            })
+            .collect();
+        let mut c = bin();
+        c.args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let moved = temps.clone();
+        // SAFETY: only async-signal-safe dup2 calls, no allocation.
+        unsafe {
+            c.pre_exec(move || {
+                for (i, t) in moved.iter().enumerate() {
+                    if libc::dup2(*t, 3 + i as RawFd) < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+                Ok(())
+            });
+        }
+        let child = c.spawn().unwrap();
+        for t in temps {
+            // SAFETY: closing the temporaries this function made.
+            unsafe { libc::close(t) };
+        }
+        child
+    }
+
+    fn serve_hello(args: &[&str], fds: &[&OwnedFd]) -> (Child, Value) {
+        let mut child = spawn(args, fds);
+        let mut out = std::io::BufReader::new(child.stdout.take().unwrap());
+        let mut l = String::new();
+        out.read_line(&mut l).unwrap();
+        let hello: Value = serde_json::from_str(&l).unwrap_or_else(|e| panic!("hello {l:?}: {e}"));
+        assert_eq!(hello["type"], "hello", "{l}");
+        // Keep stdout open so the child isn't killed by a broken pipe.
+        std::mem::forget(out);
+        (child, hello)
+    }
+
+    /// A start that must fail with exit 2 and one `error` line; returns that line.
+    fn rejected(args: &[&str], fds: &[&OwnedFd], code: &str) -> Value {
+        let out: Output = spawn(args, fds).wait_with_output().unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let v = only_error_line(&out);
+        assert_eq!(v["code"], code, "{v}");
+        assert_eq!(v["source"], "startup");
+        v
+    }
+
+    fn get_ok(addr: &str) {
+        let r = post_json(
+            addr.parse().unwrap(),
+            "/v1/logs",
+            &logs_doc(vec![("event.name", "tool_result")]),
+        );
+        assert_eq!(r.status, 200, "{addr}");
+    }
+
+    #[test]
+    fn listen_fd_serves() {
+        let (fd, port) = tcp4();
+        let p = port.to_string();
+        let (mut child, hello) = serve_hello(&["--json", "--port", &p, "--listen-fd", "3"], &[&fd]);
+        assert_eq!(hello["listen"], json!([format!("127.0.0.1:{port}")]));
+        get_ok(&format!("127.0.0.1:{port}"));
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+
+    #[test]
+    fn listen_fd_serves_v4_and_v6() {
+        let (fd4, port) = tcp4();
+        let Some((fd6, _)) = sock(true, libc::SOCK_STREAM, "::1", port, true, Some(true)) else {
+            eprintln!("no IPv6 loopback here; skipped");
+            return;
+        };
+        let p = port.to_string();
+        let (mut child, hello) = serve_hello(
+            &[
+                "--json",
+                "--port",
+                &p,
+                "--listen-fd",
+                "3",
+                "--listen-fd",
+                "4",
+            ],
+            &[&fd4, &fd6],
+        );
+        assert_eq!(
+            hello["listen"],
+            json!([format!("127.0.0.1:{port}"), format!("[::1]:{port}")])
+        );
+        get_ok(&format!("127.0.0.1:{port}"));
+        get_ok(&format!("[::1]:{port}"));
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+
+    #[test]
+    fn listen_fd_udp() {
+        let (fd, port) = sock(false, libc::SOCK_DGRAM, "127.0.0.1", 0, false, None).unwrap();
+        rejected(
+            &["--json", "--port", &port.to_string(), "--listen-fd", "3"],
+            &[&fd],
+            "listen-fd",
+        );
+    }
+
+    #[test]
+    fn listen_fd_wildcard() {
+        let (fd, port) = sock(false, libc::SOCK_STREAM, "0.0.0.0", 0, true, None).unwrap();
+        // The wildcard socket owns the port on every address: a fallback bind would fail with
+        // port-in-use (exit 1), so exit 2 `listen-fd` shows nothing tried to bind.
+        rejected(
+            &["--json", "--port", &port.to_string(), "--listen-fd", "3"],
+            &[&fd],
+            "listen-fd",
+        );
+    }
+
+    #[test]
+    fn listen_fd_not_listening() {
+        let (fd, port) = sock(false, libc::SOCK_STREAM, "127.0.0.1", 0, false, None).unwrap();
+        rejected(
+            &["--json", "--port", &port.to_string(), "--listen-fd", "3"],
+            &[&fd],
+            "listen-fd",
+        );
+    }
+
+    #[test]
+    fn listen_fd_port_mismatch() {
+        let (fd, port) = tcp4();
+        let other = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        assert_ne!(other, port);
+        rejected(
+            &["--json", "--port", &other.to_string(), "--listen-fd", "3"],
+            &[&fd],
+            "listen-fd",
+        );
+        // Nothing bound the requested port on its own account.
+        std::net::TcpListener::bind(("127.0.0.1", other)).expect("the port stayed free");
+    }
+
+    #[test]
+    fn listen_fd_not_a_socket() {
+        // Descriptor 3 is closed in the child: not an open descriptor.
+        rejected(
+            &["--json", "--port", "40123", "--listen-fd", "3"],
+            &[],
+            "listen-fd",
+        );
+    }
+
+    #[test]
+    fn listen_fd_below_3() {
+        let (fd, port) = tcp4();
+        rejected(
+            &["--json", "--port", &port.to_string(), "--listen-fd", "2"],
+            &[&fd],
+            "usage",
+        );
+    }
+
+    #[test]
+    fn listen_fd_two_same_family() {
+        let (a, port) = tcp4();
+        // Two IPv4 listeners on one port (the test sockets use SO_REUSEPORT; the collector never does).
+        let (b, _) = sock(false, libc::SOCK_STREAM, "127.0.0.1", port, true, None).unwrap();
+        rejected(
+            &[
+                "--json",
+                "--port",
+                &port.to_string(),
+                "--listen-fd",
+                "3",
+                "--listen-fd",
+                "4",
+            ],
+            &[&a, &b],
+            "listen-fd",
+        );
+    }
+
+    #[test]
+    fn listen_fd_with_listen_conflict() {
+        let (fd, port) = tcp4();
+        rejected(
+            &[
+                "--json",
+                "--port",
+                &port.to_string(),
+                "--listen-fd",
+                "3",
+                "--listen",
+                "127.0.0.1",
+            ],
+            &[&fd],
+            "usage",
+        );
+    }
+
+    #[test]
+    fn listen_fd_duplicate_number() {
+        let (fd, port) = tcp4();
+        rejected(
+            &[
+                "--json",
+                "--port",
+                &port.to_string(),
+                "--listen-fd",
+                "3",
+                "--listen-fd",
+                "3",
+            ],
+            &[&fd],
+            "usage",
+        );
+    }
+
+    #[test]
+    fn listen_fd_v6_without_v6only() {
+        let Some((fd, port)) = sock(true, libc::SOCK_STREAM, "::1", 0, true, Some(false)) else {
+            eprintln!("no IPv6 loopback here; skipped");
+            return;
+        };
+        // Linux turns IPV6_V6ONLY on for any bind to a non-wildcard address, so the flag can't
+        // be left off on `::1` there; the check stays as defence in depth for kernels that can.
+        let mut v: libc::c_int = 0;
+        let mut len = 4u32;
+        // SAFETY: `v` and `len` are live and sized for the call.
+        let r = unsafe {
+            libc::getsockopt(
+                fd.as_raw_fd(),
+                libc::IPPROTO_IPV6,
+                libc::IPV6_V6ONLY,
+                &mut v as *mut _ as *mut libc::c_void,
+                &mut len,
+            )
+        };
+        assert_eq!(r, 0);
+        if v != 0 {
+            eprintln!("the kernel forces IPV6_V6ONLY on a ::1 bind; skipped");
+            return;
+        }
+        rejected(
+            &["--json", "--port", &port.to_string(), "--listen-fd", "3"],
+            &[&fd],
+            "listen-fd",
+        );
+    }
+
+    #[test]
+    fn listen_fd_non_tcp_stream() {
+        // SCTP one-to-one style: SOCK_STREAM, but not TCP.
+        // SAFETY: plain socket calls on a descriptor owned right here.
+        let (fd, port) = unsafe {
+            let fd = libc::socket(
+                libc::AF_INET,
+                libc::SOCK_STREAM | libc::SOCK_CLOEXEC,
+                libc::IPPROTO_SCTP,
+            );
+            if fd < 0 {
+                eprintln!("no SCTP in this kernel; skipped");
+                return;
+            }
+            let owned = OwnedFd::from_raw_fd(fd);
+            let mut a: libc::sockaddr_in = std::mem::zeroed();
+            a.sin_family = libc::AF_INET as libc::sa_family_t;
+            a.sin_addr.s_addr = u32::from_ne_bytes([127, 0, 0, 1]);
+            let ok = libc::bind(
+                fd,
+                &a as *const _ as *const libc::sockaddr,
+                std::mem::size_of_val(&a) as u32,
+            ) == 0
+                && libc::listen(fd, 4) == 0;
+            if !ok {
+                eprintln!("SCTP can't listen here; skipped");
+                return;
+            }
+            let mut len = std::mem::size_of_val(&a) as u32;
+            libc::getsockname(fd, &mut a as *mut _ as *mut libc::sockaddr, &mut len);
+            (owned, u16::from_be(a.sin_port))
+        };
+        rejected(
+            &["--json", "--port", &port.to_string(), "--listen-fd", "3"],
+            &[&fd],
+            "listen-fd",
+        );
+    }
+
+    #[test]
+    fn listen_fd_needs_port() {
+        let (fd, _) = tcp4();
+        rejected(&["--json", "--listen-fd", "3"], &[&fd], "usage");
+    }
+}

@@ -34,6 +34,8 @@ pub struct Options {
     pub port: u16,
     /// Validated loopback addresses; empty means the defaults (127.0.0.1, then ::1).
     pub listen: Vec<String>,
+    /// `--listen-fd`: inherited, already-bound listening sockets (at most 2, each >= 3, distinct).
+    pub listen_fds: Vec<i32>,
     pub json: bool,
     pub show_values: bool,
     pub once: bool,
@@ -65,6 +67,7 @@ impl Default for Options {
         Options {
             port: DEFAULT_PORT,
             listen: Vec::new(),
+            listen_fds: Vec::new(),
             json: false,
             show_values: false,
             once: false,
@@ -213,6 +216,16 @@ pub fn parse(args: &[String]) -> Result<Action, ArgError> {
                 server::check_listen(&v).map_err(usage)?;
                 o.listen.push(v);
             }
+            "--listen-fd" => {
+                let fd = number(flag, &value()?, 3i32, i32::MAX)?;
+                if o.listen_fds.contains(&fd) {
+                    return Err(usage(format!("--listen-fd {fd} is given twice")));
+                }
+                if o.listen_fds.len() >= 2 {
+                    return Err(usage("at most two --listen-fd"));
+                }
+                o.listen_fds.push(fd);
+            }
             "--log-file" => o.log_file = Some(PathBuf::from(value()?)),
             "--log-max-mib" => o.log_max_mib = number(flag, &value()?, 1u64, 1024)?,
             "--log-keep" => o.log_keep = number(flag, &value()?, 0u32, 9)?,
@@ -279,6 +292,16 @@ pub fn parse(args: &[String]) -> Result<Action, ArgError> {
     }
     if !o.tls && (!o.tls_hosts.is_empty() || o.tls_public_port.is_some()) {
         return Err(usage("--tls-host and --tls-public-port need --tls"));
+    }
+    if !o.listen_fds.is_empty() {
+        if !o.listen.is_empty() {
+            return Err(usage("--listen-fd and --listen can't be combined"));
+        }
+        if !port_set || o.port == 0 {
+            return Err(usage(
+                "--listen-fd needs --port <n> (1-65535), the port the sockets are bound to",
+            ));
+        }
     }
     if o.tls && !port_set {
         o.port = DEFAULT_TLS_PORT;
@@ -420,6 +443,45 @@ mod tests {
             "refusing to listen on 0.0.0.0: only loopback addresses (127.0.0.0/8, ::1)"
         );
         assert!(run(&["--listen", "127.9.9.9"]).is_ok());
+    }
+
+    #[test]
+    fn listen_fd_rules() {
+        let o = run(&["--listen-fd", "3", "--listen-fd=4", "--port", "80"]).unwrap();
+        assert_eq!((o.listen_fds, o.port), (vec![3, 4], 80));
+        assert!(
+            run(&[
+                "--tls",
+                "--tls-host",
+                "a.example.test",
+                "--listen-fd",
+                "3",
+                "--port",
+                "443"
+            ])
+            .is_ok()
+        );
+        for bad in [
+            &["--listen-fd", "3"][..],
+            &["--listen-fd", "3", "--port", "0"],
+            &["--listen-fd", "2", "--port", "80"],
+            &["--listen-fd", "x", "--port", "80"],
+            &["--listen-fd", "3", "--listen-fd", "3", "--port", "80"],
+            &[
+                "--listen-fd",
+                "3",
+                "--listen-fd",
+                "4",
+                "--listen-fd",
+                "5",
+                "--port",
+                "80",
+            ],
+            &["--listen-fd", "3", "--listen", "127.0.0.1", "--port", "80"],
+            &["--listen", "127.0.0.1", "--listen-fd", "3", "--port", "80"],
+        ] {
+            assert_eq!(err(bad).code, 2, "{bad:?}");
+        }
     }
 
     #[test]

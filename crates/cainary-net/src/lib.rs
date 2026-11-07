@@ -8,6 +8,7 @@ pub mod config;
 pub mod host;
 pub mod http;
 pub mod jsonedit;
+pub mod listenfd;
 pub mod logfile;
 pub mod otlp;
 pub mod output;

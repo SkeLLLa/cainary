@@ -988,7 +988,7 @@ state.
     `tls/ca_file.rs` and `trust/files.rs` (`.write(` is also allowed in `server.rs` and `tls/mod.rs`, which can't open
     a file); `std::env` and `std::process` only in `main.rs`.
   - **N3:** no `Command` anywhere in the crate; `libc::` only in `logfile.rs` (the open flags and
-    the effective uid), `tls/ca_file.rs` (the same, `flock`, `openat`), `trust/files.rs` (the same, `renameat`,
+    the effective uid), `tls/ca_file.rs` (the same, `flock`, `openat`), `listenfd.rs` (`fstat`, `getsockopt`, `getsockname`, `fcntl` on inherited sockets), `trust/files.rs` (the same, `renameat`,
     `unlinkat`, `fsync`) and `privdrop.rs`
     (`capset`, `prctl`; in every build, not behind the `tls` feature). Guard 3's "`Command::new` exactly once" counts the whole workspace.
   - **N4 (manifests):** the `cainary-core` and `cainary-cli` manifests never mention
@@ -1082,7 +1082,7 @@ was *received*, and the vendor is inferred from the payload, not proven by the s
 ### 12.1 Command line
 
 ```
-cainary-otel-debug [--port <n>] [--listen <ip>]... [--json] [--show-values] [--once]
+cainary-otel-debug [--port <n>] [--listen <ip>]... [--listen-fd <n>]... [--json] [--show-values] [--once]
                    [--log-file <path> [--log-max-mib <n>] [--log-keep <n>]]
                    [--red-flag <name>=<text>]... [--red-flag-re <name>=<regex>]... [--match-case <name>]...
                    [--red-flags <file>] [--preset <name>]... [--no-default-red-flags] [--list-presets]
@@ -1099,6 +1099,7 @@ cainary-otel-debug --version | --help
 | --- | --- |
 | `--port` | 0–65535, default 4318; `0` picks a free port |
 | `--listen` | repeatable IP literal; each must satisfy `IpAddr::is_loopback()` (so `::ffff:127.0.0.1` is refused); replaces the default 127.0.0.1 then ::1 |
+| `--listen-fd` | repeatable (at most 2), each ≥ 3 and distinct: an inherited, already-bound listening socket from the parent (the tray's root helper, `cainary-bind-helper`). Needs `--port` (1–65535) and excludes `--listen`; works with `--tls`. Each descriptor must be a `SOCK_STREAM` socket with `SO_ACCEPTCONN`, bound to exactly `127.0.0.1` or `::1` (IPv6 also `IPV6_V6ONLY=1`) on OUR `--port`, at most one per family; it is marked `FD_CLOEXEC`. Any failure is a `listen-fd` error (exit 2) and the program never binds by itself instead (`listenfd.rs`); `hello.listen` reports the sockets' actual addresses |
 | `--json` | JSON lines on stdout (§12.6); without it, a text rendering |
 | `--allow-root` | run as UID 0 (refused otherwise: clearing capabilities does not limit root) |
 | `--show-values` | print and log values raw (§12.3) |
@@ -1120,7 +1121,7 @@ duplicate name, a name equal to a preset, or an unknown `--match-case` name is a
 
 **Exit codes:** `0` normal, `--once`, stdin EOF, or the reader of stdout went away (a broken
 pipe); `1` setup (port in use, log file or red-flags file unusable, a failed bind); `2` usage
-(including an invalid or oversized pattern, a non-loopback `--listen`, a bad `--tls-host` and `--tls` in a build without the feature); `3` a panic. A second `--tls` run for the same certificate directory, and `--delete-ca` while one runs, exit `1`.
+(including an invalid or oversized pattern, a non-loopback `--listen`, conflicting or invalid `--listen-fd` flags and a rejected inherited socket (`listen-fd`), a bad `--tls-host` and `--tls` in a build without the feature); `3` a panic. A second `--tls` run for the same certificate directory, and `--delete-ca` while one runs, exit `1`.
 
 **A refused privileged port.** `--port <n>` chooses the port in every mode. When `bind` fails with
 `EACCES` the program exits `1` with a short fixed error (`{"v":1,"type":"error","source":"listen","code":"port-privileged","message":"can't listen on <addr>: permission denied","port":<n>}` on stdout under `--json`, text on stderr otherwise) and a note on stderr (`setup::privileged_port_note`; one plain line on other systems than Linux). The note gives the ways to listen, concrete for the run and printed, never run: an unprivileged port (`n + 8000`, or 8443) to point the client at; the tray's "Open port N", which has the root helper `cainary-bind-helper` (packages: `/usr/libexec/cainary/`; development: `mise run linux:helper`) bind the loopback sockets and hand them over (`--listen-fd`); and, worded as administrator-only, a loopback-only both-families `nft` redirect with its removal and the `net.ipv4.ip_unprivileged_port_start` sysctl with its revert. No option installs a capability on a file (the earlier `setcap` copy recipe is gone). Commands are written for both fish and bash.
@@ -1312,7 +1313,7 @@ true` is set, and the `summary` always stays.
   `source` `listen`), `port-in-use` (`EADDRINUSE`; `port`; `source` `listen`), `tls-no-host`
   (`--tls` without `--tls-host`), `tls-unsupported` (a build without the `tls` feature), `tls-busy`
   (another run owns the certificate file), `tls-failed` (any other takeover setup failure), `usage`
-  (bad arguments), `config` (red-flag file, preset or stdin config), `log-file`, `privilege-drop`
+  (bad arguments), `listen-fd` (an inherited `--listen-fd` socket failed validation; `source` `startup`, exit 2), `config` (red-flag file, preset or stdin config), `log-file`, `privilege-drop`
   (the capability drop failed; fail closed), `internal`. `source` is `startup` unless stated.
   Consumers tolerate codes they don't know.
 

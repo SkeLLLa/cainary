@@ -267,7 +267,29 @@ pub struct Ready {
 
 /// The one place that binds: validates `--listen` and the port and binds the loopback
 /// listeners. Nothing else is done with the capability, and nothing untrusted is read.
-pub fn bind(listen: &[String], port: u16) -> Result<Bound, SetupError> {
+///
+/// With `listen_fds` (inherited from the parent) nothing is bound: the descriptors are
+/// validated against `port` and used as they are, and a rejected one is an error, never a
+/// reason to bind by ourselves.
+pub fn bind(listen: &[String], listen_fds: &[i32], port: u16) -> Result<Bound, SetupError> {
+    if !listen_fds.is_empty() {
+        if !listen.is_empty() {
+            return Err(setup_kind(
+                "usage",
+                2,
+                "--listen-fd and --listen can't be combined",
+            ));
+        }
+        let listeners: Vec<TcpListener> = crate::listenfd::adopt(listen_fds, port)
+            .map_err(|m| setup_kind("listen-fd", 2, m))?
+            .into_iter()
+            .map(TcpListener::from)
+            .collect();
+        return Ok(Bound {
+            listeners,
+            notes: Vec::new(),
+        });
+    }
     let (listeners, notes) = bind_all(listen, port)?;
     Ok(Bound { listeners, notes })
 }
@@ -365,7 +387,7 @@ fn bind_all(listen: &[String], port: u16) -> Result<(Vec<TcpListener>, Vec<Strin
 
 /// Bind, drop privileges, serve: the convenience used where nothing needs to happen between.
 pub fn run(cfg: Config) -> Result<Server, SetupError> {
-    let ready = bind(&cfg.listen, cfg.port)?.drop_privileges()?;
+    let ready = bind(&cfg.listen, &[], cfg.port)?.drop_privileges()?;
     start(cfg, ready)
 }
 
