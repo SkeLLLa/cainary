@@ -806,6 +806,9 @@ impl Model {
                 .unwrap_or_default(),
             codex: hello.map(|h| h.setup.codex.clone()).unwrap_or_default(),
             notes: hello.map(|h| h.setup.notes.clone()).unwrap_or_default(),
+            takeover_guide: hello
+                .map(|hello| crate::takeover_guide::parse(&hello.setup.takeover))
+                .unwrap_or_default(),
             takeover: hello
                 .map(|hello| hello.setup.takeover.clone())
                 .unwrap_or_default(),
@@ -845,6 +848,7 @@ pub struct View {
     pub codex: Vec<String>,
     pub notes: Vec<String>,
     pub takeover: Vec<String>,
+    pub takeover_guide: crate::takeover_guide::TakeoverGuide,
     pub stderr_tail: String,
     pub batches: Vec<BatchView>,
     pub alerts: Vec<AlertView>,

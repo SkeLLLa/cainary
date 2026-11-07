@@ -9,9 +9,11 @@ use std::time::{Duration, SystemTime};
 use serde_json::{Value, json};
 
 use crate::collector::Model as CollectorModel;
+use crate::hostsfile::{Analysis, BlockState, Conflict, HostsFile, Unsupported};
+use crate::hostsview::{self, Edit, EditResult, Helper};
 use crate::portaccess::{self, Access, Inputs};
 use crate::report::Report;
-use crate::runner::ScanError;
+use crate::runner::{HostsEditOutcome, HostsNotRun, HostsUncertain, ScanError};
 use crate::settings::{CollectorPattern, CollectorPatternKind, Settings};
 use crate::store::{ScanState, Snapshot};
 
@@ -447,9 +449,7 @@ pub fn collector_trust_preview_sample() -> String {
     // Neutral UI-only paths: real settings and backup paths always come from helper JSON.
     let claude_settings = "/home/demo/claude-settings.json";
     let claude_backup = "/home/demo/claude-settings.json.cainary-20261106T161720Z.bak";
-    model.accept(
-        r#"{"v":1,"type":"hello","mode":"tls-receiver","endpoint":"https://127.0.0.1:8443","tls":{"hosts":["otel.example-corp.com"],"ca":{"path":"/home/demo/.local/state/cainary/otel-debug-ca.pem","sha256":"0123456789abcdef"}},"setup":{"takeover":["127.0.0.1 otel.example-corp.com","::1 otel.example-corp.com","NODE_EXTRA_CA_CERTS=/home/demo/.local/state/cainary/otel-debug-ca.pem"],"notes":["Your organization's collector receives nothing while the takeover is active."]}}"#.into(),
-    );
+    model.accept(tls_hello(8443));
     let mut view = serde_json::to_value(model.view()).expect("collector view serializes");
     view["trust"] = json!({
         "busy": false,
@@ -502,8 +502,19 @@ fn collector_view_for(
     running: bool,
     enabled: bool,
 ) -> String {
+    collector_view_at(model, access, held, running, enabled, 443)
+}
+
+fn collector_view_at(
+    model: &CollectorModel,
+    access: &Access,
+    held: bool,
+    running: bool,
+    enabled: bool,
+    port: u16,
+) -> String {
     let privilege = portaccess::view(&Inputs {
-        port: 443,
+        port,
         access,
         held,
         running,
@@ -567,6 +578,189 @@ pub fn collector_priv_off() -> String {
     )
 }
 
+const TLS_HOST: &str = "otel.example-corp.com";
+const TLS_CA: &str = "/home/demo/.local/state/cainary/otel-debug-ca.pem";
+const TLS_SHA: &str = "3f9a0c2177be5d1e8a64c0b9d27f41d2";
+
+/// The takeover instructions as `cainary-net` prints them for one host on both address families,
+/// the exporter's URL on port 443 and the collector on `port`. A test keeps this equal to the
+/// real output.
+pub fn takeover_lines(port: u16) -> Vec<String> {
+    takeover_lines_for(&[TLS_HOST], port)
+}
+
+/// `takeover_lines` for several host names.
+fn takeover_lines_for(hosts: &[&str], port: u16) -> Vec<String> {
+    let mut l: Vec<String> = [
+        "TLS takeover: read this first.",
+        "Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.",
+        "Other programs that talk to these host names will fail their TLS handshake here; that is expected.",
+        "The host names below are what you configured here, not an authenticated sender identity.",
+        "",
+    ]
+    .map(String::from)
+    .to_vec();
+    let mut step = 1;
+    l.push(format!(
+        "{step}. Point the host names at loopback (add these lines to /etc/hosts as root):"
+    ));
+    for host in hosts {
+        l.push(format!("  127.0.0.1 {host}"));
+    }
+    for host in hosts {
+        l.push(format!("  ::1 {host}"));
+    }
+    if port != 443 {
+        step += 1;
+        l.push(format!("{step}. Redirect port 443 to {port}, for connections this machine makes to loopback (run these yourself; they are not run for you):"));
+        l.push("  sudo nft add table inet cainary_otel_debug".into());
+        l.push("  sudo nft 'add chain inet cainary_otel_debug out { type nat hook output priority -100 ; }'".into());
+        l.push(format!("  sudo nft add rule inet cainary_otel_debug out oifname lo ip daddr 127.0.0.1 tcp dport 443 redirect to :{port}"));
+        l.push(format!("  sudo nft add rule inet cainary_otel_debug out oifname lo ip6 daddr ::1 tcp dport 443 redirect to :{port}"));
+    }
+    step += 1;
+    l.push(format!("{step}. Trust the certificate, for the exporting process only (never disable certificate verification):"));
+    l.push(format!(
+        "  Claude Code: env NODE_EXTRA_CA_CERTS={TLS_CA} claude"
+    ));
+    l.push(format!("  Codex: set SSL_CERT_FILE={TLS_CA} or CODEX_CA_CERTIFICATE={TLS_CA} for the codex process (see its documentation for which it honors)"));
+    l.push(format!("  Certificate SHA-256: {TLS_SHA}"));
+    step += 1;
+    l.push(format!("{step}. Start the exporting process after this certificate is published, and restart it after every run of this program: each run creates a new CA. Deleting the file does not revoke trust a process already loaded; `cainary-otel-debug --delete-ca` removes the file."));
+    if port != 443 {
+        l.push(
+            "Undo: remove the /etc/hosts lines, stop this program, and remove the redirect:".into(),
+        );
+        l.push("  sudo nft delete table inet cainary_otel_debug".into());
+    } else {
+        l.push("Undo: remove the /etc/hosts lines and stop this program.".into());
+    }
+    l.push("The restriction to these names is enforced by this program: it issues certificates only for them and completes a handshake only for them. The certificate also carries name constraints, but those cover subdomains and depend on the client enforcing them. Its key exists only in this process's memory, and it is never installed in a system trust store.".into());
+    l
+}
+
+/// The collector's hello in TLS mode, on `port`.
+fn tls_hello(port: u16) -> String {
+    tls_hello_for(port, &[TLS_HOST])
+}
+
+fn tls_hello_for(port: u16, hosts: &[&str]) -> String {
+    json!({
+        "v": 1, "type": "hello", "ts": "2026-01-01T14:00:00Z", "mode": "tls-receiver",
+        "endpoint": format!("https://127.0.0.1:{port}"), "listen": [format!("127.0.0.1:{port}")],
+        "tls": {"hosts": hosts, "ca": {"path": TLS_CA, "sha256": TLS_SHA}},
+        "setup": {"claudeCode": [], "codex": [], "notes": [], "takeover": takeover_lines_for(hosts, port)},
+    })
+    .to_string()
+}
+
+/// A listening takeover collector that has received `batches` batches since it started.
+fn tls_model(port: u16, batches: u64) -> CollectorModel {
+    tls_model_for(port, batches, &[TLS_HOST])
+}
+
+fn tls_model_for(port: u16, batches: u64, hosts: &[&str]) -> CollectorModel {
+    let mut model = CollectorModel::default();
+    model.starting();
+    model.accept(tls_hello_for(port, hosts));
+    for seq in 1..=batches {
+        model.accept(
+            json!({
+                "v": 1, "type": "batch", "ts": "2026-01-01T14:00:30Z", "seq": seq,
+                "signal": "logs", "path": "/v1/logs", "bytes": 2048, "vendor": "claude-code",
+                "service": {"name": "claude-code", "version": "2.1.316"},
+                "catalog": "claude-code 2.1.316", "records": 3, "notInCatalog": 0,
+                "summary": {"identity": ["user.email"], "resource": ["os.type"], "records": []},
+                "resources": [],
+            })
+            .to_string(),
+        );
+    }
+    model
+}
+
+/// What the app adds as `trust`, without a pending preview.
+/// Adds the `hostCheck` object the app publishes: one finished lookup of the takeover host.
+fn with_host_check(view: String, state: &str, address: &str) -> String {
+    let mut view: Value = serde_json::from_str(&view).expect("collector view parses");
+    view["hostCheck"] = json!({
+        "running": false,
+        "results": [{
+            "host": "otel.example-corp.com",
+            "state": state,
+            "address": address,
+            "message": "",
+        }],
+    });
+    view.to_string()
+}
+
+fn with_trust(view: String, claude: &str, codex: &str, ca_exists: bool) -> String {
+    let mut view: Value = serde_json::from_str(&view).expect("collector view parses");
+    let bundle = "/home/demo/.local/state/cainary/otel-debug-codex-bundle.pem";
+    let ready = codex == "ready";
+    view["trust"] = json!({
+        "busy": false,
+        "message": "",
+        "status": {
+            "claudeCode": {
+                "state": claude,
+                "settingsPath": "/home/demo/claude-settings.json",
+                "value": (claude == "applied").then_some(TLS_CA),
+            },
+            "codex": {
+                "state": codex,
+                "bundlePath": ready.then_some(bundle),
+                "command": ready.then(|| format!("env CODEX_CA_CERTIFICATE={bundle} codex")),
+            },
+            "caPath": TLS_CA,
+            "caExists": ca_exists,
+            "note": null
+        },
+        "preview": null,
+        "result": null,
+        "noWriteAvailable": ca_exists,
+        "noWriteCommand": format!("env NODE_EXTRA_CA_CERTS={TLS_CA} claude"),
+    });
+    view.to_string()
+}
+
+/// Takeover chosen, no host name yet: the collector won't start.
+pub fn collector_takeover_new() -> String {
+    with_trust(collector_fail_tls_no_host(), "absent", "absent", false)
+}
+
+/// Takeover listening on 8443, hosts file and trust not done yet.
+pub fn collector_takeover_pending() -> String {
+    let view = collector_view_at(
+        &tls_model(8443, 0),
+        &Access::NotNeeded,
+        false,
+        true,
+        true,
+        8443,
+    );
+    with_host_check(
+        with_trust(view, "applied", "absent", true),
+        "elsewhere",
+        "34.117.59.81",
+    )
+}
+
+/// Takeover on port 443 held by the tray, both agents trusted, batches arriving.
+pub fn collector_takeover_ready() -> String {
+    let view = collector_view_at(&tls_model(443, 8), &Access::Ready, true, true, true, 443);
+    with_host_check(with_trust(view, "applied", "ready", true), "here", "")
+}
+
+/// Takeover on port 443 that still needs the port helper.
+pub fn collector_takeover_priv() -> String {
+    let mut model = CollectorModel::default();
+    model.blocked("port-privileged", 443, portaccess::needs_message(443));
+    let view = collector_view_at(&model, &Access::Ready, false, false, true, 443);
+    with_trust(view, "absent", "absent", false)
+}
+
 pub fn collector_fail_tls_no_host() -> String {
     let mut model = CollectorModel::default();
     model.problem(
@@ -620,6 +814,360 @@ fn ready(raw: &[u8]) -> ScanState {
     ScanState::Ready(snapshot(raw))
 }
 
+// ---- Step 3 of the takeover guide: pointing the host names at this computer ----
+
+const POINT_HOSTS: [&str; 2] = ["otel.example-corp.com", "telemetry.example-corp.com"];
+
+/// What the host check shows: not run yet, running, or one `(state, address, message)` per host.
+enum Check {
+    None,
+    Running,
+    Results(Vec<(&'static str, &'static str, &'static str)>),
+}
+
+fn elsewhere(count: usize) -> Check {
+    Check::Results(vec![("elsewhere", "34.117.59.81", ""); count])
+}
+
+fn here(count: usize) -> Check {
+    Check::Results(vec![("here", "", ""); count])
+}
+
+fn hosts_file(block: BlockState) -> HostsFile {
+    HostsFile {
+        unsupported: None,
+        error: None,
+        analysis: Some(Analysis {
+            block,
+            conflicts: Vec::new(),
+            reserved: Vec::new(),
+        }),
+    }
+}
+
+fn hosts_file_with(block: BlockState, edit: impl FnOnce(&mut Analysis)) -> HostsFile {
+    let mut file = hosts_file(block);
+    edit(file.analysis.as_mut().expect("analysis"));
+    file
+}
+
+fn hosts_file_unsupported(why: Unsupported) -> HostsFile {
+    HostsFile {
+        unsupported: Some(why),
+        error: None,
+        analysis: None,
+    }
+}
+
+/// A takeover collector on 8443 serving `hosts`, with the step 3 state given.
+fn point(
+    hosts: &[&str],
+    check: Check,
+    file: HostsFile,
+    helper: Helper,
+    edit: Edit,
+    result: Option<EditResult>,
+) -> String {
+    let view = collector_view_at(
+        &tls_model_for(8443, 0, hosts),
+        &Access::NotNeeded,
+        false,
+        true,
+        true,
+        8443,
+    );
+    let mut view: Value = serde_json::from_str(&with_trust(view, "applied", "absent", true))
+        .expect("collector view parses");
+    view["hostCheck"] = match check {
+        Check::None => json!({"running": false, "results": []}),
+        Check::Running => json!({"running": true, "results": []}),
+        Check::Results(rows) => json!({
+            "running": false,
+            "results": hosts.iter().zip(rows).map(|(host, (state, address, message))| json!({
+                "host": host, "state": state, "address": address, "message": message,
+            })).collect::<Vec<_>>(),
+        }),
+    };
+    let hosts: Vec<String> = hosts.iter().map(|host| (*host).to_owned()).collect();
+    view["hostsFile"] = serde_json::to_value(hostsview::view(&hostsview::Inputs {
+        hosts: &hosts,
+        file: Some(&file),
+        helper: &helper,
+        edit,
+        result: result.as_ref(),
+    }))
+    .expect("hosts view serializes");
+    view.to_string()
+}
+
+fn set_applied(changed: bool, synced: bool) -> Option<EditResult> {
+    Some(hostsview::result_for(
+        "set",
+        &HostsEditOutcome::Applied { changed, synced },
+    ))
+}
+
+fn not_run(op: &'static str, why: HostsNotRun) -> Option<EditResult> {
+    Some(hostsview::result_for(op, &HostsEditOutcome::NotRun(why)))
+}
+
+fn ready_point(check: Check, file: HostsFile) -> String {
+    point(&POINT_HOSTS, check, file, Helper::Ready, Edit::Idle, None)
+}
+
+pub fn point_unchecked() -> String {
+    ready_point(Check::None, hosts_file(BlockState::Absent))
+}
+
+pub fn point_checking() -> String {
+    ready_point(Check::Running, hosts_file(BlockState::Absent))
+}
+
+pub fn point_here() -> String {
+    ready_point(here(2), hosts_file(BlockState::Absent))
+}
+
+pub fn point_here_managed() -> String {
+    point(
+        &POINT_HOSTS,
+        here(2),
+        hosts_file(BlockState::Current),
+        Helper::Ready,
+        Edit::Idle,
+        set_applied(true, true),
+    )
+}
+
+/// Every step with its undo: the port held, cAInary's lines in /etc/hosts, the redirect printed.
+pub fn step_undo() -> String {
+    let mut view: Value =
+        serde_json::from_str(&point_here_managed()).expect("collector view parses");
+    view["privilege"]["state"] = json!("held");
+    view.to_string()
+}
+
+pub fn point_elsewhere() -> String {
+    ready_point(elsewhere(2), hosts_file(BlockState::Absent))
+}
+
+pub fn point_elsewhere_no_helper() -> String {
+    point(
+        &POINT_HOSTS,
+        elsewhere(2),
+        hosts_file(BlockState::Absent),
+        Helper::NoHelper("the hosts helper isn't installed".into()),
+        Edit::Idle,
+        None,
+    )
+}
+
+pub fn point_too_many() -> String {
+    point(
+        &TOO_MANY_HOSTS,
+        elsewhere(9),
+        hosts_file(BlockState::Absent),
+        Helper::Ready,
+        Edit::Idle,
+        None,
+    )
+}
+
+const TOO_MANY_HOSTS: [&str; 9] = [
+    "a1.example-corp.com",
+    "a2.example-corp.com",
+    "a3.example-corp.com",
+    "a4.example-corp.com",
+    "a5.example-corp.com",
+    "a6.example-corp.com",
+    "a7.example-corp.com",
+    "a8.example-corp.com",
+    "a9.example-corp.com",
+];
+
+const RESERVED_HOSTS: [&str; 2] = ["otel.example-corp.com", "localhost"];
+
+pub fn point_reserved() -> String {
+    point(
+        &RESERVED_HOSTS,
+        Check::Results(vec![("elsewhere", "34.117.59.81", ""), ("here", "", "")]),
+        hosts_file_with(BlockState::Absent, |a| {
+            a.reserved = vec!["localhost".into()]
+        }),
+        Helper::Ready,
+        Edit::Idle,
+        None,
+    )
+}
+
+pub fn point_sandboxed() -> String {
+    point(
+        &POINT_HOSTS,
+        elsewhere(2),
+        hosts_file(BlockState::Absent),
+        Helper::Sandboxed,
+        Edit::Idle,
+        None,
+    )
+}
+
+pub fn point_adding() -> String {
+    point(
+        &POINT_HOSTS,
+        elsewhere(2),
+        hosts_file(BlockState::Absent),
+        Helper::Ready,
+        Edit::Adding,
+        None,
+    )
+}
+
+pub fn point_unsynced() -> String {
+    point(
+        &POINT_HOSTS,
+        here(2),
+        hosts_file(BlockState::Current),
+        Helper::Ready,
+        Edit::Idle,
+        set_applied(true, false),
+    )
+}
+
+pub fn point_uncertain() -> String {
+    point(
+        &POINT_HOSTS,
+        elsewhere(2),
+        hosts_file(BlockState::Absent),
+        Helper::Ready,
+        Edit::Idle,
+        Some(hostsview::result_for(
+            "set",
+            &HostsEditOutcome::Uncertain(HostsUncertain::NoReply),
+        )),
+    )
+}
+
+/// The lines were added but another line, earlier in the file, still wins.
+pub fn point_still_elsewhere_conflict() -> String {
+    point(
+        &POINT_HOSTS,
+        Check::Results(vec![("elsewhere", "10.0.0.5", ""), ("here", "", "")]),
+        hosts_file_with(BlockState::Current, |a| {
+            a.conflicts = vec![Conflict {
+                line: 12,
+                address: "10.0.0.5".into(),
+                host: "otel.example-corp.com".into(),
+            }];
+        }),
+        Helper::Ready,
+        Edit::Idle,
+        set_applied(true, true),
+    )
+}
+
+pub fn point_stale_block() -> String {
+    ready_point(elsewhere(2), hosts_file(BlockState::Stale))
+}
+
+pub fn point_linked() -> String {
+    ready_point(
+        elsewhere(2),
+        hosts_file_unsupported(Unsupported::Symlink {
+            target: "/etc/static/hosts".into(),
+        }),
+    )
+}
+
+pub fn point_unprotected() -> String {
+    ready_point(
+        elsewhere(2),
+        hosts_file_unsupported(Unsupported::Unprotected),
+    )
+}
+
+pub fn point_cancelled() -> String {
+    point(
+        &POINT_HOSTS,
+        elsewhere(2),
+        hosts_file(BlockState::Absent),
+        Helper::Ready,
+        Edit::Idle,
+        not_run("set", HostsNotRun::Dismissed),
+    )
+}
+
+pub fn point_not_authorized() -> String {
+    point(
+        &POINT_HOSTS,
+        elsewhere(2),
+        hosts_file(BlockState::Absent),
+        Helper::Ready,
+        Edit::Idle,
+        not_run("set", HostsNotRun::NotAuthorized),
+    )
+}
+
+pub fn point_error_damaged() -> String {
+    point(
+        &POINT_HOSTS,
+        elsewhere(2),
+        hosts_file(BlockState::Damaged),
+        Helper::Ready,
+        Edit::Idle,
+        Some(hostsview::result_for(
+            "set",
+            &HostsEditOutcome::Refused(crate::hostsedit::HostsError::DamagedBlock),
+        )),
+    )
+}
+
+pub fn undo_with_block() -> String {
+    ready_point(here(2), hosts_file(BlockState::Current))
+}
+
+pub fn undo_without_block() -> String {
+    ready_point(here(2), hosts_file(BlockState::Absent))
+}
+
+/// The collector is off, so there are no names, and a block from an earlier run is still there:
+/// it can be removed.
+pub fn undo_collector_off() -> String {
+    let mut view: Value = serde_json::from_str(&collector_view_for(
+        &CollectorModel::default(),
+        &Access::NotNeeded,
+        false,
+        false,
+        false,
+    ))
+    .expect("collector view parses");
+    view["hostsFile"] = serde_json::to_value(hostsview::view(&hostsview::Inputs {
+        hosts: &[],
+        file: Some(&hosts_file(BlockState::Stale)),
+        helper: &Helper::Ready,
+        edit: Edit::Idle,
+        result: None,
+    }))
+    .expect("hosts view serializes");
+    view.to_string()
+}
+
+/// After "Remove from /etc/hosts…" finished.
+pub fn undo_removed() -> String {
+    point(
+        &POINT_HOSTS,
+        elsewhere(2),
+        hosts_file(BlockState::Absent),
+        Helper::Ready,
+        Edit::Idle,
+        Some(hostsview::result_for(
+            "clear",
+            &HostsEditOutcome::Applied {
+                changed: true,
+                synced: true,
+            },
+        )),
+    )
+}
+
 pub fn scenarios() -> Vec<Scenario> {
     let defaults = Settings::default();
     let expanded = Settings {
@@ -630,6 +1178,157 @@ pub fn scenarios() -> Vec<Scenario> {
     https_takeover.collector.enabled = true;
     https_takeover.collector.tls = true;
     https_takeover.collector.tls_hosts = vec!["otel.example-corp.com".into()];
+    https_takeover.collector.tls_port = 8443;
+    let point_settings = |hosts: &[&str]| {
+        let mut settings = https_takeover.clone();
+        settings.collector.tls_hosts = hosts.iter().map(|host| (*host).to_owned()).collect();
+        settings
+    };
+    let two = point_settings(&POINT_HOSTS);
+    let nine = point_settings(&TOO_MANY_HOSTS);
+    let reserved = point_settings(&RESERVED_HOSTS);
+    // Switched back to pointing agents here, with the takeover's /etc/hosts lines left behind.
+    let mut switched_back = two.clone();
+    switched_back.collector.tls = false;
+    switched_back.collector.enabled = false;
+    #[allow(clippy::type_complexity)] // (name, selection, settings, view) rows of one table
+    let step3: Vec<(&'static str, &'static str, &Settings, fn() -> String)> = vec![
+        (
+            "point-unchecked",
+            ":collector:setup:point",
+            &two,
+            point_unchecked,
+        ),
+        (
+            "point-checking",
+            ":collector:setup:point",
+            &two,
+            point_checking,
+        ),
+        ("point-here", ":collector:setup:point", &two, point_here),
+        (
+            "point-here-managed",
+            ":collector:setup:point",
+            &two,
+            point_here_managed,
+        ),
+        (
+            "point-elsewhere",
+            ":collector:setup:point",
+            &two,
+            point_elsewhere,
+        ),
+        (
+            "point-elsewhere-no-helper",
+            ":collector:setup:point",
+            &two,
+            point_elsewhere_no_helper,
+        ),
+        (
+            "point-too-many",
+            ":collector:setup:point",
+            &nine,
+            point_too_many,
+        ),
+        (
+            "point-reserved",
+            ":collector:setup:point",
+            &reserved,
+            point_reserved,
+        ),
+        (
+            "point-sandboxed",
+            ":collector:setup:point",
+            &two,
+            point_sandboxed,
+        ),
+        ("point-adding", ":collector:setup:point", &two, point_adding),
+        (
+            "point-unsynced",
+            ":collector:setup:point",
+            &two,
+            point_unsynced,
+        ),
+        (
+            "point-uncertain",
+            ":collector:setup:point",
+            &two,
+            point_uncertain,
+        ),
+        (
+            "point-still-elsewhere-conflict",
+            ":collector:setup:point",
+            &two,
+            point_still_elsewhere_conflict,
+        ),
+        (
+            "point-stale-block",
+            ":collector:setup:point",
+            &two,
+            point_stale_block,
+        ),
+        (
+            "point-symlink",
+            ":collector:setup:point",
+            &two,
+            point_linked,
+        ),
+        (
+            "point-unprotected",
+            ":collector:setup:point",
+            &two,
+            point_unprotected,
+        ),
+        (
+            "point-cancelled",
+            ":collector:setup:point",
+            &two,
+            point_cancelled,
+        ),
+        (
+            "point-not-authorized",
+            ":collector:setup:point",
+            &two,
+            point_not_authorized,
+        ),
+        (
+            "point-error-damaged",
+            ":collector:setup:point",
+            &two,
+            point_error_damaged,
+        ),
+        (
+            "undo-with-block",
+            ":collector:setup:undo",
+            &two,
+            undo_with_block,
+        ),
+        (
+            "undo-without-block",
+            ":collector:setup:undo",
+            &two,
+            undo_without_block,
+        ),
+        ("undo-removed", ":collector:setup:undo", &two, undo_removed),
+        (
+            "step-undo",
+            ":collector:setup:port,point,redirect",
+            &two,
+            step_undo,
+        ),
+        (
+            "undo-collector-off",
+            ":collector:setup:undo",
+            &two,
+            undo_collector_off,
+        ),
+        (
+            "hosts-leftover",
+            ":collector:setup",
+            &switched_back,
+            undo_collector_off,
+        ),
+    ];
     let changed = with_changes(
         CLAUDE,
         vec![
@@ -669,6 +1368,8 @@ pub fn scenarios() -> Vec<Scenario> {
     let mut no_host_settings = defaults.clone();
     no_host_settings.collector.enabled = true;
     no_host_settings.collector.tls = true;
+    let mut takeover_443_settings = https_takeover.clone();
+    takeover_443_settings.collector.tls_port = 443;
     let mut in_use_settings = defaults.clone();
     in_use_settings.collector.enabled = true;
     let mut off_settings = defaults.clone();
@@ -746,6 +1447,66 @@ pub fn scenarios() -> Vec<Scenario> {
                 false,
             ),
             collector_sample,
+        ),
+        live(
+            details(
+                "details-collector-logs",
+                ":collector:logs",
+                &live_settings,
+                false,
+            ),
+            collector_sample,
+        ),
+        details(
+            "details-collector-setup-off",
+            ":collector:setup",
+            &off_settings,
+            false,
+        ),
+        live(
+            details(
+                "details-collector-setup-direct",
+                ":collector:setup",
+                &live_settings,
+                false,
+            ),
+            collector_sample,
+        ),
+        live(
+            details(
+                "details-collector-takeover-new",
+                ":collector:setup",
+                &no_host_settings,
+                false,
+            ),
+            collector_takeover_new,
+        ),
+        live(
+            details(
+                "details-collector-takeover-pending",
+                ":collector:setup",
+                &https_takeover,
+                false,
+            ),
+            collector_takeover_pending,
+        ),
+        live(
+            details(
+                "details-collector-takeover-ready",
+                ":collector:setup",
+                &takeover_443_settings,
+                false,
+            ),
+            collector_takeover_ready,
+        ),
+        live(
+            details(
+                "details-collector-takeover-priv",
+                ":collector:setup",
+                &takeover_443_settings,
+                false,
+            ),
+            collector_takeover_priv,
         ),
         details(
             "details-collector-off",
@@ -925,4 +1686,12 @@ pub fn scenarios() -> Vec<Scenario> {
             true,
         ),
     ]
+    .into_iter()
+    .chain(step3.into_iter().map(|(name, selection, settings, build)| {
+        live(
+            scenario(name, "details", selection, ready(CLAUDE), settings, false),
+            build,
+        )
+    }))
+    .collect()
 }

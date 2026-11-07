@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 
+pub mod hosts_tree;
 pub mod sockets;
 
 use serde_json::{Value, json};

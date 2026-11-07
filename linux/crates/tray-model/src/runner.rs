@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use crate::hostsedit::{self, HostsError, HostsOp, VerifiedHostsHelper};
 use crate::privport::{self, HelperError, Reply, ReplyError, VerifiedHelper};
 use crate::report::{DecodeError, Report, SCHEMA};
 
@@ -1174,14 +1175,40 @@ impl BindError {
     }
 }
 
-/// The whole pkexec command line after the program name, built in one place.
-fn pkexec_args(helper: &std::path::Path, port: u16) -> [OsString; 4] {
+/// The start of every pkexec command line: no internal agent, then the helper. Spelled once.
+fn pkexec_prefix(helper: &std::path::Path) -> [OsString; 2] {
     [
         OsString::from("--disable-internal-agent"),
         helper.as_os_str().to_owned(),
+    ]
+}
+
+/// The whole pkexec command line after the program name, built in one place.
+fn pkexec_args(helper: &std::path::Path, port: u16) -> [OsString; 4] {
+    let [flag, helper] = pkexec_prefix(helper);
+    [
+        flag,
+        helper,
         OsString::from("--port"),
         OsString::from(port.to_string()),
     ]
+}
+
+/// pkexec is stopped with the tray: SIGTERM when the parent dies (or already has).
+fn die_with_parent(command: &mut Command) {
+    let parent = std::process::id() as libc::pid_t;
+    // SAFETY: async-signal-safe calls only.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if libc::getppid() != parent {
+                libc::raise(libc::SIGTERM);
+            }
+            Ok(())
+        });
+    }
 }
 
 fn seqpacket_pair() -> io::Result<(OwnedFd, OwnedFd)> {
@@ -1247,7 +1274,6 @@ fn bind_with(
         return Err(BindError::Rejected("port 0".into()));
     }
     let (ours, theirs) = seqpacket_pair().map_err(BindError::Spawn)?;
-    let parent = std::process::id() as libc::pid_t;
     let mut command = Command::new(pkexec);
     command
         .args(pkexec_args(helper, port))
@@ -1256,18 +1282,7 @@ fn bind_with(
         .stdout(Stdio::from(theirs))
         .stderr(Stdio::piped())
         .process_group(0);
-    // SAFETY: async-signal-safe calls only.
-    unsafe {
-        command.pre_exec(move || {
-            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
-                return Err(io::Error::last_os_error());
-            }
-            if libc::getppid() != parent {
-                libc::raise(libc::SIGTERM);
-            }
-            Ok(())
-        });
-    }
+    die_with_parent(&mut command);
     let spawned = command.spawn();
     // Drops the parent's copy of the helper end: a dead child now shows up as a closed socket.
     drop(command);
@@ -1598,9 +1613,346 @@ fn local_address(fd: RawFd) -> Option<Local> {
     }
 }
 
+// ---- /etc/hosts through the hosts helper ------------------------------------------------------
+
+/// How long the user has to authenticate (and the helper to finish) before the edit is
+/// abandoned as uncertain.
+pub const HOSTS_DEADLINE: Duration = Duration::from_secs(300);
+/// The most stdout, and the most stderr, that is read from the run. The real reply is one line.
+const HOSTS_OUTPUT_LIMIT: usize = 4 << 10;
+
+/// Why nothing was started or nothing was asked: `/etc/hosts` did not change.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HostsNotRun {
+    /// pkexec couldn't be started.
+    Spawn(String),
+    /// The helper or its policy changed since they were verified.
+    NotTrusted(String),
+    /// The authentication dialog was dismissed (pkexec exit 126).
+    Dismissed,
+    /// Not authorised, or no agent to ask (pkexec exit 127).
+    NotAuthorized,
+}
+
+impl HostsNotRun {
+    /// One lowercase line for logs.
+    pub fn reason(&self) -> String {
+        match self {
+            Self::Spawn(e) => format!("couldn't start pkexec ({e})"),
+            Self::NotTrusted(why) => format!("the hosts helper is no longer trusted: {why}"),
+            Self::Dismissed => "the authentication dialog was dismissed".into(),
+            Self::NotAuthorized => "not authorized to change /etc/hosts".into(),
+        }
+    }
+}
+
+/// Why nobody can say whether `/etc/hosts` changed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HostsUncertain {
+    /// Exited without printing anything.
+    NoReply,
+    /// The helper panicked (exit 3, no reply).
+    Panicked,
+    /// Something other than a reply of the protocol.
+    Garbled,
+    /// The helper speaks another protocol (the number it printed).
+    ProtocolMismatch(String),
+    /// The reply answers another command than the one that was asked.
+    WrongCommand,
+    /// Killed by this signal.
+    Signal(i32),
+    /// The deadline passed.
+    TimedOut,
+    /// More output than a reply can be.
+    OutputTooLarge,
+    /// An `ok` reply, but the exit code wasn't 0.
+    OkWithExit(i32),
+    /// An `error` reply, but not with the exit code its token goes with.
+    ErrorWithExit { token: &'static str, code: i32 },
+    /// pkexec's own "not authorized" codes, with output: the helper may have run.
+    PkexecCodeWithOutput(i32),
+    /// Something else could not be waited for.
+    Wait(String),
+}
+
+impl HostsUncertain {
+    /// One lowercase line for the "couldn't tell" note.
+    pub fn reason(&self) -> String {
+        match self {
+            Self::NoReply => "the helper ended without a reply".into(),
+            Self::Panicked => "the helper stopped unexpectedly".into(),
+            Self::Garbled => "the helper's reply wasn't understood".into(),
+            Self::ProtocolMismatch(p) => {
+                format!("the hosts helper speaks protocol {p}; update the hosts helper")
+            }
+            Self::WrongCommand => "the helper answered another request".into(),
+            Self::Signal(n) => format!("the helper was stopped by signal {n}"),
+            Self::TimedOut => "timed out waiting for the helper".into(),
+            Self::OutputTooLarge => "the helper printed too much".into(),
+            Self::OkWithExit(code) => format!("the helper exited with code {code} after replying"),
+            Self::ErrorWithExit { token, code } => {
+                format!("the helper said {token} but exited with code {code}")
+            }
+            Self::PkexecCodeWithOutput(code) => {
+                format!("pkexec exited with code {code} after output")
+            }
+            Self::Wait(e) => format!("couldn't wait for the helper ({e})"),
+        }
+    }
+}
+
+/// What an edit of `/etc/hosts` came to. The tray never rolls back and never retries.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HostsEditOutcome {
+    /// A valid `ok` reply and exit 0. `changed` says whether the file was replaced; `synced` is
+    /// false when the directory sync failed (`changed-unsynced`).
+    Applied { changed: bool, synced: bool },
+    /// Nothing was run, or pkexec said no: `/etc/hosts` did not change.
+    NotRun(HostsNotRun),
+    /// A valid `error` reply with its exit code: refused before the commit, `/etc/hosts` did not
+    /// change.
+    Refused(HostsError),
+    /// Anything else. Unknown whether `/etc/hosts` changed: look again.
+    Uncertain(HostsUncertain),
+}
+
+/// The whole pkexec command line after the program name for an edit, built in one place. The op
+/// can only hold names the helper accepts, and argv is never a shell.
+fn hosts_pkexec_args(helper: &std::path::Path, op: &HostsOp) -> Vec<OsString> {
+    let mut args = Vec::from(pkexec_prefix(helper));
+    args.push(OsString::from(op.word()));
+    if let HostsOp::Set(hosts) = op {
+        args.extend(hosts.iter().map(OsString::from));
+    }
+    args
+}
+
+/// Asks the root helper, through `pkexec`, to `set` the managed block of `/etc/hosts` to exactly
+/// these names or to `clear` it. Blocks for up to `deadline` (the user is typing a password), so
+/// call it on a worker thread. Nothing is trusted: the helper is walked again right before it
+/// runs, the reply is decoded strictly, and only a valid reply with the matching exit code counts
+/// as an answer. stdin is null; stdout and stderr are each bounded at 4 KiB.
+pub fn edit_hosts(
+    helper: &VerifiedHostsHelper,
+    op: &HostsOp,
+    deadline: Duration,
+) -> HostsEditOutcome {
+    // The files may have changed since they were verified; look again right before running them.
+    if let Err(why) = helper.recheck() {
+        return HostsEditOutcome::NotRun(HostsNotRun::NotTrusted(why));
+    }
+    hosts_run(
+        std::path::Path::new(PKEXEC),
+        helper.helper_path(),
+        op,
+        deadline,
+    )
+}
+
+/// [`edit_hosts`] with any pkexec and helper, so tests can substitute the fake. It exists only in
+/// test builds; a guard keeps production code from naming it.
+#[cfg(any(test, feature = "test-fakes"))]
+pub fn edit_hosts_with(
+    pkexec: &std::path::Path,
+    helper: &std::path::Path,
+    op: &HostsOp,
+    deadline: Duration,
+) -> HostsEditOutcome {
+    hosts_run(pkexec, helper, op, deadline)
+}
+
+fn hosts_run(
+    pkexec: &std::path::Path,
+    helper: &std::path::Path,
+    op: &HostsOp,
+    deadline: Duration,
+) -> HostsEditOutcome {
+    let mut command = Command::new(pkexec);
+    command
+        .args(hosts_pkexec_args(helper, op))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0);
+    die_with_parent(&mut command);
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(e) => return HostsEditOutcome::NotRun(HostsNotRun::Spawn(e.to_string())),
+    };
+    watch_hosts(&mut child, op.word(), deadline)
+}
+
+/// A bounded, non-blocking reader of one of the child's pipes.
+struct Bounded<R> {
+    pipe: Option<R>,
+    bytes: Vec<u8>,
+    over: bool,
+}
+
+impl<R: Read + AsRawFd> Bounded<R> {
+    fn new(pipe: Option<R>) -> Self {
+        if let Some(pipe) = &pipe {
+            set_nonblocking(pipe.as_raw_fd());
+        }
+        Self {
+            pipe,
+            bytes: Vec::new(),
+            over: false,
+        }
+    }
+
+    fn fd(&self) -> Option<RawFd> {
+        self.pipe.as_ref().map(AsRawFd::as_raw_fd)
+    }
+
+    /// Reads whatever is there; more than the limit in total sets `over` and stops reading.
+    fn fill(&mut self) {
+        let Some(pipe) = self.pipe.as_mut() else {
+            return;
+        };
+        let mut chunk = [0_u8; 1024];
+        loop {
+            match pipe.read(&mut chunk) {
+                Ok(0) => {
+                    self.pipe = None;
+                    return;
+                }
+                Ok(n) => {
+                    if self.bytes.len() + n > HOSTS_OUTPUT_LIMIT {
+                        self.over = true;
+                        self.pipe = None;
+                        return;
+                    }
+                    self.bytes.extend_from_slice(&chunk[..n]);
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => return,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(_) => {
+                    self.pipe = None;
+                    return;
+                }
+            }
+        }
+    }
+}
+
+fn watch_hosts(child: &mut Child, op: &'static str, deadline: Duration) -> HostsEditOutcome {
+    let mut stdout = Bounded::new(child.stdout.take());
+    let mut stderr = Bounded::new(child.stderr.take());
+    let until = Instant::now() + deadline;
+    loop {
+        let now = Instant::now();
+        if now >= until {
+            terminate(child, Duration::from_millis(500));
+            return HostsEditOutcome::Uncertain(HostsUncertain::TimedOut);
+        }
+        let mut fds: Vec<libc::pollfd> = [stdout.fd(), stderr.fd()]
+            .into_iter()
+            .flatten()
+            .map(|fd| libc::pollfd {
+                fd,
+                events: libc::POLLIN,
+                revents: 0,
+            })
+            .collect();
+        let wait = (until - now).min(TICK);
+        if fds.is_empty() {
+            thread::sleep(wait);
+        } else {
+            let ms = wait.as_millis().clamp(1, i32::MAX as u128) as i32;
+            // SAFETY: `fds` holds valid pollfd entries for descriptors we own.
+            unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, ms) };
+        }
+        stdout.fill();
+        stderr.fill();
+        if stdout.over || stderr.over {
+            terminate(child, Duration::from_millis(500));
+            return HostsEditOutcome::Uncertain(HostsUncertain::OutputTooLarge);
+        }
+        if exited(child) {
+            // Whatever was written before the exit is still in the pipes.
+            stdout.fill();
+            stderr.fill();
+            kill_group(child, libc::SIGKILL);
+            let status = match child.wait() {
+                Ok(status) => status,
+                Err(e) => {
+                    return HostsEditOutcome::Uncertain(HostsUncertain::Wait(e.to_string()));
+                }
+            };
+            if stdout.over || stderr.over {
+                return HostsEditOutcome::Uncertain(HostsUncertain::OutputTooLarge);
+            }
+            let exit = match (
+                status.code(),
+                std::os::unix::process::ExitStatusExt::signal(&status),
+            ) {
+                (Some(code), _) => HostsExit::Code(code),
+                (None, Some(signal)) => HostsExit::Signal(signal),
+                (None, None) => HostsExit::Signal(0),
+            };
+            return classify_hosts(op, exit, &stdout.bytes);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HostsExit {
+    Code(i32),
+    Signal(i32),
+}
+
+/// Judges a finished run: the exit, and everything that was printed on stdout, against the
+/// command that was asked (`set` or `clear`). Only a valid reply with its own exit code is an
+/// answer; everything else that isn't pkexec saying no is uncertain.
+fn classify_hosts(op: &str, exit: HostsExit, stdout: &[u8]) -> HostsEditOutcome {
+    use hostsedit::{Change, Reply};
+    let uncertain = |why| HostsEditOutcome::Uncertain(why);
+    let code = match exit {
+        HostsExit::Signal(n) => return uncertain(HostsUncertain::Signal(n)),
+        HostsExit::Code(code) => code,
+    };
+    if matches!(code, 126 | 127) {
+        // The helper never exits like this: it is pkexec declining, before anything ran.
+        return match (code, stdout.is_empty()) {
+            (126, true) => HostsEditOutcome::NotRun(HostsNotRun::Dismissed),
+            (_, true) => HostsEditOutcome::NotRun(HostsNotRun::NotAuthorized),
+            _ => uncertain(HostsUncertain::PkexecCodeWithOutput(code)),
+        };
+    }
+    match hostsedit::parse_reply(stdout) {
+        Err(privport::ReplyError::Protocol(p)) => uncertain(HostsUncertain::ProtocolMismatch(p)),
+        Err(privport::ReplyError::Malformed) if stdout.is_empty() && code == 3 => {
+            uncertain(HostsUncertain::Panicked)
+        }
+        Err(privport::ReplyError::Malformed) if stdout.is_empty() => {
+            uncertain(HostsUncertain::NoReply)
+        }
+        Err(privport::ReplyError::Malformed) => uncertain(HostsUncertain::Garbled),
+        Ok(Reply::Ok { op: answered, .. }) if answered != op => {
+            uncertain(HostsUncertain::WrongCommand)
+        }
+        Ok(Reply::Ok { .. }) if code != 0 => uncertain(HostsUncertain::OkWithExit(code)),
+        Ok(Reply::Ok { change, .. }) => HostsEditOutcome::Applied {
+            changed: change != Change::Unchanged,
+            synced: change != Change::ChangedUnsynced,
+        },
+        Ok(Reply::Error(error)) if error.exit_code() == code => HostsEditOutcome::Refused(error),
+        Ok(Reply::Error(error)) => uncertain(HostsUncertain::ErrorWithExit {
+            token: error.token(),
+            code,
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::is_listening_tcp;
+    use super::{
+        HostsEditOutcome as Out, HostsExit as Exit, HostsNotRun, HostsUncertain as U,
+        classify_hosts, hosts_pkexec_args, is_listening_tcp,
+    };
+    use crate::hostsedit::{HostsError, HostsOp};
+    use std::path::Path;
 
     #[test]
     fn only_a_listening_tcp_stream_passes() {
@@ -1617,5 +1969,141 @@ mod tests {
         assert!(!is_listening_tcp(None, Some(1), Some(tcp)));
         assert!(!is_listening_tcp(Some(stream), None, Some(tcp)));
         assert!(!is_listening_tcp(Some(stream), Some(1), None));
+    }
+
+    #[test]
+    fn hosts_argv_is_fixed_shape() {
+        let helper = Path::new("/usr/libexec/cainary/cainary-hosts-helper");
+        let set = HostsOp::set(&["a.example.com".into(), "b.example.com".into()]).unwrap();
+        let args: Vec<_> = hosts_pkexec_args(helper, &set)
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            args,
+            [
+                "--disable-internal-agent",
+                "/usr/libexec/cainary/cainary-hosts-helper",
+                "set",
+                "a.example.com",
+                "b.example.com"
+            ]
+        );
+        let clear: Vec<_> = hosts_pkexec_args(helper, &HostsOp::Clear)
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(clear[2..], ["clear"]);
+    }
+
+    fn judged(op: &str, exit: Exit, out: &str) -> Out {
+        classify_hosts(op, exit, out.as_bytes())
+    }
+
+    #[test]
+    fn hosts_classification_table() {
+        const OK: &str = "cainary-hosts-helper/1 ok set changed\n";
+        let applied = |changed, synced| Out::Applied { changed, synced };
+        assert_eq!(judged("set", Exit::Code(0), OK), applied(true, true));
+        assert_eq!(
+            judged(
+                "clear",
+                Exit::Code(0),
+                "cainary-hosts-helper/1 ok clear unchanged\n"
+            ),
+            applied(false, true)
+        );
+        assert_eq!(
+            judged(
+                "set",
+                Exit::Code(0),
+                "cainary-hosts-helper/1 ok set changed-unsynced\n"
+            ),
+            applied(true, false)
+        );
+        // Refusals carry their token's own exit code.
+        let busy = "cainary-hosts-helper/1 error busy\n";
+        assert_eq!(
+            judged("set", Exit::Code(1), busy),
+            Out::Refused(HostsError::Busy)
+        );
+        let reserved = "cainary-hosts-helper/1 error reserved-name\n";
+        assert_eq!(
+            judged("set", Exit::Code(2), reserved),
+            Out::Refused(HostsError::ReservedName)
+        );
+        assert_eq!(
+            judged("set", Exit::Code(1), reserved),
+            Out::Uncertain(U::ErrorWithExit {
+                token: "reserved-name",
+                code: 1
+            })
+        );
+        assert_eq!(
+            judged("set", Exit::Code(2), busy),
+            Out::Uncertain(U::ErrorWithExit {
+                token: "busy",
+                code: 2
+            })
+        );
+        assert_eq!(
+            judged("set", Exit::Code(0), busy),
+            Out::Uncertain(U::ErrorWithExit {
+                token: "busy",
+                code: 0
+            })
+        );
+        // pkexec saying no.
+        assert_eq!(
+            judged("set", Exit::Code(126), ""),
+            Out::NotRun(HostsNotRun::Dismissed)
+        );
+        assert_eq!(
+            judged("set", Exit::Code(127), ""),
+            Out::NotRun(HostsNotRun::NotAuthorized)
+        );
+        assert_eq!(
+            judged("set", Exit::Code(127), OK),
+            Out::Uncertain(U::PkexecCodeWithOutput(127))
+        );
+        // Everything else is uncertain.
+        assert_eq!(judged("set", Exit::Code(0), ""), Out::Uncertain(U::NoReply));
+        assert_eq!(judged("set", Exit::Code(1), ""), Out::Uncertain(U::NoReply));
+        assert_eq!(
+            judged("set", Exit::Code(3), ""),
+            Out::Uncertain(U::Panicked)
+        );
+        assert_eq!(
+            judged("set", Exit::Code(0), "hello\n"),
+            Out::Uncertain(U::Garbled)
+        );
+        assert_eq!(
+            judged("set", Exit::Code(3), OK),
+            Out::Uncertain(U::OkWithExit(3))
+        );
+        assert_eq!(
+            judged("set", Exit::Code(1), OK),
+            Out::Uncertain(U::OkWithExit(1))
+        );
+        assert_eq!(
+            judged(
+                "set",
+                Exit::Code(0),
+                "cainary-hosts-helper/2 ok set changed\n"
+            ),
+            Out::Uncertain(U::ProtocolMismatch("2".into()))
+        );
+        assert_eq!(
+            judged("clear", Exit::Code(0), OK),
+            Out::Uncertain(U::WrongCommand)
+        );
+        assert_eq!(
+            judged("set", Exit::Signal(9), ""),
+            Out::Uncertain(U::Signal(9))
+        );
+        assert_eq!(
+            judged("set", Exit::Signal(9), OK),
+            Out::Uncertain(U::Signal(9))
+        );
     }
 }

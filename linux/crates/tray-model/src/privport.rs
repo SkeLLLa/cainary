@@ -22,10 +22,7 @@ pub const POLICY_LOCAL: &str = "/usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.l
 pub const ACTION_PACKAGED: &str = "ua.SkeLLLa.cAInary.bind-loopback-port";
 pub const ACTION_LOCAL: &str = "ua.SkeLLLa.cAInary.bind-loopback-port.local";
 
-/// The word the helper's `--version` output and replies start with, up to the protocol number.
-const PROTOCOL_PREFIX: &str = "cainary-bind-helper/";
-const PROGRAM: &str = "cainary-bind-helper";
-/// The protocol this tray speaks.
+/// The protocol this tray speaks to the bind helper.
 pub const PROTOCOL: u32 = 1;
 const UNPRIVILEGED_PORT_START: &str = "/proc/sys/net/ipv4/ip_unprivileged_port_start";
 const POLICY_LIMIT: u64 = 64 << 10;
@@ -51,6 +48,30 @@ pub const CANDIDATES: [Candidate; 2] = [
         action: ACTION_LOCAL,
     },
 ];
+
+/// Everything that tells one root helper from another: its install locations (each with the
+/// policy that authorises exactly that file), the program name its `--version` line and replies
+/// start with, and the protocol number this tray speaks. The trust walk, the policy check and the
+/// reply framing are shared; only this identity differs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HelperSpec {
+    pub program: &'static str,
+    /// What every reply line starts with, up to the protocol number (`<program>/`).
+    pub protocol_prefix: &'static str,
+    pub protocol: u32,
+    /// How the helper is named in messages ("the helper", "the hosts helper").
+    pub noun: &'static str,
+    pub candidates: [Candidate; 2],
+}
+
+/// The bind helper.
+pub const BIND_SPEC: HelperSpec = HelperSpec {
+    program: "cainary-bind-helper",
+    protocol_prefix: "cainary-bind-helper/",
+    protocol: PROTOCOL,
+    noun: "the helper",
+    candidates: CANDIDATES,
+};
 
 /// The lowest port a non-root user may bind (1024 unless the sysctl says otherwise).
 pub fn unprivileged_port_start() -> u32 {
@@ -125,6 +146,58 @@ fn verify(env: &TrustEnv, candidate: Candidate) -> Result<VerifiedHelper, TrustE
         candidate,
         env: env.clone(),
     })
+}
+
+/// The trust walk for one candidate, for the test entry point of a module that wraps
+/// [`VerifiedHelper`] in its own type. Nothing else can make a `VerifiedHelper`.
+#[cfg(any(test, feature = "test-fakes"))]
+pub(crate) fn verify_candidate(
+    env: &TrustEnv,
+    candidate: Candidate,
+) -> Result<VerifiedHelper, TrustError> {
+    verify(env, candidate)
+}
+
+/// What looking through a spec's candidates found.
+pub(crate) enum Selection {
+    Ready(VerifiedHelper),
+    /// Same protocol, other build: usable, the user is told.
+    Mismatch(VerifiedHelper, String),
+    /// Nothing usable; the first problem met, if any.
+    Unavailable(Option<String>),
+}
+
+/// The first candidate of `spec` that passes the trust walk and answers `--version` with its
+/// protocol. `version` runs `<helper> --version` (unprivileged, directly).
+pub(crate) fn select(
+    env: &TrustEnv,
+    spec: &HelperSpec,
+    version: impl Fn(&Path) -> Result<String, String>,
+) -> Selection {
+    let mut first_problem = None;
+    for candidate in spec.candidates {
+        let verified = match verify(env, candidate) {
+            Ok(verified) => verified,
+            Err(TrustError::Missing) => continue,
+            Err(e) => {
+                first_problem.get_or_insert(format!("{}: {}", candidate.helper, e.reason()));
+                continue;
+            }
+        };
+        match version(verified.helper_path()) {
+            Err(why) => {
+                first_problem.get_or_insert(format!("couldn't ask the helper its version: {why}"));
+            }
+            Ok(output) => match check_version_for(spec, &output, env!("CARGO_PKG_VERSION")) {
+                VersionCheck::Match => return Selection::Ready(verified),
+                VersionCheck::Mismatch(warn) => return Selection::Mismatch(verified, warn),
+                VersionCheck::Blocked(why) => {
+                    first_problem.get_or_insert(why);
+                }
+            },
+        }
+    }
+    Selection::Unavailable(first_problem)
 }
 
 /// Where the trust walk starts and whose files count as trusted. Production is `/` and uid 0;
@@ -748,23 +821,31 @@ pub enum VersionCheck {
 /// `cainary-bind-helper <version> protocol <N>`, the helper's `--version` line. The tray runs it
 /// unprivileged and directly (never through pkexec), with a short timeout and bounded stdout.
 pub fn check_version(output: &str, expected_version: &str) -> VersionCheck {
+    check_version_for(&BIND_SPEC, output, expected_version)
+}
+
+/// [`check_version`] for any helper: `<program> <version> protocol <N>`.
+pub fn check_version_for(spec: &HelperSpec, output: &str, expected_version: &str) -> VersionCheck {
+    let noun = spec.noun;
     let line = output.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
     let words: Vec<&str> = line.split_whitespace().collect();
-    let [PROGRAM, version, "protocol", protocol] = words.as_slice() else {
-        return VersionCheck::Blocked(
-            "the helper didn't identify itself. Update the helper".into(),
-        );
+    let [program, version, "protocol", protocol] = words.as_slice() else {
+        return VersionCheck::Blocked(format!("{noun} didn't identify itself. Update {noun}"));
     };
-    if *protocol != PROTOCOL.to_string() {
+    if *program != spec.program {
+        return VersionCheck::Blocked(format!("{noun} didn't identify itself. Update {noun}"));
+    }
+    if *protocol != spec.protocol.to_string() {
         return VersionCheck::Blocked(format!(
-            "the helper speaks protocol {protocol}, this app speaks {PROTOCOL}. Update the helper"
+            "{noun} speaks protocol {protocol}, this app speaks {}. Update {noun}",
+            spec.protocol
         ));
     }
     if *version == expected_version {
         VersionCheck::Match
     } else {
         VersionCheck::Mismatch(format!(
-            "the helper is version {version}, this app is {expected_version}"
+            "{noun} is version {version}, this app is {expected_version}"
         ))
     }
 }
@@ -810,35 +891,13 @@ fn assess_with(
     if held {
         return PrivState::Held(port);
     }
-    let mut first_problem = None;
-    for candidate in CANDIDATES {
-        let verified = match verify(env, candidate) {
-            Ok(verified) => verified,
-            Err(TrustError::Missing) => continue,
-            Err(e) => {
-                first_problem.get_or_insert(format!("{}: {}", candidate.helper, e.reason()));
-                continue;
-            }
-        };
-        match version(verified.helper_path()) {
-            Err(why) => {
-                first_problem.get_or_insert(format!("couldn't ask the helper its version: {why}"));
-            }
-            Ok(output) => match check_version(&output, env!("CARGO_PKG_VERSION")) {
-                VersionCheck::Match => return PrivState::Ready { helper: verified },
-                VersionCheck::Mismatch(warn) => {
-                    return PrivState::Mismatch {
-                        helper: verified,
-                        warn,
-                    };
-                }
-                VersionCheck::Blocked(why) => {
-                    first_problem.get_or_insert(why);
-                }
-            },
+    match select(env, &BIND_SPEC, version) {
+        Selection::Ready(helper) => PrivState::Ready { helper },
+        Selection::Mismatch(helper, warn) => PrivState::Mismatch { helper, warn },
+        Selection::Unavailable(problem) => {
+            PrivState::NoHelper(problem.unwrap_or_else(|| "the port helper isn't installed".into()))
         }
     }
-    PrivState::NoHelper(first_problem.unwrap_or_else(|| "the port helper isn't installed".into()))
 }
 
 /// Why the helper refused (its `error <code>` replies).
@@ -885,6 +944,28 @@ pub enum ReplyError {
     Protocol(String),
 }
 
+/// The first step of decoding any helper's reply, shared: bounded length, UTF-8, an optional
+/// trailing newline, the `<program>/` prefix and the protocol number. Returns the words of the
+/// line, the program/protocol word first. `Malformed` on any deviation, `Protocol` when only the
+/// protocol number differs (the helper is of another generation).
+pub(crate) fn reply_words<'a>(
+    spec: &HelperSpec,
+    text: &'a str,
+) -> Result<Vec<&'a str>, ReplyError> {
+    let words: Vec<&str> = text.split(' ').collect();
+    let Some(protocol) = words
+        .first()
+        .and_then(|word| word.strip_prefix(spec.protocol_prefix))
+    else {
+        return Err(ReplyError::Malformed);
+    };
+    if protocol != spec.protocol.to_string() {
+        let printable = protocol.chars().take(8).filter(char::is_ascii_graphic);
+        return Err(ReplyError::Protocol(printable.collect()));
+    }
+    Ok(words)
+}
+
 /// Decodes one reply datagram. Strict: any deviation is an error, never a guess.
 pub fn parse_reply(bytes: &[u8]) -> Result<Reply, ReplyError> {
     if bytes.len() > 256 {
@@ -892,17 +973,7 @@ pub fn parse_reply(bytes: &[u8]) -> Result<Reply, ReplyError> {
     }
     let text = std::str::from_utf8(bytes).map_err(|_| ReplyError::Malformed)?;
     let text = text.strip_suffix('\n').unwrap_or(text);
-    let words: Vec<&str> = text.split(' ').collect();
-    let Some(protocol) = words
-        .first()
-        .and_then(|word| word.strip_prefix(PROTOCOL_PREFIX))
-    else {
-        return Err(ReplyError::Malformed);
-    };
-    if protocol != PROTOCOL.to_string() {
-        let printable = protocol.chars().take(8).filter(char::is_ascii_graphic);
-        return Err(ReplyError::Protocol(printable.collect()));
-    }
+    let words = reply_words(&BIND_SPEC, text)?;
     match words.as_slice() {
         [_, "error", code] => HelperError::parse(code)
             .map(Reply::Error)

@@ -7,6 +7,10 @@ pub mod baseline;
 pub mod change;
 pub mod collector;
 pub mod fixtures;
+pub mod hostcheck;
+pub mod hostsedit;
+pub mod hostsfile;
+pub mod hostsview;
 pub mod level;
 pub mod locate;
 pub mod logbook;
@@ -21,6 +25,7 @@ pub mod settings;
 pub mod store;
 pub mod strings;
 pub mod summary;
+pub mod takeover_guide;
 pub mod tray_icon;
 pub mod view;
 

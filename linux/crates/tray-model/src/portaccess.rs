@@ -449,7 +449,7 @@ mod tests {
         let mut settings = CollectorSettings::default();
         assert_eq!(effective_port(&settings), 4318);
         settings.tls = true;
-        assert_eq!(effective_port(&settings), 8443);
+        assert_eq!(effective_port(&settings), 443);
     }
 
     #[test]

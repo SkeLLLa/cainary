@@ -1,0 +1,6 @@
+127.0.0.1 localhost
+::1 localhost ip6-localhost
+# >>> CAINARY TAKEOVER: managed by cAInary >>>
+127.0.0.1 otel.example.com
+::1 otel.example.com
+# <<< cAInary takeover <<<

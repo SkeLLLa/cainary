@@ -1,0 +1,5 @@
+127.0.0.1 localhost
+::1 localhost ip6-localhost
+# >>> cAInary takeover: managed by cAInary, lines in here are replaced; remove with the app >>>
+10.9.9.9 otel.example.com
+# <<< cAInary takeover <<<

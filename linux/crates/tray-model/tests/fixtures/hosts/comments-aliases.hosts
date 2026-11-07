@@ -1,0 +1,6 @@
+127.0.0.1 localhost   # loopback otel.example.com
+
+   # 10.0.0.1 otel.example.com
+127.0.0.1	otel.example.com	alias.example.com  # ok
+10.1.1.1	ALIAS.example.com	OTEL.EXAMPLE.COM
+not-an-address otel.example.com

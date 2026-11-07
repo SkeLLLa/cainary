@@ -28,3 +28,4 @@ required-features = ["test-fakes"]
 [dev-dependencies]
 # Turns the feature on for this package's own tests, so plain `cargo test` builds the fake.
 cainary-tray-model = { path = ".", features = ["test-fakes"] }
+cainary-net = { path = "../../../crates/cainary-net" }

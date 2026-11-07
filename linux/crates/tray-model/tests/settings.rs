@@ -161,7 +161,7 @@ fn old_collector_tables_load_tls_takeover_defaults() {
     .unwrap();
     assert!(settings.collector.enabled);
     assert!(!settings.collector.tls);
-    assert_eq!(settings.collector.tls_port, 8443);
+    assert_eq!(settings.collector.tls_port, 443);
     assert!(settings.collector.tls_hosts.is_empty());
 }
 

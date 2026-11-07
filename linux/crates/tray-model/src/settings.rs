@@ -117,6 +117,8 @@ const MAX_STORED_PATTERN_FIELD_BYTES: usize = 16 * 1024;
 #[serde(default)]
 pub struct CollectorSettings {
     pub enabled: bool,
+    /// Keep `enabled` across app launches; off starts every launch with the collector off.
+    pub start_at_launch: bool,
     pub port: u16,
     pub tls: bool,
     pub tls_port: u16,
@@ -132,9 +134,10 @@ impl Default for CollectorSettings {
     fn default() -> Self {
         Self {
             enabled: false,
+            start_at_launch: false,
             port: 4318,
             tls: false,
-            tls_port: 8443,
+            tls_port: 443,
             tls_hosts: Vec::new(),
             log_to_file: false,
             log_path: String::new(),

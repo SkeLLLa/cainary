@@ -1,0 +1,7 @@
+127.0.0.1 localhost
+::1 localhost ip6-localhost
+10.0.0.5 otel.example.com
+0.0.0.0 ads.example.net otel.example.com # blocked
+127.0.0.1 otel.example.com
+192.168.1.1 other.example.com
+::ffff:127.0.0.1 mapped.example.com

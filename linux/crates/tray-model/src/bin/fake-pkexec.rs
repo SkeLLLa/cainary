@@ -2,15 +2,29 @@
 //! and the helper path, checks the rest of the command line, and then behaves as the mode named
 //! by the last component of its own path (tests symlink it under each mode's name): it binds
 //! loopback sockets on the port it is given and sends them down fd 1 the way the real helper does,
-//! or misbehaves in one specific way.
+//! or misbehaves in one specific way. When the command line has the hosts helper's shape
+//! (`--disable-internal-agent <helper> set HOST… | clear`), it acts out one of the hosts modes
+//! instead: it prints (or fails to print) the one-line reply and exits as the mode says. It never
+//! touches a file.
 
 use std::process::exit;
 
 const PROTOCOL: &str = "cainary-bind-helper/1";
+const HOSTS_PROTOCOL: &str = "cainary-hosts-helper/1";
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mode = args[0].rsplit('/').next().unwrap_or("").to_owned();
+    if let [flag, _helper, command, names @ ..] = &args[1..]
+        && flag == "--disable-internal-agent"
+        && (command == "set" || command == "clear")
+    {
+        if (command == "set") == names.is_empty() {
+            eprintln!("fake-pkexec: bad hosts arguments {:?}", &args[1..]);
+            exit(2);
+        }
+        hosts(&mode, command);
+    }
     let port = match args[1..] {
         [ref flag, ref _helper, ref port_flag, ref port]
             if flag == "--disable-internal-agent" && port_flag == "--port" =>
@@ -86,6 +100,73 @@ fn main() {
             exit(2);
         }
     }
+}
+
+/// All of `bytes` to fd 1; false when the reader is gone.
+fn put(bytes: &[u8]) -> bool {
+    let mut rest = bytes;
+    while !rest.is_empty() {
+        // SAFETY: writes from a live buffer of the stated length to descriptor 1.
+        let n = unsafe { libc::write(1, rest.as_ptr().cast(), rest.len()) };
+        if n <= 0 {
+            return false;
+        }
+        rest = &rest[n as usize..];
+    }
+    true
+}
+
+/// One line to stdout, and nothing else, the way the hosts helper prints its reply.
+fn say(line: &str) {
+    put(format!("{line}\n").as_bytes());
+}
+
+/// Acts out a hosts-helper mode for `command` (`set` or `clear`) and exits.
+fn hosts(mode: &str, command: &str) -> ! {
+    let ok = |change: &str| format!("{HOSTS_PROTOCOL} ok {command} {change}");
+    match mode {
+        "ok-changed" => say(&ok("changed")),
+        "ok-unchanged" => say(&ok("unchanged")),
+        "ok-unsynced" => say(&ok("changed-unsynced")),
+        "error-symlink" => {
+            say(&format!("{HOSTS_PROTOCOL} error symlink"));
+            exit(1);
+        }
+        "error-damaged" => {
+            say(&format!("{HOSTS_PROTOCOL} error damaged-block"));
+            exit(1);
+        }
+        "garbage" => say("hello there"),
+        "no-reply" => {}
+        "protocol-2" => say(&ok("changed").replace("/1", "/2")),
+        "exit-126" => exit(126),
+        "exit-127" => exit(127),
+        "hang" => loop {
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+        },
+        "flood" => {
+            let chunk = [b'x'; 4096];
+            for _ in 0..256 {
+                if !put(&chunk) {
+                    break;
+                }
+            }
+        }
+        "ok-but-exit-1" => {
+            say(&ok("changed"));
+            exit(1);
+        }
+        "killed" => {
+            // SAFETY: raising a signal on ourselves.
+            unsafe { libc::raise(libc::SIGKILL) };
+            exit(4);
+        }
+        other => {
+            eprintln!("fake-pkexec: unknown hosts mode {other:?}");
+            exit(2);
+        }
+    }
+    exit(0)
 }
 
 fn listen_v4(port: u16) -> libc::c_int {
