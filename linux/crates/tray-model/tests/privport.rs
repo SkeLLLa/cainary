@@ -567,3 +567,208 @@ fn policy_reader_accepts_harmless_variations() {
     assert!(accepts(&good.replace("PolicyKit Policy", "polkit Policy")));
     assert!(!accepts(&good.replace("PolicyKit Policy", "Evil Policy")));
 }
+
+/// The accepted grammar is a strict subset of XML 1.0: whatever we accept, expat must parse.
+fn expat_parses(text: &str) -> Option<bool> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("python3")
+        .args([
+            "-I",
+            "-c",
+            "import sys,xml.etree.ElementTree as E; E.fromstring(sys.stdin.buffer.read())",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(text.as_bytes())
+        .ok()?;
+    Some(child.wait().ok()?.success())
+}
+
+fn good_policy() -> String {
+    policy_text(ACTION_PACKAGED, HELPER_PACKAGED)
+}
+
+#[test]
+fn policy_reader_is_a_strict_subset_of_xml() {
+    let good = good_policy();
+    let bad: Vec<(&str, String)> = vec![
+        (
+            "garbage declaration",
+            good.replace(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+                "<?xml garbage?>",
+            ),
+        ),
+        (
+            "standalone",
+            good.replace(
+                "encoding=\"UTF-8\"",
+                "encoding=\"UTF-8\" standalone=\"yes\"",
+            ),
+        ),
+        ("other encoding", good.replace("UTF-8", "ISO-8859-1")),
+        (
+            "other version",
+            good.replace("version=\"1.0\"", "version=\"1.1\""),
+        ),
+        (
+            "mixed quotes",
+            good.replace("version=\"1.0\"", "version=\"1.0'"),
+        ),
+        ("space before declaration", format!(" {good}")),
+        ("newline before declaration", format!("\n{good}")),
+        (
+            "declaration twice",
+            good.replacen("<!DOCTYPE", "<?xml version=\"1.0\"?><!DOCTYPE", 1),
+        ),
+        (
+            "bad comment",
+            good.replace("<!-- a comment -->", "<!-- bad -- comment -->"),
+        ),
+        (
+            "comment ending ---",
+            good.replace("<!-- a comment -->", "<!-- a --->"),
+        ),
+        ("comment --->", good.replace("<!-- a comment -->", "<!--->")),
+        ("BOM", format!("\u{feff}{good}")),
+        ("control character", good.replace("Reserve", "Re\u{1}serve")),
+        ("U+FFFE", good.replace("Reserve", "Re\u{fffe}serve")),
+        ("]]> in text", good.replace("Reserve a", "Reserve ]]> a")),
+        (
+            "lt in attribute",
+            good.replace("<action id=\"", "<action x=\"a<b\" id=\""),
+        ),
+        ("unquoted attribute", good.replace("id=\"", "x=1 id=\"")),
+        (
+            "no space between attributes",
+            good.replace(
+                "<action id=\"ua.SkeLLLa.cAInary.bind-loopback-port\">",
+                "<action x=\"1\"id=\"ua.SkeLLLa.cAInary.bind-loopback-port\">",
+            ),
+        ),
+        (
+            "name with colon",
+            good.replace("<description>", "<a:description>")
+                .replace("</description>", "</a:description>"),
+        ),
+        (
+            "name starting with digit",
+            good.replace("<description>", "<1d>")
+                .replace("</description>", "</1d>"),
+        ),
+        ("numeric reference", good.replace("Reserve", "Res&#101;rve")),
+        ("unknown entity", good.replace("Reserve", "Res&nbsp;erve")),
+        ("bare ampersand", good.replace("Reserve", "Res & erve")),
+        ("two roots", format!("{good}<policyconfig/>")),
+        ("no root", "<?xml version=\"1.0\"?>".to_owned()),
+        (
+            "PI in prolog",
+            good.replace("<policyconfig>", "<?pi x?><policyconfig>"),
+        ),
+        (
+            "self-closing with space",
+            good.replace("<allow_any>no</allow_any>", "<allow_any / >"),
+        ),
+        (
+            "DOCTYPE twice",
+            good.replace("<policyconfig>", "<!DOCTYPE policyconfig><policyconfig>"),
+        ),
+    ];
+    for (why, text) in &bad {
+        assert!(!accepts(text), "accepted: {why}");
+    }
+}
+
+#[test]
+fn policy_reader_accepts_exactly_the_declaration_forms() {
+    let good = good_policy();
+    let bare = good.replace(" encoding=\"UTF-8\"", "");
+    let single = good.replace("\"1.0\" encoding=\"UTF-8\"", "'1.0' encoding='UTF-8'");
+    let none = good.split_once("?>\n").unwrap().1.to_owned();
+    for (why, text) in [("bare", bare), ("single quotes", single), ("none", none)] {
+        assert!(accepts(&text), "rejected: {why}");
+    }
+}
+
+#[test]
+fn everything_accepted_also_parses_in_expat() {
+    let good = good_policy();
+    let mut samples = vec![
+        good.clone(),
+        good.replace(" encoding=\"UTF-8\"", ""),
+        good.replace("\"1.0\" encoding=\"UTF-8\"", "'1.0' encoding='UTF-8'"),
+        good.replace(
+            "<allow_any>no</allow_any>",
+            "<!-- c --><allow_any> no </allow_any>",
+        ),
+        good.replace(
+            "<description>",
+            "<vendor>cAInary &amp; co &lt;3 &quot;x&quot; &apos;y&apos; &gt;</vendor><description>",
+        ),
+        good.replace("PolicyKit Policy", "polkit Policy"),
+        good.replace("<action id", "<action  other='x' id"),
+        good.replace("</policyconfig>", "</policyconfig>\n<!-- trailer -->\n"),
+    ];
+    for name in [
+        "ua.SkeLLLa.cAInary.policy",
+        "ua.SkeLLLa.cAInary.local.policy",
+    ] {
+        samples.push(repo_file(&format!("packaging/linux/polkit/{name}")));
+    }
+    let mut ran = false;
+    for (index, text) in samples.iter().enumerate() {
+        let ours = if index >= samples.len() - 2 {
+            let local = index == samples.len() - 1;
+            let (action, helper) = if local {
+                (privport::ACTION_LOCAL, privport::HELPER_LOCAL)
+            } else {
+                (ACTION_PACKAGED, HELPER_PACKAGED)
+            };
+            privport::check_policy_text(text, action, helper).is_ok()
+        } else {
+            accepts(text)
+        };
+        assert!(ours, "sample {index} should be accepted");
+        match expat_parses(text) {
+            Some(parsed) => {
+                ran = true;
+                assert!(
+                    parsed,
+                    "expat rejects a sample we accept (index {index}):\n{text}"
+                );
+            }
+            None => {
+                eprintln!("skipping the expat cross-check: no python3");
+                return;
+            }
+        }
+    }
+    assert!(ran);
+}
+
+#[test]
+fn nothing_expat_rejects_is_accepted_by_the_reader() {
+    // The other direction on the malformed cases: if python3 is there, each is malformed XML too
+    // or is rejected for its content, never accepted by us.
+    let good = good_policy();
+    for text in [
+        good.replace("<!-- a comment -->", "<!-- bad -- comment -->"),
+        good.replace(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+            "<?xml garbage?>",
+        ),
+    ] {
+        assert!(!accepts(&text));
+        if let Some(parsed) = expat_parses(&text) {
+            assert!(!parsed, "expat accepts what the test calls malformed");
+        }
+    }
+}

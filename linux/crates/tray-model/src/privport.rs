@@ -453,13 +453,16 @@ impl<'a> Reader<'a> {
         if !self.eat("<!--") {
             return Ok(false);
         }
-        match self.rest().find("-->") {
-            Some(end) => {
-                self.at += end + 3;
-                Ok(true)
-            }
-            None => Err("unterminated comment".into()),
+        let Some(end) = self.rest().find("-->") else {
+            return Err("unterminated comment".into());
+        };
+        // XML 1.0: no `--` inside, and no `--->` ending.
+        let body = &self.rest()[..end];
+        if body.contains("--") || body.ends_with('-') {
+            return Err("malformed comment".into());
         }
+        self.at += end + 3;
+        Ok(true)
     }
 
     fn name(&mut self) -> Result<String, String> {
@@ -467,7 +470,7 @@ impl<'a> Reader<'a> {
         while let Some(c) = self.rest().chars().next() {
             let ok = c.is_ascii_alphabetic()
                 || c == '_'
-                || (self.at > start && (c.is_ascii_digit() || matches!(c, '-' | '.' | ':')));
+                || (self.at > start && (c.is_ascii_digit() || matches!(c, '-' | '.')));
             if !ok {
                 break;
             }
@@ -495,16 +498,24 @@ impl<'a> Reader<'a> {
         decode_entities(raw)
     }
 
+    /// Only `<?xml version="1.0"?>` or the same with ` encoding="UTF-8"`, in either quote style,
+    /// and only at the very start; every other `<?` is refused later as a processing instruction.
     fn declaration(&mut self) -> Result<(), String> {
-        if self.rest().starts_with("<?xml") && self.rest()[5..].starts_with([' ', '\t', '\r', '\n'])
-        {
-            let end = self.rest().find("?>").ok_or("unterminated declaration")?;
-            if self.rest()[5..end].contains(['<', '&']) {
-                return Err("malformed declaration".into());
-            }
-            self.at += end + 2;
+        if !self.rest().starts_with("<?") {
+            return Ok(());
         }
-        Ok(())
+        for quote in ['"', '\''] {
+            let version = format!("<?xml version={quote}1.0{quote}");
+            let encoding = format!(" encoding={quote}UTF-8{quote}");
+            if self.eat(&version) {
+                self.eat(&encoding);
+                if self.eat("?>") {
+                    return Ok(());
+                }
+                break;
+            }
+        }
+        Err("unsupported XML declaration".into())
     }
 
     /// `<!DOCTYPE policyconfig PUBLIC "…" "…">` with the known ids and no internal subset.
@@ -592,6 +603,9 @@ impl<'a> Reader<'a> {
                 return Err("unexpected end of file".into());
             } else {
                 let end = self.rest().find('<').unwrap_or(self.rest().len());
+                if self.rest()[..end].contains("]]>") {
+                    return Err("']]>' in text".into());
+                }
                 children.push(Node::Text(decode_entities(&self.rest()[..end])?));
                 self.at += end;
             }
@@ -625,6 +639,15 @@ fn decode_entities(raw: &str) -> Result<String, String> {
 }
 
 fn parse_policy(text: &str) -> Result<Element, String> {
+    // XML 1.0 Char: no controls but tab, CR and LF, and no U+FFFE/U+FFFF; no byte order mark.
+    if text.starts_with('\u{feff}') {
+        return Err("byte order mark".into());
+    }
+    if text.chars().any(|c| {
+        (c < ' ' && !matches!(c, '\t' | '\r' | '\n')) || matches!(c, '\u{fffe}' | '\u{ffff}')
+    }) {
+        return Err("control character".into());
+    }
     let mut reader = Reader { text, at: 0 };
     reader.declaration()?;
     let mut seen_doctype = false;
