@@ -31,7 +31,7 @@ const UNPRIVILEGED_PORT_START: &str = "/proc/sys/net/ipv4/ip_unprivileged_port_s
 const POLICY_LIMIT: u64 = 64 << 10;
 
 /// One helper install location and the policy that authorises exactly it.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Candidate {
     pub helper: &'static str,
     pub policy: &'static str,
@@ -77,20 +77,59 @@ pub enum PrivState {
     /// No usable helper; the text says why, for the settings page.
     NoHelper(String),
     /// A trusted helper and policy are installed; asking would show the authentication prompt.
-    Ready { helper: PathBuf, policy: PathBuf },
+    Ready { helper: VerifiedHelper },
     /// The tray already holds the reserved sockets for this port.
     Held(u16),
     /// A trusted helper of another build: still used, but the user is told.
     Mismatch {
-        helper: PathBuf,
-        policy: PathBuf,
+        helper: VerifiedHelper,
         warn: String,
     },
 }
 
+/// A helper and policy that passed the trust walk. Only this module can make one, and
+/// `runner::bind_privileged` accepts nothing else; it walks again right before it runs pkexec.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifiedHelper {
+    candidate: Candidate,
+    env: TrustEnv,
+}
+
+impl VerifiedHelper {
+    pub fn helper_path(&self) -> &Path {
+        Path::new(self.candidate.helper)
+    }
+
+    pub fn policy_path(&self) -> &Path {
+        Path::new(self.candidate.policy)
+    }
+
+    /// Runs the whole trust walk again (helper, its chain, the policy and its content).
+    pub fn recheck(&self) -> Result<(), String> {
+        verify(&self.env, self.candidate)
+            .map(drop)
+            .map_err(|e| e.reason())
+    }
+}
+
+fn verify(env: &TrustEnv, candidate: Candidate) -> Result<VerifiedHelper, TrustError> {
+    check_helper(env, Path::new(candidate.helper))?;
+    let text = read_policy(env, Path::new(candidate.policy)).map_err(|e| match e {
+        TrustError::Missing => {
+            TrustError::Untrusted("the polkit policy for the helper is missing".into())
+        }
+        other => other,
+    })?;
+    check_policy_text(&text, candidate.action, candidate.helper).map_err(TrustError::Untrusted)?;
+    Ok(VerifiedHelper {
+        candidate,
+        env: env.clone(),
+    })
+}
+
 /// Where the trust walk starts and whose files count as trusted. Production is `/` and uid 0;
 /// tests build a fake tree in which "root" is their own uid.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TrustEnv {
     pub root: PathBuf,
     pub uid: u32,
@@ -315,75 +354,359 @@ pub fn read_policy(env: &TrustEnv, path: &Path) -> Result<String, TrustError> {
     String::from_utf8(bytes).or_else(|_| untrusted("the policy file isn't UTF-8"))
 }
 
-/// The text between `<tag>` and `</tag>` when the tag occurs exactly once, else `None`.
-fn only_element<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
-    let open = format!("<{tag}>");
-    let close = format!("</{tag}>");
-    if text.matches(&format!("<{tag}")).count() != 1 || text.matches(&close).count() != 1 {
-        return None;
-    }
-    let start = text.find(&open)? + open.len();
-    let end = text.find(&close)?;
-    (start <= end).then(|| text[start..end].trim())
+// ---- polkit policy: a small strict XML reader ---------------------------------------------------
+//
+// The policy decides who may run the root helper, so it is read structurally, not searched: a
+// tag that merely appears inside a comment, a processing instruction or an attribute must not
+// count. Only what a policy file needs is accepted (declaration, the polkit DOCTYPE, elements,
+// attributes, text, comments); everything else is an error.
+
+const DOCTYPE_PUBLIC: [&str; 2] = [
+    "-//freedesktop//DTD polkit Policy Configuration 1.0//EN",
+    "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN",
+];
+const DOCTYPE_SYSTEM: &str = "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd";
+const EXEC_PATH_KEY: &str = "org.freedesktop.policykit.exec.path";
+const MAX_DEPTH: usize = 12;
+
+#[derive(Debug)]
+struct Element {
+    name: String,
+    attrs: Vec<(String, String)>,
+    children: Vec<Node>,
 }
 
-fn strip_comments(text: &str) -> Option<String> {
-    let mut out = String::new();
-    let mut rest = text;
-    while let Some(start) = rest.find("<!--") {
-        out.push_str(&rest[..start]);
-        let end = rest[start..].find("-->")?;
-        rest = &rest[start + end + 3..];
+#[derive(Debug)]
+enum Node {
+    Element(Element),
+    Text(String),
+}
+
+impl Element {
+    fn attr(&self, name: &str) -> Option<&str> {
+        self.attrs
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+    }
+
+    fn elements<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a Element> {
+        self.children.iter().filter_map(move |node| match node {
+            Node::Element(e) if e.name == name => Some(e),
+            _ => None,
+        })
+    }
+
+    /// The element's text, if it holds nothing else.
+    fn only_text(&self) -> Option<String> {
+        let mut text = String::new();
+        for node in &self.children {
+            match node {
+                Node::Text(t) => text.push_str(t),
+                Node::Element(_) => return None,
+            }
+        }
+        Some(text.trim().to_owned())
+    }
+
+    fn count_named(&self, name: &str) -> usize {
+        usize::from(self.name == name)
+            + self
+                .children
+                .iter()
+                .map(|node| match node {
+                    Node::Element(e) => e.count_named(name),
+                    Node::Text(_) => 0,
+                })
+                .sum::<usize>()
+    }
+}
+
+struct Reader<'a> {
+    text: &'a str,
+    at: usize,
+}
+
+impl<'a> Reader<'a> {
+    fn rest(&self) -> &'a str {
+        &self.text[self.at..]
+    }
+
+    fn eat(&mut self, token: &str) -> bool {
+        let found = self.rest().starts_with(token);
+        if found {
+            self.at += token.len();
+        }
+        found
+    }
+
+    fn skip_space(&mut self) -> bool {
+        let before = self.at;
+        while self.rest().starts_with([' ', '\t', '\r', '\n']) {
+            self.at += 1;
+        }
+        self.at > before
+    }
+
+    /// Skips a `<!-- … -->` comment if one starts here.
+    fn comment(&mut self) -> Result<bool, String> {
+        if !self.eat("<!--") {
+            return Ok(false);
+        }
+        match self.rest().find("-->") {
+            Some(end) => {
+                self.at += end + 3;
+                Ok(true)
+            }
+            None => Err("unterminated comment".into()),
+        }
+    }
+
+    fn name(&mut self) -> Result<String, String> {
+        let start = self.at;
+        while let Some(c) = self.rest().chars().next() {
+            let ok = c.is_ascii_alphabetic()
+                || c == '_'
+                || (self.at > start && (c.is_ascii_digit() || matches!(c, '-' | '.' | ':')));
+            if !ok {
+                break;
+            }
+            self.at += 1;
+        }
+        if self.at == start {
+            Err("expected a name".into())
+        } else {
+            Ok(self.text[start..self.at].to_owned())
+        }
+    }
+
+    fn quoted(&mut self) -> Result<String, String> {
+        let quote = match self.rest().chars().next() {
+            Some(q @ ('"' | '\'')) => q,
+            _ => return Err("expected a quoted value".into()),
+        };
+        self.at += 1;
+        let end = self.rest().find(quote).ok_or("unterminated value")?;
+        let raw = &self.rest()[..end];
+        self.at += end + 1;
+        if raw.contains('<') {
+            return Err("'<' in an attribute value".into());
+        }
+        decode_entities(raw)
+    }
+
+    fn declaration(&mut self) -> Result<(), String> {
+        if self.rest().starts_with("<?xml") && self.rest()[5..].starts_with([' ', '\t', '\r', '\n'])
+        {
+            let end = self.rest().find("?>").ok_or("unterminated declaration")?;
+            if self.rest()[5..end].contains(['<', '&']) {
+                return Err("malformed declaration".into());
+            }
+            self.at += end + 2;
+        }
+        Ok(())
+    }
+
+    /// `<!DOCTYPE policyconfig PUBLIC "…" "…">` with the known ids and no internal subset.
+    fn doctype(&mut self) -> Result<(), String> {
+        self.at += "<!DOCTYPE".len();
+        let bad = || "unsupported DOCTYPE".to_owned();
+        if !self.skip_space() || self.name()? != "policyconfig" || !self.skip_space() {
+            return Err(bad());
+        }
+        if self.name()? != "PUBLIC" || !self.skip_space() {
+            return Err(bad());
+        }
+        let public = self.quoted().map_err(|_| bad())?;
+        if !self.skip_space() {
+            return Err(bad());
+        }
+        let system = self.quoted().map_err(|_| bad())?;
+        self.skip_space();
+        if !DOCTYPE_PUBLIC.contains(&public.as_str()) || system != DOCTYPE_SYSTEM || !self.eat(">")
+        {
+            return Err(bad());
+        }
+        Ok(())
+    }
+
+    fn element(&mut self, depth: usize) -> Result<Element, String> {
+        if depth > MAX_DEPTH {
+            return Err("nested too deeply".into());
+        }
+        if !self.eat("<") {
+            return Err("expected an element".into());
+        }
+        let name = self.name()?;
+        let mut attrs: Vec<(String, String)> = Vec::new();
+        loop {
+            let spaced = self.skip_space();
+            if self.eat("/>") {
+                return Ok(Element {
+                    name,
+                    attrs,
+                    children: Vec::new(),
+                });
+            }
+            if self.eat(">") {
+                break;
+            }
+            if !spaced {
+                return Err("malformed tag".into());
+            }
+            let key = self.name()?;
+            self.skip_space();
+            if !self.eat("=") {
+                return Err("expected '='".into());
+            }
+            self.skip_space();
+            let value = self.quoted()?;
+            if attrs.iter().any(|(k, _)| *k == key) {
+                return Err("duplicate attribute".into());
+            }
+            attrs.push((key, value));
+        }
+        let mut children = Vec::new();
+        loop {
+            if self.eat("</") {
+                let close = self.name()?;
+                self.skip_space();
+                if close != name || !self.eat(">") {
+                    return Err("mismatched closing tag".into());
+                }
+                return Ok(Element {
+                    name,
+                    attrs,
+                    children,
+                });
+            }
+            if self.comment()? {
+                continue;
+            }
+            if self.rest().starts_with("<!") || self.rest().starts_with("<?") {
+                return Err("unsupported markup".into());
+            }
+            if self.rest().starts_with('<') {
+                children.push(Node::Element(self.element(depth + 1)?));
+            } else if self.rest().is_empty() {
+                return Err("unexpected end of file".into());
+            } else {
+                let end = self.rest().find('<').unwrap_or(self.rest().len());
+                children.push(Node::Text(decode_entities(&self.rest()[..end])?));
+                self.at += end;
+            }
+        }
+    }
+}
+
+/// Only the five predefined entities; any other `&` is refused.
+fn decode_entities(raw: &str) -> Result<String, String> {
+    let mut out = String::with_capacity(raw.len());
+    let mut rest = raw;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 1..];
+        let end = after
+            .find(';')
+            .filter(|e| *e <= 4)
+            .ok_or("unsupported entity")?;
+        out.push(match &after[..end] {
+            "amp" => '&',
+            "lt" => '<',
+            "gt" => '>',
+            "quot" => '"',
+            "apos" => '\'',
+            _ => return Err("unsupported entity".into()),
+        });
+        rest = &after[end + 1..];
     }
     out.push_str(rest);
-    Some(out)
+    Ok(out)
+}
+
+fn parse_policy(text: &str) -> Result<Element, String> {
+    let mut reader = Reader { text, at: 0 };
+    reader.declaration()?;
+    let mut seen_doctype = false;
+    loop {
+        reader.skip_space();
+        if reader.comment()? {
+            continue;
+        }
+        if reader.rest().starts_with("<!DOCTYPE") && !seen_doctype {
+            seen_doctype = true;
+            reader.doctype()?;
+        } else if reader.rest().starts_with("<!") || reader.rest().starts_with("<?") {
+            return Err("unsupported markup".into());
+        } else {
+            break;
+        }
+    }
+    let root = reader.element(0)?;
+    loop {
+        reader.skip_space();
+        if reader.comment()? {
+            continue;
+        }
+        if reader.rest().is_empty() {
+            return Ok(root);
+        }
+        return Err("content after the policy".into());
+    }
 }
 
 /// Checks that `text` is a polkit policy that authorises exactly `action` for exactly `helper`,
-/// only for an active local session after administrator authentication. The parser is
-/// deliberately narrow: anything it doesn't understand is a mismatch.
+/// only for an active local session after administrator authentication. Anything the reader
+/// doesn't understand is a mismatch.
 pub fn check_policy_text(text: &str, action: &str, helper: &str) -> Result<(), String> {
     let mismatch = |why: &str| Err(format!("the polkit policy doesn't match: {why}"));
-    let Some(text) = strip_comments(text) else {
-        return mismatch("unterminated comment");
+    let root = match parse_policy(text) {
+        Ok(root) => root,
+        Err(why) => return mismatch(&why),
     };
-    if text.contains("<![CDATA[") || text.contains("<!ENTITY") {
-        return mismatch("unsupported markup");
+    if root.name != "policyconfig" {
+        return mismatch("the root isn't <policyconfig>");
     }
-    if text.matches("<action ").count() + text.matches("<action>").count() != 1
-        || text.matches("</action>").count() != 1
+    if root
+        .children
+        .iter()
+        .any(|n| matches!(n, Node::Text(t) if !t.trim().is_empty()))
     {
+        return mismatch("text outside any element");
+    }
+    // Exactly one action in the whole file, and it is a direct child of the root.
+    if root.count_named("action") != 1 || root.elements("action").count() != 1 {
         return mismatch("expected exactly one action");
     }
-    if !text.contains(&format!("<action id=\"{action}\">")) {
+    let Some(entry) = root.elements("action").next() else {
+        return mismatch("expected exactly one action");
+    };
+    if entry.attr("id") != Some(action) {
         return mismatch("wrong action id");
     }
-    let start = text.find("<action ").unwrap_or(0);
-    let end = text.find("</action>").unwrap_or(0);
-    if start >= end {
-        return mismatch("malformed action");
-    }
-    let body = &text[start..end];
+    let mut defaults = entry.elements("defaults");
+    let (Some(defaults), None) = (defaults.next(), defaults.next()) else {
+        return mismatch("defaults must appear once");
+    };
     for (tag, want) in [
         ("allow_any", "no"),
         ("allow_inactive", "no"),
         ("allow_active", "auth_admin"),
     ] {
-        match only_element(body, tag) {
-            Some(value) if value == want => {}
-            Some(_) => return mismatch(&format!("{tag} must be {want}")),
-            None => return mismatch(&format!("{tag} must appear once")),
+        let mut found = defaults.elements(tag);
+        match (found.next(), found.next()) {
+            (Some(e), None) if e.only_text().as_deref() == Some(want) => {}
+            (Some(_), None) => return mismatch(&format!("{tag} must be {want}")),
+            _ => return mismatch(&format!("{tag} must appear once")),
         }
     }
-    let key = "<annotate key=\"org.freedesktop.policykit.exec.path\">";
-    if body.matches("org.freedesktop.policykit.exec.path").count() != 1 || !body.contains(key) {
+    let mut paths = entry
+        .elements("annotate")
+        .filter(|e| e.attr("key") == Some(EXEC_PATH_KEY));
+    let (Some(path), None) = (paths.next(), paths.next()) else {
         return mismatch("exec.path must appear once");
-    }
-    let after = &body[body.find(key).unwrap_or(0) + key.len()..];
-    let Some(value) = after.split("</annotate>").next().map(str::trim) else {
-        return mismatch("malformed exec.path");
     };
-    if value != helper {
+    if path.only_text().as_deref() != Some(helper) {
         return mismatch("exec.path is not the installed helper");
     }
     Ok(())
@@ -423,9 +746,35 @@ pub fn check_version(output: &str, expected_version: &str) -> VersionCheck {
     }
 }
 
-/// Works out the state for `port`. `held` is whether the tray already holds the sockets;
-/// `version` runs `<helper> --version` (the caller decides how, normally through the runner).
+/// Works out the state for `port` against the real system. `held` is whether the tray already
+/// holds the sockets; `version` runs `<helper> --version` (unprivileged, directly).
 pub fn assess(
+    port: u16,
+    held: bool,
+    version: impl Fn(&Path) -> Result<String, String>,
+) -> PrivState {
+    assess_with(
+        port,
+        held,
+        unprivileged_port_start(),
+        &TrustEnv::system(),
+        version,
+    )
+}
+
+/// [`assess`] against a fake tree and an injected threshold, for tests.
+#[cfg(any(test, feature = "test-fakes"))]
+pub fn assess_in(
+    port: u16,
+    held: bool,
+    unprivileged_start: u32,
+    env: &TrustEnv,
+    version: impl Fn(&Path) -> Result<String, String>,
+) -> PrivState {
+    assess_with(port, held, unprivileged_start, env, version)
+}
+
+fn assess_with(
     port: u16,
     held: bool,
     unprivileged_start: u32,
@@ -440,35 +789,23 @@ pub fn assess(
     }
     let mut first_problem = None;
     for candidate in CANDIDATES {
-        let helper = PathBuf::from(candidate.helper);
-        let policy = PathBuf::from(candidate.policy);
-        match check_helper(env, &helper) {
-            Ok(()) => {}
+        let verified = match verify(env, candidate) {
+            Ok(verified) => verified,
             Err(TrustError::Missing) => continue,
             Err(e) => {
                 first_problem.get_or_insert(format!("{}: {}", candidate.helper, e.reason()));
                 continue;
             }
-        }
-        let policy_ok = match read_policy(env, &policy) {
-            Ok(text) => check_policy_text(&text, candidate.action, candidate.helper),
-            Err(TrustError::Missing) => Err("the polkit policy for the helper is missing".into()),
-            Err(e) => Err(e.reason()),
         };
-        if let Err(why) = policy_ok {
-            first_problem.get_or_insert(why);
-            continue;
-        }
-        match version(&helper) {
+        match version(verified.helper_path()) {
             Err(why) => {
                 first_problem.get_or_insert(format!("couldn't ask the helper its version: {why}"));
             }
             Ok(output) => match check_version(&output, env!("CARGO_PKG_VERSION")) {
-                VersionCheck::Match => return PrivState::Ready { helper, policy },
+                VersionCheck::Match => return PrivState::Ready { helper: verified },
                 VersionCheck::Mismatch(warn) => {
                     return PrivState::Mismatch {
-                        helper,
-                        policy,
+                        helper: verified,
                         warn,
                     };
                 }

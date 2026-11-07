@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crate::privport::{self, HelperError, Reply, ReplyError};
+use crate::privport::{self, HelperError, Reply, ReplyError, VerifiedHelper};
 use crate::report::{DecodeError, Report, SCHEMA};
 
 /// How long and how much the CLI may run and print.
@@ -1183,6 +1183,35 @@ fn seqpacket_pair() -> io::Result<(OwnedFd, OwnedFd)> {
 /// socket is checked here against the port that was asked for, and success needs both a valid
 /// reply and a clean exit. Whatever is rejected is closed.
 pub fn bind_privileged(
+    helper: &VerifiedHelper,
+    port: u16,
+    deadline: Duration,
+) -> Result<Reserved, BindError> {
+    // The files may have changed since they were verified; look again right before running them.
+    helper
+        .recheck()
+        .map_err(|why| BindError::Rejected(format!("the helper is no longer trusted: {why}")))?;
+    bind_with(
+        std::path::Path::new(PKEXEC),
+        helper.helper_path(),
+        port,
+        deadline,
+    )
+}
+
+/// [`bind_privileged`] with any pkexec and helper, so tests can substitute the fake. It exists
+/// only in test builds; a guard keeps production code from naming it.
+#[cfg(any(test, feature = "test-fakes"))]
+pub fn bind_privileged_with(
+    pkexec: &std::path::Path,
+    helper: &std::path::Path,
+    port: u16,
+    deadline: Duration,
+) -> Result<Reserved, BindError> {
+    bind_with(pkexec, helper, port, deadline)
+}
+
+fn bind_with(
     pkexec: &std::path::Path,
     helper: &std::path::Path,
     port: u16,
@@ -1348,9 +1377,6 @@ fn receive_reply(socket: RawFd, port: u16) -> Received {
             _ => Received::Closed,
         };
     }
-    if n == 0 {
-        return Received::Closed;
-    }
     let mut fds: Vec<OwnedFd> = Vec::new();
     let mut unexpected = false;
     // SAFETY: the cmsg macros walk the control buffer the kernel just filled in.
@@ -1369,6 +1395,17 @@ fn receive_reply(socket: RawFd, port: u16) -> Received {
             }
             cmsg = libc::CMSG_NXTHDR(&message, cmsg);
         }
+    }
+    // Descriptors can ride on an empty message too: they are ours (and closed on any rejection)
+    // before the payload is looked at.
+    if n == 0 {
+        return if fds.is_empty() && !unexpected {
+            Received::Closed
+        } else {
+            Received::Message(Err(BindError::Rejected(
+                "an empty message with attachments".into(),
+            )))
+        };
     }
     let rejected = |why: &str| Received::Message(Err(BindError::Rejected(why.into())));
     if message.msg_flags & libc::MSG_TRUNC != 0 {
@@ -1424,9 +1461,10 @@ fn check_sockets(
     for fd in fds {
         let raw = fd.as_raw_fd();
         let int_option = |level, name| socket_option(raw, level, name);
-        let stream = int_option(libc::SOL_SOCKET, libc::SO_TYPE) == Some(libc::SOCK_STREAM);
-        let listening = int_option(libc::SOL_SOCKET, libc::SO_ACCEPTCONN) == Some(1);
-        if !stream || !listening {
+        let kind = int_option(libc::SOL_SOCKET, libc::SO_TYPE);
+        let listening = int_option(libc::SOL_SOCKET, libc::SO_ACCEPTCONN);
+        let protocol = int_option(libc::SOL_SOCKET, libc::SO_PROTOCOL);
+        if !is_listening_tcp(kind, listening, protocol) {
             return Err(BindError::Rejected("not a listening TCP socket".into()));
         }
         match local_address(raw) {
@@ -1461,6 +1499,15 @@ fn check_sockets(
     let warning = ipv6_unavailable
         .then(|| "IPv6 loopback is unavailable; only 127.0.0.1 is reserved".to_owned());
     Ok(Reserved { v4, v6, warning })
+}
+
+/// Stream, listening, TCP: all three must be known and right, so a failed query rejects.
+fn is_listening_tcp(
+    kind: Option<libc::c_int>,
+    listening: Option<libc::c_int>,
+    protocol: Option<libc::c_int>,
+) -> bool {
+    kind == Some(libc::SOCK_STREAM) && listening == Some(1) && protocol == Some(libc::IPPROTO_TCP)
 }
 
 const LOOPBACK_V6: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
@@ -1522,5 +1569,27 @@ fn local_address(fd: RawFd) -> Option<Local> {
             })
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_listening_tcp;
+
+    #[test]
+    fn only_a_listening_tcp_stream_passes() {
+        let (stream, tcp, sctp) = (libc::SOCK_STREAM, libc::IPPROTO_TCP, libc::IPPROTO_SCTP);
+        assert!(is_listening_tcp(Some(stream), Some(1), Some(tcp)));
+        assert!(!is_listening_tcp(Some(stream), Some(1), Some(sctp)));
+        assert!(!is_listening_tcp(
+            Some(libc::SOCK_DGRAM),
+            Some(1),
+            Some(tcp)
+        ));
+        assert!(!is_listening_tcp(Some(stream), Some(0), Some(tcp)));
+        // A failed getsockopt never passes.
+        assert!(!is_listening_tcp(None, Some(1), Some(tcp)));
+        assert!(!is_listening_tcp(Some(stream), None, Some(tcp)));
+        assert!(!is_listening_tcp(Some(stream), Some(1), None));
     }
 }

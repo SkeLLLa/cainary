@@ -56,6 +56,11 @@ fn main() {
             let both = listen_v4(port);
             reply(&ok(2), &[both, both]);
         }
+        "empty-with-fds" => {
+            let one = listen_v4(port);
+            reply("", &[one, one]);
+        }
+        "sctp" => reply(&ok(2), &[listen_sctp(port), listen_v6(port)]),
         "many-sockets" => {
             let one = listen_v4(port);
             reply(&ok(2), &[one; 40]);
@@ -126,9 +131,27 @@ fn listen_on(family: libc::c_int, address: [u8; 16], port: u16, listen: bool) ->
     fd
 }
 
+/// A listening SCTP stream socket on 127.0.0.1. Exits 77 when the kernel has no SCTP.
+fn listen_sctp(port: u16) -> libc::c_int {
+    let mut address = [0; 16];
+    address[..4].copy_from_slice(&[127, 0, 0, 1]);
+    let fd = socket_with(libc::AF_INET, libc::SOCK_STREAM, libc::IPPROTO_SCTP);
+    bind_to(fd, libc::AF_INET, address, port);
+    start_listening(fd);
+    fd
+}
+
 fn socket(family: libc::c_int, kind: libc::c_int) -> libc::c_int {
+    socket_with(family, kind, 0)
+}
+
+fn socket_with(family: libc::c_int, kind: libc::c_int, protocol: libc::c_int) -> libc::c_int {
     // SAFETY: plain socket creation.
-    let fd = unsafe { libc::socket(family, kind | libc::SOCK_CLOEXEC, 0) };
+    let fd = unsafe { libc::socket(family, kind | libc::SOCK_CLOEXEC, protocol) };
+    if fd < 0 && protocol != 0 {
+        eprintln!("fake-pkexec: protocol {protocol} unavailable");
+        exit(77);
+    }
     if fd < 0 {
         eprintln!("fake-pkexec: socket: {}", std::io::Error::last_os_error());
         exit(3);

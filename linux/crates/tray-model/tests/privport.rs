@@ -95,7 +95,7 @@ fn version_ok(_: &Path) -> Result<String, String> {
 }
 
 fn state(tree: &Tree, version: impl Fn(&Path) -> Result<String, String>) -> PrivState {
-    privport::assess(443, false, 1024, &tree.env, version)
+    privport::assess_in(443, false, 1024, &tree.env, version)
 }
 
 fn no_helper_reason(state: PrivState) -> String {
@@ -112,28 +112,32 @@ fn trust_ok() {
         privport::check_helper(&tree.env, Path::new(HELPER_PACKAGED)),
         Ok(())
     );
-    assert_eq!(
-        state(&tree, version_ok),
-        PrivState::Ready {
-            helper: PathBuf::from(HELPER_PACKAGED),
-            policy: PathBuf::from(POLICY_PACKAGED),
+    match state(&tree, version_ok) {
+        PrivState::Ready { helper } => {
+            assert_eq!(helper.helper_path(), Path::new(HELPER_PACKAGED));
+            assert_eq!(helper.policy_path(), Path::new(POLICY_PACKAGED));
+            assert_eq!(helper.recheck(), Ok(()));
+            // A policy edited after verification fails the re-walk.
+            std::fs::write(tree.path(POLICY_PACKAGED), "<policyconfig/>").unwrap();
+            assert!(helper.recheck().is_err());
         }
-    );
+        other => panic!("{other:?}"),
+    }
 }
 
 #[test]
 fn states_for_unneeded_and_held_ports() {
     let tree = tree("states");
     assert_eq!(
-        privport::assess(8080, false, 1024, &tree.env, version_ok),
+        privport::assess_in(8080, false, 1024, &tree.env, version_ok),
         PrivState::NotNeeded
     );
     assert_eq!(
-        privport::assess(80, true, 1024, &tree.env, version_ok),
+        privport::assess_in(80, true, 1024, &tree.env, version_ok),
         PrivState::Held(80)
     );
     assert_eq!(
-        privport::assess(80, false, 80, &tree.env, version_ok),
+        privport::assess_in(80, false, 80, &tree.env, version_ok),
         PrivState::NotNeeded
     );
     assert!(privport::needs_privilege_with(1023, 1024));
@@ -451,4 +455,115 @@ fn real_helper_output_formats_still_parse() {
         )
         .is_ok()
     );
+}
+
+fn accepts(text: &str) -> bool {
+    privport::check_policy_text(text, ACTION_PACKAGED, HELPER_PACKAGED).is_ok()
+}
+
+#[test]
+fn policy_reader_rejects_hidden_and_misplaced_actions() {
+    let good = policy_text(ACTION_PACKAGED, HELPER_PACKAGED);
+    assert!(accepts(&good));
+    let start = good.find("  <action").unwrap();
+    let end = good.find("</action>").unwrap() + "</action>\n".len();
+    let action = &good[start..end];
+    let without = format!("{}{}", &good[..start], &good[end..]);
+    let wrap = |inner: &str| without.replace("</policyconfig>", &format!("{inner}</policyconfig>"));
+
+    // Inside a processing instruction, a comment, CDATA, an attribute value.
+    assert!(!accepts(&wrap(&format!("<?audit {action} ?>"))));
+    assert!(!accepts(&wrap(&format!("<!-- {action} -->"))));
+    assert!(!accepts(&wrap(&format!("<![CDATA[{action}]]>"))));
+    assert!(!accepts(&wrap(&format!(
+        "<vendor note=\"{}\"/>",
+        action.replace('"', "&quot;")
+    ))));
+    // Nested in another element, or duplicated.
+    assert!(!accepts(&wrap(&format!("<vendor>{action}</vendor>"))));
+    assert!(!accepts(&good.replace(
+        "</policyconfig>",
+        &format!("{action}</policyconfig>")
+    )));
+    // Wrong root, text outside elements, trailing content, a second root.
+    assert!(!accepts(&good.replace("policyconfig>", "other>")));
+    assert!(!accepts(
+        &good.replace("<policyconfig>", "<policyconfig>stray")
+    ));
+    assert!(!accepts(&format!("{good}<policyconfig/>")));
+    assert!(!accepts(&format!("{good}junk")));
+    // Entity and DOCTYPE tricks.
+    assert!(!accepts(&good.replace(
+        "<policyconfig>",
+        "<!DOCTYPE x [<!ENTITY e \"no\">]><policyconfig>"
+    )));
+    assert!(!accepts(&good.replace(
+        "<!DOCTYPE policyconfig",
+        "<!DOCTYPE policyconfig [<!ENTITY e \"x\">]"
+    )));
+    assert!(!accepts(&good.replace("<allow_any>no<", "<allow_any>&e;<")));
+    assert!(!accepts(
+        &good.replace("<allow_any>no<", "<allow_any>&#110;o<")
+    ));
+    assert!(!accepts(
+        &good.replace("<allow_any>no<", "<allow_any>n&amp;o<")
+    ));
+    assert!(!accepts(
+        &good.replace("<?xml version", "<?pi?><?xml version")
+    ));
+    // Structure inside the action.
+    assert!(!accepts(&good.replace(
+        "<allow_any>no</allow_any>",
+        "<allow_any>no</allow_any><allow_any>no</allow_any>"
+    )));
+    assert!(!accepts(&good.replace(
+        "<allow_any>no</allow_any>",
+        "<x><allow_any>no</allow_any></x>"
+    )));
+    assert!(!accepts(&good.replace(
+        "<defaults>",
+        "<defaults><allow_active>yes</allow_active>"
+    )));
+    assert!(!accepts(&good.replace(
+        "<annotate",
+        "<annotate key=\"org.freedesktop.policykit.exec.path\">/bin/sh</annotate><annotate"
+    )));
+    assert!(!accepts(
+        &good.replace("<policyconfig>", "<policyconfig><action id=\"y\"/>")
+    ));
+    assert!(!accepts(&good.replace("</action>", "</actio>")));
+    assert!(!accepts(
+        &good.replace("<action id", "<action id=\"dup\" id")
+    ));
+}
+
+#[test]
+fn policy_reader_accepts_harmless_variations() {
+    let good = policy_text(ACTION_PACKAGED, HELPER_PACKAGED);
+    // Attribute quoting and whitespace, extra attributes, comments, other elements, no prolog.
+    assert!(accepts(&good.replace(
+        &format!("<action id=\"{ACTION_PACKAGED}\">"),
+        &format!("<action  id = '{ACTION_PACKAGED}'\n   other=\"x\" >")
+    )));
+    assert!(accepts(&good.replace(
+        "key=\"org.freedesktop.policykit.exec.path\"",
+        "\n key='org.freedesktop.policykit.exec.path'"
+    )));
+    assert!(accepts(&good.replace(
+        "<allow_any>no</allow_any>",
+        "<!-- c --><allow_any> no </allow_any>"
+    )));
+    assert!(accepts(&good.replace(
+        "<description>",
+        "<vendor>cAInary &amp; co</vendor><description>"
+    )));
+    assert!(accepts(
+        good.split_once("<policyconfig>")
+            .map(|(_, r)| format!("<policyconfig>{r}"))
+            .unwrap()
+            .as_str()
+    ));
+    // The two public ids polkit has shipped.
+    assert!(accepts(&good.replace("PolicyKit Policy", "polkit Policy")));
+    assert!(!accepts(&good.replace("PolicyKit Policy", "Evil Policy")));
 }

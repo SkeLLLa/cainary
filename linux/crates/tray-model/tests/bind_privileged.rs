@@ -31,7 +31,7 @@ fn bind(mode: &str, port: u16) -> Result<Reserved, BindError> {
 }
 
 fn bind_within(mode: &str, port: u16, deadline: Duration) -> Result<Reserved, BindError> {
-    runner::bind_privileged(&fake(mode), Path::new(HELPER), port, deadline)
+    runner::bind_privileged_with(&fake(mode), Path::new(HELPER), port, deadline)
 }
 
 fn rejected(mode: &str) -> String {
@@ -161,11 +161,27 @@ fn ipv6_unavailable_warns() {
 
 #[test]
 fn missing_pkexec_is_a_spawn_error() {
-    let result = runner::bind_privileged(
+    let result = runner::bind_privileged_with(
         Path::new("/nonexistent/pkexec"),
         Path::new(HELPER),
         4000,
         Duration::from_secs(1),
     );
     assert!(matches!(result, Err(BindError::Spawn(_))), "{result:?}");
+}
+
+#[test]
+fn rejects_sctp() {
+    match bind("sctp", free_port()) {
+        Err(BindError::Rejected(why)) => assert!(why.contains("listening TCP"), "{why}"),
+        Err(BindError::Failed { code: Some(77), .. }) => {
+            eprintln!("skipping: the kernel has no SCTP");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn rejects_empty_message_with_descriptors() {
+    assert!(rejected("empty-with-fds").contains("empty message"));
 }

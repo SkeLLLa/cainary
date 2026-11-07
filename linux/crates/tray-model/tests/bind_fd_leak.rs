@@ -19,6 +19,8 @@ fn rejections_close_every_received_descriptor() {
         "extra-socket",
         "three-extra-sockets",
         "many-sockets",
+        "empty-with-fds",
+        "sctp",
         "wildcard",
         "udp",
         "not-listening",
@@ -37,7 +39,7 @@ fn rejections_close_every_received_descriptor() {
         let link = dir.join(mode);
         let _ = std::fs::remove_file(&link);
         symlink(env!("CARGO_BIN_EXE_fake-pkexec"), &link).unwrap();
-        let result = runner::bind_privileged(
+        let result = runner::bind_privileged_with(
             &link,
             Path::new("/usr/libexec/cainary/cainary-bind-helper"),
             free_port(),

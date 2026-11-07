@@ -511,6 +511,27 @@ fn guard_l3b_privileged_port_plumbing_is_confined() {
             }
         }
     }
+    // The test-only entry points are defined once, behind the test cfg, and used nowhere else.
+    let all: Vec<String> = sources()
+        .iter()
+        .map(|s| s.code.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect();
+    for (name, signature) in [
+        ("bind_privileged_with", "pub fn bind_privileged_with("),
+        ("assess_in", "pub fn assess_in("),
+    ] {
+        let uses: usize = all.iter().map(|code| code.matches(name).count()).sum();
+        let gated = all.iter().any(|code| {
+            code.contains(&format!(
+                "#[cfg(any(test, feature = \"test-fakes\"))] {signature}"
+            ))
+        });
+        if uses != 1 || !gated {
+            violations.push(format!(
+                "{name} must be defined once under #[cfg(any(test, feature = \"test-fakes\"))] and not used by production code ({uses} mentions)"
+            ));
+        }
+    }
     if argv_sites != 1 {
         violations.push(format!(
             "{RUNNER}: the pkexec argv must be spelled once, found {argv_sites}"
@@ -791,4 +812,93 @@ mod guard_helpers {
             "stdin.write(self.stdin_bytes); file.write(other_bytes)"
         ));
     }
+}
+
+/// `test-fakes` builds a fake pkexec. It must never reach a package: no release recipe, CI file or
+/// packaging list names the feature or the binary, and no manifest turns it on outside the
+/// tray-model's own dev-dependency.
+#[test]
+fn guard_l3c_test_fakes_cannot_ship() {
+    let linux = linux_root();
+    let repo = linux.parent().expect("linux/ is under the repository root");
+    let mut violations = Vec::new();
+
+    fn walk(dir: &Path, found: &mut Vec<PathBuf>) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, found);
+            } else {
+                found.push(path);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    for dir in ["packaging", ".github", "scripts"] {
+        walk(&repo.join(dir), &mut files);
+    }
+    for name in ["Makefile", "mise.toml", "mise.ci.toml", "packslip.toml"] {
+        files.push(repo.join(name));
+    }
+    for path in files {
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        for word in ["test-fakes", "fake-pkexec"] {
+            if text.contains(word) {
+                violations.push(format!(
+                    "{}: mentions {word:?}",
+                    path.strip_prefix(repo).unwrap_or(&path).display()
+                ));
+            }
+        }
+    }
+
+    // Manifests: the feature is not a default, and only the tray-model's dev-dependency uses it.
+    let mut manifests = vec![linux.join("Cargo.toml"), repo.join("Cargo.toml")];
+    for root in [linux.join("crates"), repo.join("crates")] {
+        if let Ok(entries) = fs::read_dir(root) {
+            manifests.extend(entries.flatten().map(|e| e.path().join("Cargo.toml")));
+        }
+    }
+    for path in manifests {
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let manifest: Value = toml::from_str(&text).expect("manifest parses");
+        if !path.ends_with("crates/tray-model/Cargo.toml") {
+            if text.contains("test-fakes") {
+                violations.push(format!("{}: mentions test-fakes", path.display()));
+            }
+            continue;
+        }
+        let default = manifest
+            .get("features")
+            .and_then(|f| f.get("default"))
+            .map(|d| d.to_string())
+            .unwrap_or_default();
+        if default.contains("test-fakes") {
+            violations.push("tray-model: test-fakes is a default feature".into());
+        }
+        for table in ["dependencies", "build-dependencies"] {
+            if manifest
+                .get(table)
+                .is_some_and(|t| t.to_string().contains("test-fakes"))
+            {
+                violations.push(format!("tray-model: test-fakes enabled in [{table}]"));
+            }
+        }
+    }
+    let assets = fs::read_to_string(repo.join("packaging/linux-assets.txt")).unwrap_or_default();
+    if assets.contains("fake") {
+        violations.push("packaging/linux-assets.txt lists a fake".into());
+    }
+    assert!(
+        violations.is_empty(),
+        "L3c guard failed:\n  {}",
+        violations.join("\n  ")
+    );
 }
