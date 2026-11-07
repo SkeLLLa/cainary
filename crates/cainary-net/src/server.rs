@@ -35,6 +35,10 @@ const PEER_LOOKUPS: u32 = 3;
 /// The refusal's message, in the 403 body and in the `error` line.
 pub const PEER_REFUSED: &str = "connection from another local user refused";
 
+/// The same refusal when the client couldn't be identified: not found, two matches or an
+/// unreadable table. A vanished client isn't blamed on another user.
+pub const PEER_UNCONFIRMED: &str = "connection refused: couldn't confirm it comes from this user";
+
 /// Who may connect (design D3): the check that a client's socket belongs to the user running
 /// the collector. Nothing outside the tests can pick `Off` or `Fake`: the CLI builds its
 /// `Config` from `Tunables::default()` and has no flag or variable for either.
@@ -787,18 +791,20 @@ impl Wire for Clipped {
     }
 }
 
-/// Whether the client's socket belongs to the user running the collector. Anything but a single
-/// socket with our uid is a no: another user, no match, two matches, an unreadable table.
-fn peer_is_us(stream: &TcpStream, sh: &Shared) -> bool {
+/// Whether the client's socket belongs to the user running the collector, else the refusal's
+/// message: another user's socket, or anything that can't be confirmed (no match, two matches, an
+/// unreadable table).
+fn peer_check(stream: &TcpStream, sh: &Shared) -> Result<(), &'static str> {
     let found = match sh.t.peer_uid {
-        PeerUid::Off => return true,
+        PeerUid::Off => return Ok(()),
         PeerUid::Fake(l) => Ok(l),
         PeerUid::FakeUnreadable => Err(()),
         PeerUid::System => system_lookup(stream, &sh.server_ports),
     };
-    match found {
-        Ok(Lookup::Uid(uid)) => own_uid() == Some(uid),
-        Ok(Lookup::NotFound | Lookup::Ambiguous) | Err(()) => false,
+    match (found, own_uid()) {
+        (Ok(Lookup::Uid(uid)), Some(own)) if uid == own => Ok(()),
+        (Ok(Lookup::Uid(_)), Some(_)) => Err(PEER_REFUSED),
+        _ => Err(PEER_UNCONFIRMED),
     }
 }
 
@@ -846,20 +852,20 @@ fn system_lookup(_: &TcpStream, _: &[u16]) -> Result<Lookup, ()> {
 
 /// The refusal: a plain 403 without reading the request, or on a TLS port just a close, with
 /// no handshake. One rate-limited `error` line either way.
-fn refuse_peer(stream: TcpStream, sh: &Shared) {
+fn refuse_peer(stream: TcpStream, sh: &Shared, message: &str) {
     if sh.tls_hosts.is_empty() {
         let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
-        let r = Response::error(403, PEER_REFUSED);
+        let r = Response::error(403, message);
         let _ = (&stream).write_all(&r.to_bytes());
     }
     let _ = stream.shutdown(Shutdown::Both);
-    sh.emit_error(ErrorEvent::http(403, None, None, PEER_REFUSED));
+    sh.emit_error(ErrorEvent::http(403, None, None, message));
 }
 
 /// One accepted connection, in its own thread: plain, or the takeover's TLS handshake first.
 fn connection(stream: TcpStream, accepted_at: Instant, sh: &Shared) {
-    if !peer_is_us(&stream, sh) {
-        refuse_peer(stream, sh);
+    if let Err(message) = peer_check(&stream, sh) {
+        refuse_peer(stream, sh, message);
         return;
     }
     #[cfg(feature = "tls")]

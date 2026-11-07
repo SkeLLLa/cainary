@@ -8,7 +8,7 @@ mod formats;
 use cainary_net::decode::TYPE_MESSAGE;
 use cainary_net::peer::Lookup;
 use cainary_net::redflag::{Matcher, presets};
-use cainary_net::server::{self, Config, PEER_REFUSED, PeerUid, Server, TlsRun};
+use cainary_net::server::{self, Config, PEER_REFUSED, PEER_UNCONFIRMED, PeerUid, Server, TlsRun};
 use cainary_net::tls::Tls;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, ServerName};
@@ -1197,9 +1197,13 @@ fn a_refused_peer_is_closed_before_the_handshake() {
         assert!(connect(a, &cfg, HOST).is_err(), "{fake:?}");
         let errs: Vec<Value> = run.out.wait_for("error", 2);
         assert_eq!(errs.len(), 2, "{fake:?}: {errs:?}");
+        let want = match fake {
+            PeerUid::Fake(Lookup::Uid(_)) => PEER_REFUSED,
+            _ => PEER_UNCONFIRMED,
+        };
         assert!(
-            errs.iter().all(|e| e["message"] == PEER_REFUSED),
-            "{errs:?}"
+            errs.iter().all(|e| e["message"] == want),
+            "{fake:?}: {errs:?}"
         );
         assert!(
             errs.iter()

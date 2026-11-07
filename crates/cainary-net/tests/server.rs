@@ -6,7 +6,7 @@ use cainary_net::decode::{ENCODING_MESSAGE, TYPE_MESSAGE};
 use cainary_net::logfile::LogFile;
 use cainary_net::peer::Lookup;
 use cainary_net::redflag::{Matcher, presets};
-use cainary_net::server::{self, Config, PEER_REFUSED, PeerUid, Server};
+use cainary_net::server::{self, Config, PEER_REFUSED, PEER_UNCONFIRMED, PeerUid, Server};
 use serde_json::{Value, json};
 use std::io::{BufRead, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -1022,6 +1022,10 @@ fn another_users_client_gets_a_403_and_one_error_line() {
     let doc: Value = serde_json::from_str(&r.body).unwrap();
     assert_eq!(doc["message"], PEER_REFUSED);
     assert_eq!(PEER_REFUSED, "connection from another local user refused");
+    assert_eq!(
+        PEER_UNCONFIRMED,
+        "connection refused: couldn't confirm it comes from this user"
+    );
 
     let errs = out.wait_for("error", 1);
     assert_eq!(errs.len(), 1, "{errs:?}");
@@ -1036,7 +1040,7 @@ fn another_users_client_gets_a_403_and_one_error_line() {
     srv.shutdown();
 }
 
-/// No match, two matches and an unreadable table are refused like another user.
+/// No match, two matches and an unreadable table are refused too, without blaming another user.
 #[cfg(target_os = "linux")]
 #[test]
 fn an_unknown_or_ambiguous_client_is_refused() {
@@ -1048,8 +1052,10 @@ fn an_unknown_or_ambiguous_client_is_refused() {
         let (srv, out) = start_with(|c| c.tunables.peer_uid = fake);
         let r = get_logs(srv.addrs[0]).unwrap_or_else(|| panic!("{fake:?}: a 403"));
         assert_eq!(r.status, 403, "{fake:?}");
-        assert!(r.body.contains(PEER_REFUSED), "{fake:?}: {}", r.body);
-        assert_eq!(out.wait_for("error", 1).len(), 1, "{fake:?}");
+        assert!(r.body.contains(PEER_UNCONFIRMED), "{fake:?}: {}", r.body);
+        let errs = out.wait_for("error", 1);
+        assert_eq!(errs.len(), 1, "{fake:?}");
+        assert_eq!(errs[0]["message"], PEER_UNCONFIRMED, "{fake:?}");
         srv.shutdown();
     }
 }
