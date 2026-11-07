@@ -103,7 +103,7 @@ pub fn codex(env: &Env<'_>, undo: bool) -> Line {
             "No system certificate bundle was found, so a combined bundle can't be made.",
         );
     };
-    let text = bundle(&roots, &ca);
+    let text = bundle(&roots, std::slice::from_ref(&ca));
     let same = matches!(read_in(&ca_dir, CODEX_BUNDLE), Ok(Some(b)) if b == text.as_bytes());
     let sha = match publish_bundle(
         &ca_dir,
@@ -133,7 +133,9 @@ pub fn codex(env: &Env<'_>, undo: bool) -> Line {
                 "The Codex bundle may have been replaced, but that could not be confirmed on disk. Run cainary-otel-debug --trust-status to check and finish.",
             );
         }
-        Err(Refused::Failed) => return Line::refused(t, "The Codex bundle could not be written."),
+        Err(Refused::Failed | Refused::MissingCa(_) | Refused::NoSource) => {
+            return Line::refused(t, "The Codex bundle could not be written.");
+        }
     };
     state.codex = Some(CodexState {
         bundle_path: path.clone(),

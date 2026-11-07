@@ -1,9 +1,11 @@
 //! Certificate bundles: PEM blocks, the combined bundles, the collector certificate and the
 //! system roots.
 
+use super::MODES;
 use super::files::{read_bundle_text, read_in};
 use crate::tls::ca_file::{CA_FILE, CaDir};
 use cainary_core::harness::Harness;
+use std::collections::HashSet;
 use std::path::Path;
 
 const BEGIN: &str = "-----BEGIN CERTIFICATE-----";
@@ -28,17 +30,32 @@ pub fn pem_certs(text: &str) -> Vec<String> {
     out
 }
 
-pub(super) fn bundle(parts: &[String], ca: &str) -> String {
-    // The collector certificate is always last, and exactly once, whatever the parts hold.
-    let mut seen = std::collections::HashSet::new();
+/// A bundle: the originals first, then one certificate per enabled mode in registry order. An
+/// original that is one of the current mode certificates (by fingerprint) is dropped, so cAInary's
+/// own certificates never come back as "originals" and a rotation never accumulates roots. Always
+/// built from sources, never from the previous bundle.
+pub(super) fn bundle(originals: &[String], cas: &[String]) -> String {
+    let own: HashSet<String> = cas.iter().map(|c| cert_fingerprint(c)).collect();
+    let mut seen = HashSet::new();
     let mut out = String::new();
-    for c in parts.iter().filter(|c| c.as_str() != ca) {
-        if seen.insert(c.clone()) {
+    let originals = originals
+        .iter()
+        .filter(|c| !own.contains(&cert_fingerprint(c)));
+    for c in originals.chain(cas) {
+        if seen.insert(cert_fingerprint(c)) {
             out.push_str(c);
         }
     }
-    out.push_str(ca);
     out
+}
+
+/// The certificate blocks of a bundle of someone else, unless it lives in the collector directory:
+/// a file there is cAInary's own (a CA, a bundle) and is never an "original".
+pub(super) fn read_original(ca: &CaDir, path: &Path) -> Option<Vec<String>> {
+    if path.starts_with(ca.path()) {
+        return None;
+    }
+    read_certs(path)
 }
 
 /// A certificate bundle of someone else (the file `NODE_EXTRA_CA_CERTS` already names, or the
@@ -66,19 +83,35 @@ pub(super) fn system_roots(h: &Harness) -> Option<Vec<String>> {
 
 pub(super) const COLLECTOR_MISSING: &str = "Start the takeover once (cainary-otel-debug --tls …) so the collector certificate exists, then try again.";
 
+/// The certificate in one CA file of the collector directory, exactly one.
+fn one_cert(ca: &CaDir, file: &str) -> Option<String> {
+    let b = read_in(ca, file).ok().flatten()?;
+    match pem_certs(&String::from_utf8_lossy(&b)).as_slice() {
+        [one] => Some(one.clone()),
+        _ => None,
+    }
+}
+
 /// The collector's certificate, exactly one, from the CA directory.
 pub(super) fn collector_ca(ca: &CaDir) -> Result<String, &'static str> {
-    const MISSING: &str = COLLECTOR_MISSING;
-    match read_in(ca, CA_FILE) {
-        Ok(Some(b)) => {
-            let certs = pem_certs(&String::from_utf8_lossy(&b));
-            match certs.as_slice() {
-                [one] => Ok(one.clone()),
-                _ => Err(MISSING),
-            }
-        }
-        _ => Err(MISSING),
+    one_cert(ca, CA_FILE).ok_or(COLLECTOR_MISSING)
+}
+
+/// A mode whose certificate file is missing or isn't exactly one certificate (or isn't a mode).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct MissingCa(pub(super) &'static str);
+
+/// The certificates of the enabled `modes`, one per mode, in registry order. Any enabled mode
+/// without its certificate is an error: a bundle is never built without one of its CAs.
+pub(super) fn mode_cas(ca: &CaDir, modes: &[String]) -> Result<Vec<String>, MissingCa> {
+    if modes.iter().any(|m| !MODES.iter().any(|(n, _)| n == m)) {
+        return Err(MissingCa("unknown"));
     }
+    MODES
+        .iter()
+        .filter(|(n, _)| modes.iter().any(|m| m == n))
+        .map(|(n, file)| one_cert(ca, file).ok_or(MissingCa(n)))
+        .collect()
 }
 
 /// SHA-256 of a certificate's DER (what browsers and `openssl x509 -fingerprint` show). A block

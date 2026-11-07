@@ -20,19 +20,22 @@ pub use codex::codex;
 
 use crate::jsonedit;
 use crate::setup::quote;
-use crate::tls::ca_file::{CA_FILE, CaDir};
-use bundle::{bundle, collector_ca, read_certs, sha_of, system_roots};
+use crate::tls::ca_file::{CA_FILE, CaDir, PROXY_CA_FILE};
+use bundle::{collector_ca, sha_of};
 use cainary_core::harness::{Harness, ToolHome};
 use claude::{inspect_note, managed_sets_key, open_settings, recover, settings_view, sibling_sha};
 use codex::codex_command;
 use files::{lock_trust, read_in};
 use serde_json::{Map, Value, json};
-use state::{Owned, Rec, Refused, State, check_owned, publish_bundle, read_state, save_state};
+use state::{Owned, Rec, Refused, State, check_owned, read_state, rebuild, save_state};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-/// The one mode that exists so far (the `modes` table of the state file is keyed by name).
+/// The modes a bundle can trust (the `modes` table of the state file is keyed by name).
 pub(super) const TAKEOVER: &str = "takeover";
+pub(super) const PROXY: &str = "proxy";
+/// Every mode with the file its certificate lives in. This order is the bundle order.
+pub(super) const MODES: [(&str, &str); 2] = [(TAKEOVER, CA_FILE), (PROXY, PROXY_CA_FILE)];
 /// Said for every write or undo when the state file has a schema this build doesn't know.
 pub(super) const NEWER: &str = "trust state was written by a newer cAInary; refusing to change it";
 
@@ -340,11 +343,14 @@ fn owned_entry(
 /// so it is foreign only when our key no longer holds our value.
 fn owned_entries(state: &State, ca: Option<&CaDir>) -> Vec<Value> {
     let mut out = Vec::new();
-    let collector_fp: Vec<String> = state
-        .modes
-        .get(TAKEOVER)
-        .map(|m| vec![m.fingerprint.clone()])
-        .unwrap_or_default();
+    // The certificates a bundle holds: those of the modes its target is enabled for.
+    let mode_fps = |modes: &[String]| -> Vec<String> {
+        MODES
+            .iter()
+            .filter(|(m, _)| modes.iter().any(|x| x == m))
+            .filter_map(|(m, _)| state.modes.get(*m).map(|c| c.fingerprint.clone()))
+            .collect()
+    };
     let bundle_state = |name: &str, written: Option<&str>| match ca {
         Some(d) => (
             check_owned(d, name, &Rec::of(written)).owned == Owned::Foreign,
@@ -355,6 +361,7 @@ fn owned_entries(state: &State, ca: Option<&CaDir>) -> Vec<Value> {
     if let Some(cs) = &state.claude {
         let dir = Path::new(&cs.settings_path).parent();
         let bundle_path = ca.map(|d| d.path().join(CLAUDE_BUNDLE).display().to_string());
+        let collector_fp = mode_fps(&cs.modes);
         for mode in &cs.modes {
             let view = settings_view(&cs.settings_path);
             let foreign = view
@@ -401,6 +408,7 @@ fn owned_entries(state: &State, ca: Option<&CaDir>) -> Vec<Value> {
         }
     }
     if let Some(c) = &state.codex {
+        let collector_fp = mode_fps(&c.modes);
         for mode in &c.modes {
             let (foreign, sha) = bundle_state(CODEX_BUNDLE, c.bundle_sha.as_deref());
             out.push(owned_entry(
@@ -445,8 +453,8 @@ pub fn status_text(env: &Env<'_>) -> String {
 // ── each `--tls` start ───────────────────────────────────────────────────────────────────────
 
 /// After a new CA is published: regenerate the combined bundles recorded in the state file from
-/// their originals plus this run's certificate. The paths never change; the clients must still
-/// be restarted. Returns what could not be refreshed.
+/// their originals plus the certificate of every mode they are enabled for. The paths never
+/// change; the clients must still be restarted. Returns what could not be refreshed.
 pub fn refresh(env: &Env<'_>) -> Vec<String> {
     let mut warnings = Vec::new();
     let Ok(Some(ca_dir)) = CaDir::open_existing(&env.ca_dir) else {
@@ -468,73 +476,36 @@ pub fn refresh(env: &Env<'_>) -> Vec<String> {
     if state.newer {
         return vec![format!("{NEWER}; the trust bundles were not refreshed")];
     }
-    let ca = match collector_ca(&ca_dir) {
-        Ok(c) => c,
-        Err(_) => {
-            return vec![
-                "the collector certificate is missing; trust bundles were not refreshed".into(),
-            ];
-        }
-    };
-    // Replacements an earlier run didn't finish are settled from the files' hashes first.
+    // Replacements an earlier run didn't finish were settled from the files' hashes by `recover`.
     let mut changed = false;
-    let claude_bundle = state
+    let claude_modes = state
         .claude
         .as_ref()
         .filter(|c| c.written == ca_dir.path().join(CLAUDE_BUNDLE).display().to_string())
-        .map(|c| (c.original.clone(), Rec::of(c.bundle_sha.as_deref())));
-    if let Some((original, rec)) = claude_bundle {
-        match original.as_deref().and_then(|p| read_certs(Path::new(p))) {
-            Some(certs) => {
-                let b = bundle(&certs, &ca);
-                match publish_bundle(&ca_dir, &mut state, Target::ClaudeCode, CLAUDE_BUNDLE, &rec, b.as_bytes()) {
-                    Ok(sha) => {
-                        if let Some(cs) = state.claude.as_mut() {
-                            cs.bundle_sha = Some(sha);
-                        }
-                        state.clear_journal(CLAUDE_BUNDLE);
-                        changed = true;
-                    }
-                    Err(Refused::Foreign) => warnings.push("the Claude Code trust bundle was changed since cAInary wrote it; it was not refreshed".into()),
-                    Err(_) => warnings.push("the Claude Code trust bundle could not be rewritten".into()),
-                }
-            }
-            None => warnings.push("the file your Claude Code bundle was made from can't be read; the bundle was not refreshed".into()),
-        }
-    }
-    if let Some(rec) = state
-        .codex
-        .as_ref()
-        .map(|c| Rec::of(c.bundle_sha.as_deref()))
-    {
-        match system_roots(env.harness) {
-            Some(roots) => {
-                let b = bundle(&roots, &ca);
-                match publish_bundle(
-                    &ca_dir,
-                    &mut state,
-                    Target::Codex,
-                    CODEX_BUNDLE,
-                    &rec,
-                    b.as_bytes(),
-                ) {
-                    Ok(sha) => {
-                        if let Some(cx) = state.codex.as_mut() {
-                            cx.bundle_sha = Some(sha);
-                        }
-                        state.clear_journal(CODEX_BUNDLE);
-                        changed = true;
-                    }
-                    Err(Refused::Foreign) => warnings.push(
-                        "the Codex bundle was changed since cAInary wrote it; it was not refreshed"
-                            .into(),
-                    ),
-                    Err(_) => warnings.push("the Codex bundle could not be rewritten".into()),
-                }
-            }
-            None => warnings.push(
-                "no system certificate bundle was found; the Codex bundle was not refreshed".into(),
-            ),
+        .map(|c| c.modes.clone());
+    let codex_modes = state.codex.as_ref().map(|c| c.modes.clone());
+    for (target, modes) in [
+        (Target::ClaudeCode, claude_modes),
+        (Target::Codex, codex_modes),
+    ] {
+        let Some(modes) = modes else { continue };
+        let what = match target {
+            Target::ClaudeCode => "the Claude Code trust bundle",
+            Target::Codex => "the Codex bundle",
+        };
+        match rebuild(env, &ca_dir, &mut state, target, &modes) {
+            Ok(_) => changed = true,
+            Err(Refused::Foreign) => warnings.push(format!(
+                "{what} was changed since cAInary wrote it; it was not refreshed"
+            )),
+            Err(Refused::MissingCa(m)) => warnings.push(format!(
+                "the {m} certificate is missing; {what} was left as it is"
+            )),
+            Err(Refused::NoSource) => warnings.push(match target {
+                Target::ClaudeCode => "the file your Claude Code bundle was made from can't be read; the bundle was not refreshed".to_string(),
+                Target::Codex => "no system certificate bundle was found; the Codex bundle was not refreshed".to_string(),
+            }),
+            Err(_) => warnings.push(format!("{what} could not be rewritten")),
         }
     }
     if changed && save_state(&ca_dir, &state).is_err() {

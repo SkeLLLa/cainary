@@ -16,6 +16,8 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 pub const CA_FILE: &str = "otel-debug-ca.pem";
+/// The proxy mode's certificate (public part only), kept between sessions.
+pub const PROXY_CA_FILE: &str = "otel-debug-proxy-ca.pem";
 pub const LOCK_FILE: &str = "otel-debug-ca.lock";
 
 #[derive(Debug)]

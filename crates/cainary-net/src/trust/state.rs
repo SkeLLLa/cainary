@@ -1,13 +1,15 @@
 //! The trust state file (`otel-debug-trust.json`): what a committed Claude Code edit left
 //! behind, the Codex bundle path, and a transaction that may not have finished.
 
-use super::bundle::{cert_fingerprint, collector_ca, sha_of};
+use super::bundle::{
+    MissingCa, bundle, cert_fingerprint, mode_cas, read_original, sha_of, system_roots,
+};
 use super::files::{
     Replace, Snapshot, read_in, read_snapshot, replace_checked, unlink_in, unlink_unchanged,
     write_atomic,
 };
-use super::{CLAUDE_BUNDLE, CODEX_BUNDLE, NEWER, STATE_FILE, TAKEOVER, Target, hook};
-use crate::tls::ca_file::{CA_FILE, CaDir};
+use super::{CLAUDE_BUNDLE, CODEX_BUNDLE, Env, MODES, NEWER, STATE_FILE, TAKEOVER, Target, hook};
+use crate::tls::ca_file::CaDir;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::io;
@@ -85,6 +87,9 @@ pub(super) struct Journal {
     pub(super) path: String,
     pub(super) old_sha: Option<String>,
     pub(super) new_sha: String,
+    /// The target's mode set once the replace is recorded (`None`: an entry from before modes
+    /// were journaled, which keeps the current ones).
+    pub(super) modes: Option<Vec<String>>,
 }
 
 impl Journal {
@@ -207,6 +212,7 @@ impl State {
                             path: j.get("path")?.as_str()?.to_string(),
                             old_sha: j.get("oldSha").and_then(Value::as_str).map(str::to_string),
                             new_sha: j.get("newSha")?.as_str()?.to_string(),
+                            modes: j.get("modes").map(|m| strings(Some(m))),
                         })
                     })
                     .collect()
@@ -266,7 +272,13 @@ impl State {
             let j: Vec<Value> = self
                 .journal
                 .iter()
-                .map(|j| json!({"target": j.target.as_str(), "path": j.path, "oldSha": j.old_sha, "newSha": j.new_sha}))
+                .map(|j| {
+                    let mut e = json!({"target": j.target.as_str(), "path": j.path, "oldSha": j.old_sha, "newSha": j.new_sha});
+                    if let Some(m) = &j.modes {
+                        e["modes"] = json!(m);
+                    }
+                    e
+                })
                 .collect();
             m.insert("pendingBundles".into(), Value::Array(j));
         }
@@ -310,17 +322,19 @@ pub(super) fn read_state(ca: &CaDir) -> State {
 }
 
 impl State {
-    /// The takeover's collector certificate as it is now, for the `modes` table. Kept as it was
-    /// when the certificate can't be read.
+    /// Every registry mode's certificate as it is now, for the `modes` table. A mode whose
+    /// certificate can't be read keeps what it had.
     fn stamp_modes(&mut self, ca: &CaDir) {
-        if let Ok(c) = collector_ca(ca) {
-            self.modes.insert(
-                TAKEOVER.to_string(),
-                ModeCa {
-                    ca_file: ca.path().join(CA_FILE).display().to_string(),
-                    fingerprint: cert_fingerprint(&c),
-                },
-            );
+        for (mode, file) in MODES {
+            if let Ok([c]) = mode_cas(ca, &[mode.to_string()]).as_deref() {
+                self.modes.insert(
+                    mode.to_string(),
+                    ModeCa {
+                        ca_file: ca.path().join(file).display().to_string(),
+                        fingerprint: cert_fingerprint(c),
+                    },
+                );
+            }
         }
     }
 }
@@ -439,6 +453,11 @@ pub(super) enum Refused {
     Uncertain,
     /// Test-only simulated crash after the replace.
     Crashed,
+    /// An enabled mode's certificate is missing (the named mode): nothing was written.
+    MissingCa(&'static str),
+    /// The bundle's sources (the user's original file, the system roots, or the record) can't be
+    /// read: nothing was written.
+    NoSource,
 }
 
 /// Replaces a bundle the safe way: check ownership, journal `{path, old, new}` durably, stage the
@@ -453,6 +472,18 @@ pub(super) fn publish_bundle(
     rec: &Rec,
     bytes: &[u8],
 ) -> Result<String, Refused> {
+    publish_with(ca, st, target, name, rec, bytes, None)
+}
+
+fn publish_with(
+    ca: &CaDir,
+    st: &mut State,
+    target: Target,
+    name: &str,
+    rec: &Rec,
+    bytes: &[u8],
+    modes: Option<Vec<String>>,
+) -> Result<String, Refused> {
     let new_sha = sha_of(bytes);
     let c = check_owned(ca, name, rec);
     if !c.allows_write(bytes) {
@@ -466,6 +497,7 @@ pub(super) fn publish_bundle(
         path: ca.path().join(name).display().to_string(),
         old_sha: c.snap.as_ref().map(|s| sha_of(&s.bytes)),
         new_sha: new_sha.clone(),
+        modes,
     };
     st.journal.push(entry);
     if save_state(ca, st).is_err() {
@@ -492,6 +524,67 @@ pub(super) fn publish_bundle(
         return Err(Refused::Crashed);
     }
     Ok(new_sha)
+}
+
+/// Rebuilds a target's bundle for `new_modes` from its sources (the user's original file or the
+/// system roots, plus one certificate per mode), through the journal, and records the new hash and
+/// modes. Every bundle write after the first goes through here. With an enabled mode's certificate
+/// missing nothing is written: a CA is never silently dropped. The caller saves the state.
+pub(super) fn rebuild(
+    env: &Env<'_>,
+    ca: &CaDir,
+    st: &mut State,
+    target: Target,
+    new_modes: &[String],
+) -> Result<String, Refused> {
+    let cas = mode_cas(ca, new_modes).map_err(|MissingCa(m)| Refused::MissingCa(m))?;
+    let (name, rec, originals) = match target {
+        Target::ClaudeCode => {
+            let c = st
+                .claude
+                .as_ref()
+                .filter(|c| c.written == expected_path(ca, target))
+                .ok_or(Refused::NoSource)?;
+            let originals = c
+                .original
+                .as_deref()
+                .and_then(|p| read_original(ca, Path::new(p)))
+                .ok_or(Refused::NoSource)?;
+            (CLAUDE_BUNDLE, Rec::of(c.bundle_sha.as_deref()), originals)
+        }
+        Target::Codex => {
+            let c = st.codex.as_ref().ok_or(Refused::NoSource)?;
+            let roots = system_roots(env.harness).ok_or(Refused::NoSource)?;
+            (CODEX_BUNDLE, Rec::of(c.bundle_sha.as_deref()), roots)
+        }
+    };
+    let text = bundle(&originals, &cas);
+    let modes = new_modes.to_vec();
+    let sha = publish_with(
+        ca,
+        st,
+        target,
+        name,
+        &rec,
+        text.as_bytes(),
+        Some(modes.clone()),
+    )?;
+    match target {
+        Target::ClaudeCode => {
+            if let Some(c) = st.claude.as_mut() {
+                c.bundle_sha = Some(sha.clone());
+                c.modes = modes;
+            }
+        }
+        Target::Codex => {
+            if let Some(c) = st.codex.as_mut() {
+                c.bundle_sha = Some(sha.clone());
+                c.modes = modes;
+            }
+        }
+    }
+    st.clear_journal(name);
+    Ok(sha)
 }
 
 impl State {
@@ -568,11 +661,17 @@ pub(super) fn reconcile(ca: &CaDir, st: &mut State, claude_bundle_use: Use) -> R
                     modes: default_modes(),
                 });
                 c.bundle_sha = Some(j.new_sha.clone());
+                if let Some(m) = &j.modes {
+                    c.modes.clone_from(m);
+                }
                 true
             }
             Target::ClaudeCode => match st.claude.as_mut() {
                 Some(c) if c.written == expected => {
                     c.bundle_sha = Some(j.new_sha.clone());
+                    if let Some(m) = &j.modes {
+                        c.modes.clone_from(m);
+                    }
                     true
                 }
                 _ => false,
@@ -1094,5 +1193,214 @@ mod tests {
             }
             fs::set_permissions(fx.settings(), fs::Permissions::from_mode(0o600)).ok();
         }
+    }
+
+    // ── modes in bundles and the journal ──
+    const PROXY_CA: &str = "-----BEGIN CERTIFICATE-----\nUFJPWFktQ0E=\n-----END CERTIFICATE-----\n";
+
+    fn both() -> Vec<String> {
+        vec![TAKEOVER.to_string(), PROXY.to_string()]
+    }
+
+    /// The proxy CA file exists and both targets that exist are enabled for both modes.
+    fn enable_proxy(fx: &Fx) {
+        fs::write(fx.ca_dir.join(PROXY_CA_FILE), PROXY_CA).unwrap();
+        let ca = CaDir::open_existing(&fx.ca_dir).unwrap().unwrap();
+        let mut st = read_state(&ca);
+        if let Some(c) = st.claude.as_mut() {
+            c.modes = both();
+        }
+        if let Some(c) = st.codex.as_mut() {
+            c.modes = both();
+        }
+        save_state(&ca, &st).unwrap();
+    }
+
+    fn bundle_certs(fx: &Fx, name: &str) -> Vec<String> {
+        pem_certs(&fs::read_to_string(fx.ca_dir.join(name)).unwrap())
+    }
+
+    #[test]
+    fn bundle_order_takeover_then_proxy() {
+        let fx = Fx::new("order", "");
+        fs::write(fx.ca_dir.join(PROXY_CA_FILE), PROXY_CA).unwrap();
+        let ca = CaDir::open_existing(&fx.ca_dir).unwrap().unwrap();
+        // The registry order wins over the order the modes are listed in.
+        let cas = mode_cas(&ca, &[PROXY.to_string(), TAKEOVER.to_string()]).unwrap();
+        assert_eq!(cas, [CA1, PROXY_CA]);
+        assert_eq!(
+            pem_certs(&bundle(&[ROOT_A.to_string(), ROOT_B.to_string()], &cas)),
+            [ROOT_A, ROOT_B, CA1, PROXY_CA]
+        );
+        assert_eq!(mode_cas(&ca, &[PROXY.to_string()]).unwrap(), [PROXY_CA]);
+        assert_eq!(mode_cas(&ca, &[]).unwrap(), Vec::<String>::new());
+        assert_eq!(
+            mode_cas(&ca, &["nope".to_string()]),
+            Err(MissingCa("unknown"))
+        );
+        fs::remove_file(fx.ca_dir.join(PROXY_CA_FILE)).unwrap();
+        assert_eq!(mode_cas(&ca, &both()), Err(MissingCa(PROXY)));
+    }
+
+    #[test]
+    fn own_cas_never_count_as_originals() {
+        let fx = Fx::new("own", "");
+        let cas = [CA1.to_string(), PROXY_CA.to_string()];
+        let originals = [
+            ROOT_A.to_string(),
+            CA1.to_string(),
+            PROXY_CA.to_string(),
+            ROOT_B.to_string(),
+        ];
+        assert_eq!(
+            pem_certs(&bundle(&originals, &cas)),
+            [ROOT_A, ROOT_B, CA1, PROXY_CA]
+        );
+        // A file in the collector directory is never an original, whatever it holds.
+        let ca = CaDir::open_existing(&fx.ca_dir).unwrap().unwrap();
+        fs::write(fx.ca_dir.join(PROXY_CA_FILE), PROXY_CA).unwrap();
+        assert!(read_original(&ca, &fx.ca_dir.join(PROXY_CA_FILE)).is_none());
+        assert!(read_original(&ca, &fx.ca_dir.join(CA_FILE)).is_none());
+        let mine = fx.base.join("mine.pem");
+        fs::write(&mine, ROOT_A).unwrap();
+        assert_eq!(read_original(&ca, &mine).unwrap(), [ROOT_A]);
+    }
+
+    #[test]
+    fn journal_modes_roundtrip() {
+        let j = |modes| Journal {
+            target: Target::Codex,
+            path: "/s/codex.pem".into(),
+            old_sha: Some("aa".into()),
+            new_sha: "bb".into(),
+            modes,
+        };
+        let st = State {
+            journal: vec![j(Some(both())), j(None)],
+            ..State::default()
+        };
+        let bytes = st.to_bytes();
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            v["pendingBundles"][0]["modes"],
+            json!(["takeover", "proxy"])
+        );
+        assert!(v["pendingBundles"][1].get("modes").is_none());
+        assert_eq!(State::parse(&bytes), st);
+        assert_eq!(State::parse(&bytes).to_bytes(), bytes);
+    }
+
+    /// A Codex bundle on disk, a journal entry for a replacement of it, and what the file holds:
+    /// `landed` is whether the replacement happened.
+    fn settle(tag: &str, modes: Option<Vec<String>>, landed: bool) -> (State, String, String) {
+        let fx = Fx::new(tag, "");
+        fx.roots();
+        assert_eq!(codex(&fx.env(), false).action, Action::Applied);
+        let ca = CaDir::open_existing(&fx.ca_dir).unwrap().unwrap();
+        let mut st = read_state(&ca);
+        let path = fx.ca_dir.join(CODEX_BUNDLE);
+        let old = sha_of(&fs::read(&path).unwrap());
+        let new_bytes = b"the replacement";
+        let new = sha_of(new_bytes);
+        if landed {
+            fs::write(&path, new_bytes).unwrap();
+        }
+        st.journal.push(Journal {
+            target: Target::Codex,
+            path: path.display().to_string(),
+            old_sha: Some(old.clone()),
+            new_sha: new.clone(),
+            modes,
+        });
+        reconcile(&ca, &mut st, Use::Unknown);
+        assert!(st.journal.is_empty());
+        (st, old, new)
+    }
+
+    #[test]
+    fn reconcile_new_sha_commits_modes() {
+        let (st, _, new) = settle("rec-new", Some(both()), true);
+        let c = st.codex.unwrap();
+        assert_eq!((c.bundle_sha, c.modes), (Some(new), both()));
+    }
+
+    #[test]
+    fn reconcile_old_sha_keeps_modes() {
+        let (st, old, _) = settle("rec-old", Some(both()), false);
+        let c = st.codex.unwrap();
+        assert_eq!(
+            (c.bundle_sha, c.modes),
+            (Some(old), vec![TAKEOVER.to_string()])
+        );
+    }
+
+    #[test]
+    fn t2_journal_without_modes_keeps_modes() {
+        let (st, _, new) = settle("rec-t2", None, true);
+        let c = st.codex.unwrap();
+        assert_eq!(
+            (c.bundle_sha, c.modes),
+            (Some(new), vec![TAKEOVER.to_string()])
+        );
+    }
+
+    #[test]
+    fn missing_mode_ca_skips_rebuild() {
+        let fx = Fx::new("missing-mode", "");
+        mine(&fx);
+        assert_eq!(apply(&fx).action, Action::Applied);
+        assert_eq!(codex(&fx.env(), false).action, Action::Applied);
+        enable_proxy(&fx);
+        fs::remove_file(fx.ca_dir.join(PROXY_CA_FILE)).unwrap();
+        let (cb, xb) = (fx.ca_dir.join(CLAUDE_BUNDLE), fx.ca_dir.join(CODEX_BUNDLE));
+        let (cbytes, xbytes) = (fs::read(&cb).unwrap(), fs::read(&xb).unwrap());
+        let before = state_json(&fx);
+        fs::write(fx.ca_dir.join(CA_FILE), CA2).unwrap();
+        let w = refresh(&fx.env());
+        assert_eq!(w.len(), 2, "{w:?}");
+        assert!(
+            w.iter().all(|m| m.contains("proxy certificate is missing")),
+            "{w:?}"
+        );
+        assert_eq!(fs::read(&cb).unwrap(), cbytes, "no CA was dropped");
+        assert_eq!(fs::read(&xb).unwrap(), xbytes);
+        let after = state_json(&fx);
+        assert_eq!(after["claudeCode"], before["claudeCode"]);
+        assert_eq!(after["codex"], before["codex"]);
+        assert!(after.get("pendingBundles").is_none());
+    }
+
+    #[test]
+    fn rotation_never_accumulates_roots() {
+        let fx = Fx::new("rotate", "");
+        fx.roots();
+        mine(&fx);
+        assert_eq!(apply(&fx).action, Action::Applied);
+        assert_eq!(codex(&fx.env(), false).action, Action::Applied);
+        enable_proxy(&fx);
+        for n in 0..10 {
+            let ca =
+                format!("-----BEGIN CERTIFICATE-----\nUk9UQVRF{n:04}\n-----END CERTIFICATE-----\n");
+            fs::write(fx.ca_dir.join(CA_FILE), &ca).unwrap();
+            let w = refresh(&fx.env());
+            assert!(w.is_empty(), "{w:?}");
+            assert_eq!(
+                bundle_certs(&fx, CLAUDE_BUNDLE),
+                [ROOT_A, &ca, PROXY_CA],
+                "round {n}"
+            );
+            assert_eq!(
+                bundle_certs(&fx, CODEX_BUNDLE),
+                [ROOT_A, ROOT_B, ROOT_C, &ca, PROXY_CA],
+                "round {n}"
+            );
+        }
+        let v = state_json(&fx);
+        assert_eq!(v["claudeCode"]["modes"], json!(["takeover", "proxy"]));
+        assert_eq!(
+            v["modes"]["proxy"]["caFile"],
+            fx.ca_dir.join(PROXY_CA_FILE).display().to_string()
+        );
+        assert!(v.get("pendingBundles").is_none());
     }
 }

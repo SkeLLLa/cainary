@@ -327,7 +327,11 @@ fn claude_apply(
                 return l;
             };
             let fps = certs.iter().map(|c| cert_fingerprint(c)).collect();
-            (bundle_path.clone(), Some(bundle(&certs, &collector)), fps)
+            (
+                bundle_path.clone(),
+                Some(bundle(&certs, std::slice::from_ref(&collector))),
+                fps,
+            )
         }
     };
     let new_text = match &doc {
@@ -467,7 +471,7 @@ fn claude_apply(
             } else {
                 FOREIGN_BUNDLE
             }),
-            Err(Refused::Failed) => {
+            Err(Refused::Failed | Refused::MissingCa(_) | Refused::NoSource) => {
                 Some("The combined bundle could not be written; nothing was changed.")
             }
             Err(Refused::Uncertain) => return fail(UNCERTAIN),

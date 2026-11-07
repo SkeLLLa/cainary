@@ -1526,10 +1526,12 @@ bundles), `claude.rs` and `codex.rs` (the two targets).
   is a file that already holds exactly the bytes about to be written, which is adopted. A record
   from before v2, which has no hash, is the only unverified case that may be replaced.
 - **Journal.** A bundle replacement is written durably to the state file's `pendingBundles`
-  (`[{target, path, oldSha, newSha}]`) before the file is replaced, and cleared once the new hash is
+  (`[{target, path, oldSha, newSha, modes?}]`; `modes` is the target's mode set once the replace is
+  recorded) before the file is replaced, and cleared once the new hash is
   recorded. The next call that holds the trust lock (`--trust`, `--trust-status`, a `--tls`
   refresh) settles each entry from the file's hash: `newSha` means the replace happened, so the
-  hash is recorded (an orphaned Claude Code bundle with no record is removed); `oldSha` or still
+  hash and the entry's `modes` are recorded together (an entry without `modes` keeps the current
+  ones) (an orphaned Claude Code bundle with no record is removed); `oldSha` or still
   absent means it didn't, so the entry is dropped; anything else is foreign and left alone. A
   crash or failed state write can therefore never leave cAInary's own file looking foreign.
 - **Paths and recovery order.** Each target has exactly one bundle path (the Claude Code and Codex
@@ -1554,9 +1556,25 @@ bundles), `claude.rs` and `codex.rs` (the two targets).
   certificate; else `[]`), `foreign` and `sha256` (the file now, `null` if missing). The text
   status adds one `owned: <mode> <target> <kind> (<path>)` line per entry, with ` foreign` when
   it is. Every other field of the line is unchanged, so older readers ignore `owned`.
-- **Each `--tls` start** regenerates the recorded bundles from their originals plus the new CA,
-  so the paths never change; the client still has to be restarted. Nothing is refreshed, and a
-  warning is printed, if a source file has gone.
+- **Mode registry and bundle composition.** `trust::MODES` lists every mode with the file its
+  certificate lives in, in a fixed order that is also the bundle order: `takeover`
+  (`otel-debug-ca.pem`), then `proxy` (`otel-debug-proxy-ca.pem`, its public certificate kept
+  between sessions). A bundle is the originals (the user's own file, or the Codex system roots)
+  followed by one certificate per mode the target is enabled for, in registry order, each once.
+  It is always rebuilt from those sources, never from the previous bundle. An original whose
+  fingerprint equals a current mode certificate is dropped, and an original path inside the
+  collector directory is refused, so cAInary's own certificates never come back as "originals" and
+  rotating the CA never accumulates roots. The `modes` table is stamped for every registry mode
+  whose certificate file exists, and `owned[]` bundle `fingerprints` list the preserved originals
+  then the certificate of each enabled mode.
+- **Missing mode certificate.** Every bundle rewrite after the first (`rebuild`: journal with the
+  new mode set, staged replace with re-check, then the hash and modes recorded together) needs the
+  certificate of each enabled mode. If one is missing (or isn't exactly one certificate), the
+  rebuild is skipped with a warning and the bundle is left as it is: a CA is never silently
+  dropped.
+- **Each `--tls` start** regenerates the recorded bundles from their sources and the current
+  mode certificates, so the paths never change; the client still has to be restarted. Nothing is
+  refreshed, and a warning is printed, if a source file or an enabled mode's certificate has gone.
 - **Reading other bundles.** The harness refuses `*.pem` by design, so a bundle the user already
   points at, and the system roots, are read by `read_certs`: a regular file of at most 2 MiB that
   others can't write, symlinks followed, certificate blocks only, and a file that contains a
