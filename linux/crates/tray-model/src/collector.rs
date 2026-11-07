@@ -597,6 +597,7 @@ impl Model {
             },
         };
         self.set_stderr_tail(stderr_tail);
+        let text = crate::strings::safe_line(&text);
         if matches!(self.state, State::Starting | State::Listening) {
             if text.is_empty() {
                 self.stopped("Stopped");
@@ -609,6 +610,18 @@ impl Model {
                 });
             }
         }
+    }
+
+    /// The collector can't run until something is done by the user (a port to open): stopped,
+    /// with a failure the page can act on.
+    pub fn blocked(&mut self, code: &str, port: u16, message: impl Into<String>) {
+        let message = message.into();
+        self.stopped(message.clone());
+        self.failure = Some(Failure {
+            code: Some(code.to_owned()),
+            message,
+            port: Some(port),
+        });
     }
 
     pub fn failed(&mut self, reason: impl Into<String>) {
@@ -1450,12 +1463,18 @@ mod tests {
     #[test]
     fn a_settings_problem_is_a_failure_with_its_code() {
         let mut model = Model::default();
-        model.problem("tls-no-host", "HTTPS takeover needs at least one host name.");
+        model.problem(
+            "tls-no-host",
+            "HTTPS takeover needs at least one host name.",
+        );
         assert_eq!(model.state, State::Failed);
         let failure = model.view().failure.expect("a failure");
         assert_eq!(failure.code.as_deref(), Some("tls-no-host"));
         assert_eq!(failure.port, None);
-        assert_eq!(failure.message, "HTTPS takeover needs at least one host name.");
+        assert_eq!(
+            failure.message,
+            "HTTPS takeover needs at least one host name."
+        );
     }
 
     #[test]

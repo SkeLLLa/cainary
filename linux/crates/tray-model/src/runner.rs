@@ -615,6 +615,32 @@ pub fn run_one_shot(program: &std::path::Path, args: &[OsString]) -> Result<Outp
     )
 }
 
+/// Runs `<program> --version` unprivileged, with a short deadline and a few bytes of stdout, and
+/// returns what it printed. Call this on a worker thread (see [`run_one_shot`]).
+pub fn probe_version(program: &std::path::Path) -> Result<String, String> {
+    let output = run(
+        program,
+        &[OsString::from("--version")],
+        None,
+        &Limits {
+            deadline: Duration::from_secs(2),
+            stdout: 4 << 10,
+            stderr: 1 << 10,
+            term_grace: Duration::from_millis(300),
+        },
+    )
+    .map_err(|error| match error {
+        RunError::Spawn(e) => format!("couldn't start it ({e})"),
+        RunError::TimedOut => "it didn't answer in time".into(),
+        RunError::Oversize => "it printed too much".into(),
+        RunError::Cancelled => "cancelled".into(),
+    })?;
+    if !output.status.success() {
+        return Err("it exited with an error".into());
+    }
+    String::from_utf8(output.stdout).map_err(|_| "its answer wasn't text".into())
+}
+
 /// [`run`], recording the child's pid (= its process group) in `running` while it lives, and
 /// ending it the way a deadline does once `cancelled` is set.
 pub fn run_cancellable(

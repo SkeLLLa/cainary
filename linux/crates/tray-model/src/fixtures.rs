@@ -9,6 +9,7 @@ use std::time::{Duration, SystemTime};
 use serde_json::{Value, json};
 
 use crate::collector::Model as CollectorModel;
+use crate::portaccess::{self, Access, Inputs};
 use crate::report::Report;
 use crate::runner::ScanError;
 use crate::settings::{CollectorPattern, CollectorPatternKind, Settings};
@@ -479,6 +480,134 @@ pub fn collector_trust_preview_sample() -> String {
     serde_json::to_string(&view).expect("trust preview serializes")
 }
 
+const FIXTURE_HELLO: &str = r#"{"v":1,"type":"hello","ts":"2026-01-01T14:00:00Z","mode":"receiver","endpoint":"http://127.0.0.1:443","listen":["127.0.0.1:443"],"setup":{"claudeCode":["OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:443"],"codex":[],"notes":[]}}"#;
+
+fn startup_error(code: &str, port: u16, message: &str) -> String {
+    json!({
+        "v": 1, "type": "error", "source": "listen", "code": code, "port": port,
+        "message": message,
+    })
+    .to_string()
+}
+
+/// A collector view with the `privilege` object the app adds when it publishes.
+fn collector_view(model: &CollectorModel, access: &Access, held: bool, running: bool) -> String {
+    collector_view_for(model, access, held, running, true)
+}
+
+fn collector_view_for(
+    model: &CollectorModel,
+    access: &Access,
+    held: bool,
+    running: bool,
+    enabled: bool,
+) -> String {
+    let privilege = portaccess::view(&Inputs {
+        port: 443,
+        access,
+        held,
+        running,
+        enabled,
+        opening: false,
+        dev: false,
+        error: None,
+        notice: None,
+    });
+    let mut view = serde_json::to_value(model.view()).expect("collector view serializes");
+    view["privilege"] = serde_json::to_value(privilege).expect("privilege serializes");
+    serde_json::to_string(&view).expect("collector view serializes")
+}
+
+fn blocked_model() -> CollectorModel {
+    let mut model = CollectorModel::default();
+    model.blocked("port-privileged", 443, portaccess::needs_message(443));
+    model
+}
+
+/// Port 443 needs the root helper and it isn't installed.
+pub fn collector_priv_no_helper() -> String {
+    let access = Access::NoHelper("the port helper isn't installed".into());
+    collector_view(&blocked_model(), &access, false, false)
+}
+
+pub fn collector_priv_ready() -> String {
+    collector_view(&blocked_model(), &Access::Ready, false, false)
+}
+
+pub fn collector_priv_mismatch() -> String {
+    let access = Access::Mismatch("the helper is version 0.4.0, this app is 0.5.2".into());
+    collector_view(&blocked_model(), &access, false, false)
+}
+
+/// The collector crashed after it started; the tray still holds port 443.
+pub fn collector_priv_held_stopped() -> String {
+    let mut model = CollectorModel::default();
+    model.starting();
+    model.accept(FIXTURE_HELLO.into());
+    model.exited(Some(137), "");
+    collector_view(&model, &Access::Ready, true, false)
+}
+
+/// Listening on a port the tray opened.
+pub fn collector_priv_held() -> String {
+    let mut model = CollectorModel::default();
+    model.starting();
+    model.accept(FIXTURE_HELLO.into());
+    collector_view(&model, &Access::Ready, true, true)
+}
+
+/// Privileged port, collector switched off: the note under the port field says what is needed.
+pub fn collector_priv_off() -> String {
+    collector_view_for(
+        &CollectorModel::default(),
+        &Access::Ready,
+        false,
+        false,
+        false,
+    )
+}
+
+pub fn collector_fail_tls_no_host() -> String {
+    let mut model = CollectorModel::default();
+    model.problem(
+        "tls-no-host",
+        "HTTPS takeover needs at least one host name.",
+    );
+    collector_view(&model, &Access::NotNeeded, false, false)
+}
+
+pub fn collector_fail_port_in_use() -> String {
+    let mut model = CollectorModel::default();
+    model.starting();
+    model.accept(startup_error(
+        "port-in-use",
+        4318,
+        "can't listen on 127.0.0.1:4318: address already in use",
+    ));
+    model.exited(Some(1), "");
+    collector_view(&model, &Access::NotNeeded, false, false)
+}
+
+/// The collector refused the sockets it was handed; the tray gave the port back.
+pub fn collector_fail_listen_fd() -> String {
+    let mut model = CollectorModel::default();
+    model.starting();
+    model.accept(startup_error(
+        "listen-fd",
+        443,
+        "--listen-fd 3 isn't a listening socket on 127.0.0.1:443",
+    ));
+    model.exited(Some(2), "");
+    collector_view(&model, &Access::Ready, false, false)
+}
+
+pub fn collector_fail_other() -> String {
+    let mut model = CollectorModel::default();
+    model.starting();
+    model.exited(Some(1), "cainary-otel-debug: out of memory\n");
+    collector_view(&model, &Access::NotNeeded, false, false)
+}
+
 fn snapshot(raw: &[u8]) -> Arc<Snapshot> {
     Arc::new(Snapshot {
         report: Report::decode(raw).expect("a golden decodes"),
@@ -532,6 +661,16 @@ pub fn scenarios() -> Vec<Scenario> {
         pattern: "acme-project".into(),
         case_sensitive: false,
     }];
+    let mut priv_settings = defaults.clone();
+    priv_settings.collector.enabled = true;
+    priv_settings.collector.port = 443;
+    let mut priv_off_settings = priv_settings.clone();
+    priv_off_settings.collector.enabled = false;
+    let mut no_host_settings = defaults.clone();
+    no_host_settings.collector.enabled = true;
+    no_host_settings.collector.tls = true;
+    let mut in_use_settings = defaults.clone();
+    in_use_settings.collector.enabled = true;
     let mut off_settings = defaults.clone();
     off_settings.collector.enabled = false;
     let details = |name, selection, settings: &Settings, dark| {
@@ -622,6 +761,114 @@ pub fn scenarios() -> Vec<Scenario> {
                 false,
             ),
             collector_sample,
+        ),
+        live(
+            details(
+                "details-collector-priv-no-helper",
+                ":collector:setup",
+                &priv_settings,
+                false,
+            ),
+            collector_priv_no_helper,
+        ),
+        live(
+            details(
+                "details-collector-priv-ready",
+                ":collector:setup",
+                &priv_settings,
+                false,
+            ),
+            collector_priv_ready,
+        ),
+        live(
+            details(
+                "details-collector-priv-ready-dark",
+                ":collector:setup",
+                &priv_settings,
+                true,
+            ),
+            collector_priv_ready,
+        ),
+        live(
+            details(
+                "details-collector-priv-mismatch",
+                ":collector:setup",
+                &priv_settings,
+                false,
+            ),
+            collector_priv_mismatch,
+        ),
+        live(
+            details(
+                "details-collector-priv-held-stopped",
+                ":collector:setup",
+                &priv_settings,
+                false,
+            ),
+            collector_priv_held_stopped,
+        ),
+        live(
+            details(
+                "details-collector-priv-held",
+                ":collector:setup",
+                &priv_settings,
+                false,
+            ),
+            collector_priv_held,
+        ),
+        live(
+            details(
+                "details-collector-priv-off",
+                ":collector:setup",
+                &priv_off_settings,
+                false,
+            ),
+            collector_priv_off,
+        ),
+        live(
+            details(
+                "details-collector-fail-tls-no-host",
+                ":collector:setup",
+                &no_host_settings,
+                false,
+            ),
+            collector_fail_tls_no_host,
+        ),
+        live(
+            details(
+                "details-collector-fail-port-in-use",
+                ":collector:setup",
+                &in_use_settings,
+                false,
+            ),
+            collector_fail_port_in_use,
+        ),
+        live(
+            details(
+                "details-collector-fail-port-in-use-dark",
+                ":collector:setup",
+                &in_use_settings,
+                true,
+            ),
+            collector_fail_port_in_use,
+        ),
+        live(
+            details(
+                "details-collector-fail-listen-fd",
+                ":collector:setup",
+                &priv_settings,
+                false,
+            ),
+            collector_fail_listen_fd,
+        ),
+        live(
+            details(
+                "details-collector-fail-other",
+                ":collector:setup",
+                &in_use_settings,
+                false,
+            ),
+            collector_fail_other,
         ),
         details("details-settings", ":settings", &defaults, false),
         live(
