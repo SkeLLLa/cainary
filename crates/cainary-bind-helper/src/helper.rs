@@ -5,6 +5,7 @@
 //! (bad arguments, not run by pkexec, bad channel), 1 on a failed bind or send. It reads no file
 //! and no stdin, writes none, runs nothing and reads only `PKEXEC_UID` from the environment.
 
+use std::io::Write;
 use std::mem;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::process::exit;
@@ -293,13 +294,28 @@ fn run_checked(args: &[String]) -> Result<(), Fail> {
     bind_and_send(port, CHANNEL, bind_loopback)
 }
 
+/// `--version` is an unprivileged convenience only; as root every invocation must be the protocol.
+pub fn version_allowed(args: &[String], euid: u32) -> bool {
+    euid != 0 && args == ["--version"]
+}
+
+/// One write to stdout; a closed pipe or any other error is ignored.
+fn print_version() {
+    // SAFETY: ignoring SIGPIPE touches no memory.
+    unsafe { libc::signal(libc::SIGPIPE, libc::SIG_IGN) };
+    let _ = std::io::stdout()
+        .write_all(format!("cainary-bind-helper {VERSION} protocol 1\n").as_bytes());
+    let _ = std::io::stdout().flush();
+}
+
 pub fn run() {
     let args: Vec<String> = std::env::args_os()
         .skip(1)
         .map(|a| a.into_string().unwrap_or_default())
         .collect();
-    if args == ["--version"] {
-        println!("cainary-bind-helper {VERSION} protocol 1");
+    // SAFETY: geteuid(2) cannot fail.
+    if version_allowed(&args, unsafe { libc::geteuid() }) {
+        print_version();
         exit(0);
     }
     let Err(fail) = run_checked(&args) else {
@@ -454,6 +470,16 @@ mod tests {
         );
         assert_eq!(channel_checks(t, d, None, 1000), Err(Fail::BadChannel));
         assert!(!is_seqpacket(Some(libc::SOCK_DGRAM), d));
+    }
+
+    #[test]
+    fn version_refused_as_root() {
+        assert!(version_allowed(&s(&["--version"]), 1000));
+        assert!(!version_allowed(&s(&["--version"]), 0));
+        assert!(!version_allowed(&s(&["--version", "x"]), 1000));
+        assert!(!version_allowed(&s(&[]), 1000));
+        // As root it is an ordinary bad invocation.
+        assert_eq!(parse_args(&s(&["--version"])), Err(Fail::BadArgs));
     }
 
     #[test]
