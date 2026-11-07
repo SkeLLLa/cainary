@@ -13,9 +13,39 @@ use std::os::fd::OwnedFd;
 /// What failed, as the message of the `listen-fd` error.
 pub type Reject = String;
 
+/// Takes ownership of an inherited descriptor number.
+///
+/// # Safety
+///
+/// `fd` must have been inherited from the parent for this purpose and nothing else in the
+/// process may own or close it. Call it at most once per number, from the startup path before
+/// any other thread exists. A second owner of the same descriptor would close it twice.
 #[cfg(target_os = "linux")]
-pub fn adopt(fds: &[i32], port: u16) -> Result<Vec<OwnedFd>, Reject> {
-    use std::os::fd::{FromRawFd, RawFd};
+pub unsafe fn take_inherited(fd: std::os::fd::RawFd) -> Result<OwnedFd, Reject> {
+    use std::os::fd::FromRawFd;
+    if fd < 3 {
+        return Err(format!(
+            "--listen-fd {fd}: descriptors 0-2 are not accepted"
+        ));
+    }
+    // SAFETY: a plain query; it only tells whether the number is open.
+    if unsafe { libc::fcntl(fd, libc::F_GETFD) } < 0 {
+        let e = std::io::Error::last_os_error();
+        return Err(format!("--listen-fd {fd}: not an open descriptor: {e}"));
+    }
+    // SAFETY: open, and by the caller's contract inherited and owned by nobody else.
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+#[cfg(not(target_os = "linux"))]
+pub unsafe fn take_inherited(_fd: i32) -> Result<OwnedFd, Reject> {
+    Err("--listen-fd is not supported on this platform".into())
+}
+
+/// Validates owned descriptors against `port` and returns them; a rejected set is closed.
+#[cfg(target_os = "linux")]
+pub fn adopt(fds: Vec<OwnedFd>, port: u16) -> Result<Vec<OwnedFd>, Reject> {
+    use std::os::fd::AsRawFd;
 
     if fds.is_empty() {
         return Err("no --listen-fd given".into());
@@ -23,38 +53,23 @@ pub fn adopt(fds: &[i32], port: u16) -> Result<Vec<OwnedFd>, Reject> {
     if fds.len() > 2 {
         return Err("at most two --listen-fd descriptors".into());
     }
-    let mut seen: Vec<(RawFd, bool)> = Vec::new();
-    for &fd in fds {
-        if fd < 3 {
-            return Err(format!(
-                "--listen-fd {fd}: descriptors 0-2 are not accepted"
-            ));
-        }
-        if seen.iter().any(|(f, _)| *f == fd) {
-            return Err(format!("--listen-fd {fd} is given twice"));
-        }
-        let addr = check(fd, port)?;
-        let v6 = addr.v6;
-        if seen.iter().any(|(_, other)| *other == v6) {
+    let mut v6s: Vec<bool> = Vec::new();
+    for f in &fds {
+        let fd = f.as_raw_fd();
+        let v6 = check(fd, port)?.v6;
+        if v6s.contains(&v6) {
             return Err(format!(
                 "--listen-fd {fd}: a second {} socket (one per family)",
                 if v6 { "IPv6" } else { "IPv4" }
             ));
         }
-        seen.push((fd, v6));
+        v6s.push(v6);
     }
-    let mut out = Vec::new();
-    for (fd, _) in seen {
-        // SAFETY: the descriptor was just validated as an open socket of ours and appears once
-        // in the list, so the OwnedFd is its only owner.
-        let owned = unsafe { OwnedFd::from_raw_fd(fd) };
-        out.push(owned);
-    }
-    Ok(out)
+    Ok(fds)
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn adopt(_fds: &[i32], _port: u16) -> Result<Vec<OwnedFd>, Reject> {
+pub fn adopt(_fds: Vec<OwnedFd>, _port: u16) -> Result<Vec<OwnedFd>, Reject> {
     Err("--listen-fd is not supported on this platform".into())
 }
 
@@ -215,6 +230,8 @@ mod tests {
 
     #[test]
     fn a_closed_descriptor_is_rejected() {
-        assert!(adopt(&[999_999], 1).is_err());
+        // SAFETY: the number is not open, so nothing owns it.
+        assert!(unsafe { take_inherited(999_999) }.is_err());
+        assert!(unsafe { take_inherited(2) }.is_err());
     }
 }

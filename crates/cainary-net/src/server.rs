@@ -271,7 +271,11 @@ pub struct Ready {
 /// With `listen_fds` (inherited from the parent) nothing is bound: the descriptors are
 /// validated against `port` and used as they are, and a rejected one is an error, never a
 /// reason to bind by ourselves.
-pub fn bind(listen: &[String], listen_fds: &[i32], port: u16) -> Result<Bound, SetupError> {
+pub fn bind(
+    listen: &[String],
+    listen_fds: Vec<std::os::fd::OwnedFd>,
+    port: u16,
+) -> Result<Bound, SetupError> {
     if !listen_fds.is_empty() {
         if !listen.is_empty() {
             return Err(setup_kind(
@@ -387,7 +391,7 @@ fn bind_all(listen: &[String], port: u16) -> Result<(Vec<TcpListener>, Vec<Strin
 
 /// Bind, drop privileges, serve: the convenience used where nothing needs to happen between.
 pub fn run(cfg: Config) -> Result<Server, SetupError> {
-    let ready = bind(&cfg.listen, &[], cfg.port)?.drop_privileges()?;
+    let ready = bind(&cfg.listen, Vec::new(), cfg.port)?.drop_privileges()?;
     start(cfg, ready)
 }
 

@@ -418,22 +418,32 @@ fn serve(o: Options, args: &[String]) -> u8 {
     {
         return fatal(o.json, "startup", "privilege-drop", m, 1);
     }
-    let ready = match server::bind(&o.listen, &o.listen_fds, o.port)
-        .and_then(server::Bound::drop_privileges)
-    {
-        Ok(r) => r,
-        Err(e) => {
-            if let (Some(port), "port-privileged") = (e.port, e.kind) {
-                return refused_port(&e.message, port, o.json, args);
-            }
-            let source = if e.kind == "port-in-use" {
-                "listen"
-            } else {
-                "startup"
-            };
-            return fatal_port(o.json, source, e.kind, e.message, e.code, e.port);
+    // Inherited descriptors are taken here, once each (args made the numbers distinct), before
+    // any thread is started; from now on only the owned values exist.
+    let mut inherited = Vec::new();
+    for &n in &o.listen_fds {
+        // SAFETY: `--listen-fd` names descriptors the parent placed for us; nothing else in
+        // this process has used them, and no thread exists yet.
+        match unsafe { cainary_net::listenfd::take_inherited(n) } {
+            Ok(fd) => inherited.push(fd),
+            Err(m) => return fatal(o.json, "startup", "listen-fd", m, 2),
         }
-    };
+    }
+    let ready =
+        match server::bind(&o.listen, inherited, o.port).and_then(server::Bound::drop_privileges) {
+            Ok(r) => r,
+            Err(e) => {
+                if let (Some(port), "port-privileged") = (e.port, e.kind) {
+                    return refused_port(&e.message, port, o.json, args);
+                }
+                let source = if e.kind == "port-in-use" {
+                    "listen"
+                } else {
+                    "startup"
+                };
+                return fatal_port(o.json, source, e.kind, e.message, e.code, e.port);
+            }
+        };
     if o.show_values {
         let mut w = String::from(
             "warning: --show-values prints attribute values unmasked (emails, commands and any secrets in them)",
