@@ -96,6 +96,10 @@ run = "make linux-check"
 description = "Offscreen snapshots of the tray windows (target/ui-snapshots/linux/)"
 run = "make linux-ui-test"
 
+[tasks."linux:ui-preview"]
+description = "Seconds-fast QML-only snapshots against dev stubs (target/ui-preview/linux/); args: scenario filters, --live"
+run = "linux/crates/cainary-tray/qml/dev/harness.sh -o target/ui-preview/linux"
+
 [tasks."linux:run"]
 description = "Run the tray app against the debug cainary and collector"
 run = "make linux-run"

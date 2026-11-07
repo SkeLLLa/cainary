@@ -1,9 +1,10 @@
 pragma Singleton
 import QtQuick
 import "SampleView.js" as S
+import ua.SkeLLLa.cAInary
 
 QtObject {
-    property string viewJson: S.variant("")
+    property string viewJson: previewVariant("popup")
     property string placement: "x11"
     property string scenario: "popup"
     readonly property var status: JSON.parse(S.status(scenario))
@@ -14,7 +15,6 @@ QtObject {
     property string cliVersion: "0.1.0"
     property bool trayAvailable: true
     signal detailsRequested(string selection)
-    signal settingsRequested()
     signal aboutRequested()
     signal popupRequested(int x, int y, string token)
     signal quitRequested()
@@ -23,12 +23,32 @@ QtObject {
     function uiReady() {}
     function markAsSeen() {}
     function copyReport() {}
-    function openDetails(s) {}
+    function openDetails(s) { detailsRequested(s); }
     function copyFindingJson(a, b) {}
-    function showSettings() {}
+    function showSettings() { detailsRequested(":settings"); }
     function showAbout() {}
     function setNotInstalledExpanded(b) { show(b ? "popup-expanded" : "popup"); }
-    function show(name) { scenario = name; viewJson = S.variant(name); }
+    // The preview process has no Rust image provider, so use EntryIcon's monogram fallback.
+    function previewVariant(name) {
+        const data = JSON.parse(S.variant(name));
+        function clearIconKeys(value) {
+            if (Array.isArray(value)) {
+                value.forEach(clearIconKeys);
+            } else if (value && typeof value === "object") {
+                if (typeof value.iconKey === "string")
+                    value.iconKey = "";
+                Object.keys(value).forEach(key => clearIconKeys(value[key]));
+            }
+        }
+        clearIconKeys(data);
+        return JSON.stringify(data);
+    }
+    function show(name) {
+        scenario = name;
+        viewJson = previewVariant(name);
+        SettingsController.show(name);
+        CollectorController.show(name);
+    }
     function revealPath(p) {}
     function availableArea(x, y) { return Qt.rect(0, 0, 1920, 1080); }
     function setActivationToken(t) {}
