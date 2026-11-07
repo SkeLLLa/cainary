@@ -13,9 +13,9 @@ ColumnLayout {
         visible: !root.model.value.tls
         Label { text: qsTr("Port") }
         SpinBox {
-            from: 1024
+            from: 1
             to: 65535
-            value: Math.max(1024, root.model.value.port || 4318)
+            value: Math.max(1, root.model.value.port || 4318)
             editable: true
             onValueModified: root.model.change(next => { next.port = value; })
         }

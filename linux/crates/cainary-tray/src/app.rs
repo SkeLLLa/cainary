@@ -1043,9 +1043,8 @@ impl CollectorRuntime {
             self.publish();
             return;
         }
-        if !preferences.valid() {
-            self.model
-                .failed("Check the collector port and red-flag patterns.");
+        if let Some(problem) = preferences.problem() {
+            self.model.problem(problem.code, problem.message);
             self.publish();
             return;
         }

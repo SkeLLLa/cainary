@@ -616,6 +616,17 @@ impl Model {
         self.message = reason.into();
     }
 
+    /// The collector can't start with these settings; `code` is a `Problem` code, for the UI.
+    pub fn problem(&mut self, code: &str, message: impl Into<String>) {
+        let message = message.into();
+        self.failed(message.clone());
+        self.failure = Some(Failure {
+            code: Some(code.to_owned()),
+            message,
+            port: None,
+        });
+    }
+
     pub fn set_stderr_tail(&mut self, tail: impl Into<String>) {
         let mut tail = tail.into();
         const LIMIT: usize = 8 << 10;
@@ -1434,6 +1445,17 @@ mod tests {
 
     fn sample(kind: &str, version: u8) -> String {
         format!(r#"{{"v":{version},"type":"{kind}","ts":"2026-11-06T12:00:00Z","futureKey":true}}"#)
+    }
+
+    #[test]
+    fn a_settings_problem_is_a_failure_with_its_code() {
+        let mut model = Model::default();
+        model.problem("tls-no-host", "HTTPS takeover needs at least one host name.");
+        assert_eq!(model.state, State::Failed);
+        let failure = model.view().failure.expect("a failure");
+        assert_eq!(failure.code.as_deref(), Some("tls-no-host"));
+        assert_eq!(failure.port, None);
+        assert_eq!(failure.message, "HTTPS takeover needs at least one host name.");
     }
 
     #[test]
