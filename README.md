@@ -15,7 +15,7 @@ It comes in two parts:
 
 **Contents:** [Install](#install) · [Usage](#usage) · [Reading the report](#reading-the-report) ·
 [The apps](#the-apps) · [OTel debug collector](#otel-debug-collector) · [Development](#development) · [Documentation](#documentation) ·
-[Support Ukraine](#support-ukraine)
+[Roadmap](docs/roadmap.md) · [Support Ukraine](#support-ukraine)
 
 ## Install
 
@@ -489,6 +489,7 @@ snapshots to `target/ui-snapshots/`. The manual checklist for what a test can't 
 - [Linux tray app](docs/linux.md): supported distributions, placement, build and troubleshooting
 - [Distribution](docs/distribution.md): release files, package repositories and how to verify them
 - [Integrations](docs/integrations.md): starship, tmux and the Claude Code statusline
+- [Roadmap](docs/roadmap.md): what this release contains and what is planned next
 
 ## Support Ukraine
 
