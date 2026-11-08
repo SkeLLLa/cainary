@@ -60,6 +60,17 @@ pkg_install() {
     esac
 }
 
+# The root helpers answer --version only to a caller that isn't root; as root every call has to
+# be the pkexec protocol. These jobs run as root, so the check runs as nobody (setpriv is in
+# util-linux, which the Fedora image lacks). The binary's directory must be traversable for nobody.
+as_nobody() {
+    if [ "$(id -u)" -ne 0 ]; then
+        "$@"
+        return
+    fi
+    setpriv --reuid=65534 --regid=65534 --clear-groups -- "$@"
+}
+
 gh_path() { if [ -n "${GITHUB_PATH:-}" ]; then echo "$1" >> "$GITHUB_PATH"; fi; }
 gh_env() { if [ -n "${GITHUB_ENV:-}" ]; then echo "$1" >> "$GITHUB_ENV"; fi; }
 
@@ -173,17 +184,18 @@ inspect() {
             die "the tarball has entries outside $top"
         fi
         x="$(mktemp -d)"
+        chmod 755 "$x"
         tar -xzf "$tgz" -C "$x"
         [ "$("$x/$top/bin/cainary" --version)" = "cainary $version" ] || die "tarball cainary version"
         file "$x/$top/bin/cainary" | grep -q 'static' || die "tarball cainary is not static"
         [ "$("$x/$top/bin/cainary-otel-debug" --version)" = "cainary-otel-debug $version" ] ||
             die "tarball cainary-otel-debug version"
         file "$x/$top/bin/cainary-otel-debug" | grep -q 'static' || die "tarball cainary-otel-debug is not static"
-        [ "$("$x/$top/libexec/cainary/cainary-bind-helper" --version)" = "cainary-bind-helper $version protocol 1" ] ||
+        [ "$(as_nobody "$x/$top/libexec/cainary/cainary-bind-helper" --version)" = "cainary-bind-helper $version protocol 1" ] ||
             die "tarball cainary-bind-helper version"
         file "$x/$top/libexec/cainary/cainary-bind-helper" | grep -q 'static' || die "tarball cainary-bind-helper is not static"
         [ -u "$x/$top/libexec/cainary/cainary-bind-helper" ] && die "tarball cainary-bind-helper is setuid"
-        [ "$("$x/$top/libexec/cainary/cainary-hosts-helper" --version)" = "cainary-hosts-helper $version protocol 1" ] ||
+        [ "$(as_nobody "$x/$top/libexec/cainary/cainary-hosts-helper" --version)" = "cainary-hosts-helper $version protocol 1" ] ||
             die "tarball cainary-hosts-helper version"
         file "$x/$top/libexec/cainary/cainary-hosts-helper" | grep -q 'static' || die "tarball cainary-hosts-helper is not static"
         [ -u "$x/$top/libexec/cainary/cainary-hosts-helper" ] && die "tarball cainary-hosts-helper is setuid"
@@ -267,7 +279,7 @@ smoke() {
             pkg_install jq "$(cd "$dir" && pwd)/cainary_${version}_$deb_arch.deb"
             ;;
         rpm)
-            pkg_install jq "$(cd "$dir" && pwd)/cainary-$version-1.$ARCH.rpm"
+            pkg_install jq util-linux "$(cd "$dir" && pwd)/cainary-$version-1.$ARCH.rpm"
             ;;
         tar)
             [ "$PM" = pacman ] || die "the tarball smoke test runs on Arch (PKGBUILD depends)"
@@ -289,8 +301,8 @@ smoke() {
     cainary-otel-debug --list-presets
     [ "$(cainary-tray --version)" = "cainary-tray $version" ]
     if [ "$kind" != tar ]; then
-        [ "$(/usr/libexec/cainary/cainary-bind-helper --version)" = "cainary-bind-helper $version protocol 1" ]
-        [ "$(/usr/libexec/cainary/cainary-hosts-helper --version)" = "cainary-hosts-helper $version protocol 1" ]
+        [ "$(as_nobody /usr/libexec/cainary/cainary-bind-helper --version)" = "cainary-bind-helper $version protocol 1" ]
+        [ "$(as_nobody /usr/libexec/cainary/cainary-hosts-helper --version)" = "cainary-hosts-helper $version protocol 1" ]
     fi
     CAINARY_UI_SNAPSHOTS="$(mktemp -d)" QT_QPA_PLATFORM=offscreen cainary-tray --self-test
     set +x

@@ -484,12 +484,17 @@ jobs:
             file "${BIN}" | grep -q static
             test "$("${BIN}" --version)" = "${NAME} ${VERSION}"
           done
-          HELPER="target/${{ matrix.arch }}-unknown-linux-musl/release/cainary-bind-helper"
-          file "${HELPER}" | grep -q static
-          test "$("${HELPER}" --version)" = "cainary-bind-helper ${VERSION} protocol 1"
-          HOSTS_HELPER="target/${{ matrix.arch }}-unknown-linux-musl/release/cainary-hosts-helper"
-          file "${HOSTS_HELPER}" | grep -q static
-          test "$("${HOSTS_HELPER}" --version)" = "cainary-hosts-helper ${VERSION} protocol 1"
+          # The root helpers answer --version only to a caller that isn't root, and this
+          # container runs as root: check them as nobody, from a directory nobody can enter.
+          CHECK="$(mktemp -d)"
+          chmod 755 "${CHECK}"
+          for NAME in cainary-bind-helper cainary-hosts-helper; do
+            BIN="target/${{ matrix.arch }}-unknown-linux-musl/release/${NAME}"
+            file "${BIN}" | grep -q static
+            cp "${BIN}" "${CHECK}/"
+            test "$(setpriv --reuid=65534 --regid=65534 --clear-groups -- "${CHECK}/${NAME}" --version)" = "${NAME} ${VERSION} protocol 1"
+          done
+          rm -rf "${CHECK}"
 
       - name: Keep the CLI, the debug collector and the root helpers
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

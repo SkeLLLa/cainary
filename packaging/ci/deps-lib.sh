@@ -5,7 +5,7 @@
 #
 #   deps_pkgs PM KIND   print the packages, one per line.  PM: apt, dnf or pacman.
 #       rust      curl, git, certificates, the host C compiler that build scripts link
-#                 with, and musl (the static CLI)
+#                 with, musl (the static CLI), and setpriv where the image lacks it
 #       build     the tray's compiler, Qt 6 development packages, D-Bus and validators
 #       tools     shellcheck and jq, which a workstation gets from mise instead
 #       package   what packaging/linux.sh needs on top of build (dpkg-shlibdeps; find-requires)
@@ -16,7 +16,7 @@
 deps_pkgs() {
     case "$1:$2" in
         apt:rust) echo "ca-certificates curl gcc libc6-dev git musl-tools" ;;
-        dnf:rust) echo "ca-certificates curl git-core musl-gcc" ;;
+        dnf:rust) echo "ca-certificates curl git-core musl-gcc util-linux" ;;
         pacman:rust) echo "ca-certificates curl gcc git musl" ;;
         apt:build)
             echo "build-essential pkg-config musl-tools
