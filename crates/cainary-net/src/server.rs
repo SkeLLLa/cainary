@@ -1,4 +1,4 @@
-//! The listener: the only `std::net` in this crate (design §8.2, §14.1, §14.4, §14.5).
+//! The listener: the only `std::net` in this crate.
 //!
 //! Loopback only, no outbound connection of any kind, bind from `SocketAddr` values (no DNS).
 //! One acceptor per listener, at most 16 connection threads, at most 2 parse/match jobs at a
@@ -39,7 +39,7 @@ pub const PEER_REFUSED: &str = "connection from another local user refused";
 /// unreadable table. A vanished client isn't blamed on another user.
 pub const PEER_UNCONFIRMED: &str = "connection refused: couldn't confirm it comes from this user";
 
-/// Who may connect (design D3): the check that a client's socket belongs to the user running
+/// Who may connect: the check that a client's socket belongs to the user running
 /// the collector. Nothing outside the tests can pick `Off` or `Fake`: the CLI builds its
 /// `Config` from `Tunables::default()` and has no flag or variable for either.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,7 +125,7 @@ pub struct Config {
     pub sink: Box<dyn Write + Send>,
     pub status: Box<dyn Write + Send>,
     pub generator: String,
-    /// Takeover mode (design §16): the TLS state, and the port the exporter's URL uses.
+    /// Takeover mode: the TLS state, and the port the exporter's URL uses.
     #[cfg(feature = "tls")]
     pub tls: Option<TlsRun>,
 }
@@ -346,7 +346,7 @@ pub fn bind(
 }
 
 impl Bound {
-    /// Whatever privilege bind needed is dropped here, on the calling thread (design §16.7.5):
+    /// Whatever privilege bind needed is dropped here, on the calling thread:
     /// in every mode of every build, since a file capability applies to the executable however
     /// it is invoked. Threads started afterwards inherit the clean state; threads that exist
     /// already must drop their own. Fail-closed: an error ends the run.
@@ -621,7 +621,7 @@ fn accept_loop(l: TcpListener, sh: Arc<Shared>) {
         };
         let accepted_at = Instant::now();
         let _ = stream.set_nonblocking(false);
-        // The slot comes before any TLS state exists for the connection (design §16.7.3).
+        // The slot comes before any TLS state exists for the connection.
         if sh.active.fetch_add(1, Ordering::SeqCst) >= sh.t.max_connections {
             sh.active.fetch_sub(1, Ordering::SeqCst);
             // No handshake and no plaintext reply on a TLS port: just close.
@@ -1127,7 +1127,7 @@ fn request<S: Wire>(reader: &mut BufReader<Guarded<S>>, sh: &Shared) -> Next {
         }};
     }
 
-    // DNS rebinding and browsers (design §14.4, §16.7.4): before any body is read or 100 sent.
+    // DNS rebinding and browsers: before any body is read or 100 sent.
     let hosts: Vec<&str> = head
         .headers
         .iter()
@@ -1239,7 +1239,7 @@ fn request<S: Wire>(reader: &mut BufReader<Guarded<S>>, sh: &Shared) -> Next {
     }
     let bytes = body.len();
     let meta = otlp::Meta {
-        // Paths are never printed: the canonical one, or a fixed marker (design §16.7.7).
+        // Paths are never printed: the canonical one, or a fixed marker.
         path: tls_mode.then_some(path.unwrap_or("<custom path>")),
         host: batch_host.as_deref(),
         format,
@@ -1279,7 +1279,7 @@ fn request<S: Wire>(reader: &mut BufReader<Guarded<S>>, sh: &Shared) -> Next {
     }
 }
 
-/// Takeover mode's `Host` rule (design §16.7.4): exactly one, a DNS name equal to the SNI the
+/// Takeover mode's `Host` rule: exactly one, a DNS name equal to the SNI the
 /// handshake accepted, with no port (443) or a port the listener is reachable on.
 fn takeover_host(
     hosts: &[&str],

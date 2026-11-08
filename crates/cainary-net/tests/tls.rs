@@ -1,4 +1,4 @@
-//! The endpoint takeover end to end (design §16.6, §16.7): a rustls client that trusts only the
+//! The endpoint takeover end to end: a rustls client that trusts only the
 //! certificate file the collector wrote. Everything uses `--port 0`-style ephemeral ports; 443 is
 //! never bound.
 #![cfg(feature = "tls")]
@@ -483,7 +483,7 @@ fn takeover_routing_is_post_only_and_needs_one_signal() {
         "POST https://{HOST}/v1/logs HTTP/1.1\r\nHost: {h}\r\nContent-Length: 2\r\n\r\n{{}}"
     );
     assert_eq!(send(abs.into_bytes()).unwrap().0, 400);
-    // The query is ignored; the strict §14 limits still apply (br is refused, gzip is read).
+    // The query is ignored; the strict architecture.md §12.2 limits still apply (br is refused, gzip is read).
     assert_eq!(
         send(request("/v1/logs?token=abc", Some(&h), "", &logs))
             .unwrap()
@@ -1064,7 +1064,7 @@ fn capabilities_are_dropped_after_bind_in_plain_mode_too() {
     let _ = std::fs::remove_dir_all(&run.dir);
 }
 
-// ── handshake error categories (design §16.7, fixed messages, aggregated) ───────────────────
+// ── handshake error categories (fixed messages, aggregated) ───────────────────
 
 fn wait_tls(run: &Run, needle: &str) -> String {
     let end = Instant::now() + Duration::from_secs(5);
@@ -1152,7 +1152,7 @@ fn every_handshake_failure_category_has_its_own_fixed_message() {
     let _ = std::fs::remove_dir_all(&run.dir);
 }
 
-// ── own-user check (design D3) ─────────────────────────────────────────────────────────────
+// ── own-user check ─────────────────────────────────────────────────────────────
 
 /// The `/proc/net/tcp` parsing end to end, over TLS: this process is the client, and it is us.
 #[cfg(target_os = "linux")]

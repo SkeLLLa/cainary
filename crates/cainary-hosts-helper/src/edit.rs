@@ -1,5 +1,4 @@
-//! The pure core: what `set` and `clear` do to the bytes of `/etc/hosts` (design §3 "Managed
-//! block", "Lines and terminators", "Operations"). No file access, no `libc`.
+//! The pure core: what `set` and `clear` do to the bytes of `/etc/hosts`. No file access, no `libc`.
 
 use crate::helper::Fail;
 

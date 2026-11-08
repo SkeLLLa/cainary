@@ -994,7 +994,7 @@ fn rejection_lines_are_rate_limited() {
     srv.shutdown();
 }
 
-// ── own-user check (design D3) ─────────────────────────────────────────────────────────────
+// ── own-user check ─────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "linux")]
 fn euid() -> u32 {
@@ -1844,7 +1844,7 @@ fn commands_that_never_bind_still_work() {
     }
 }
 
-// ---- --listen-fd: sockets inherited from the parent (design §12.1) ----
+// ---- --listen-fd: sockets inherited from the parent ----
 
 mod listen_fd {
     use super::*;

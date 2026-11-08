@@ -1,5 +1,5 @@
 //! A minimal freedesktop Secret Service client (`org.freedesktop.secrets`), hand-written on
-//! zbus so no GTK, glib or libsecret comes in. Design and error mapping: docs/design/secret-store.md.
+//! zbus so no GTK, glib or libsecret comes in. Errors map to [`SecretError`]; see docs/linux.md.
 //!
 //! The session is always `plain`: the secret crosses the session bus unencrypted. That keeps
 //! the client small, and the bus is only readable by this user and the bus daemon. It gives

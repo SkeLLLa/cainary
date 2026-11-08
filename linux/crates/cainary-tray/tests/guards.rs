@@ -1,4 +1,4 @@
-//! Dependency and source guards for the Linux workspace (linux-plan §8).
+//! Dependency and source guards for the Linux workspace.
 
 use std::fs;
 use std::path::{Path, PathBuf};

@@ -108,7 +108,7 @@ private func isAuthorized(_ center: NotificationCentering) async -> Bool {
     }
 }
 
-/// Posts the collector's red-flag alerts (design §9): plain text, one per `identifier`, so a
+/// Posts the collector's red-flag alerts: plain text, one per `identifier`, so a
 /// newer alert for the same pattern replaces the older banner. Whether to notify at all is the
 /// store's decision (the "Notify about red flags" pref).
 @MainActor

@@ -1,4 +1,4 @@
-//! `--trust` (design §17): let Claude Code and Codex trust the takeover CA.
+//! `--trust`: let Claude Code and Codex trust the takeover CA.
 //!
 //! On an explicit action only, this edits one key (`env.NODE_EXTRA_CA_CERTS`) in the user's
 //! Claude Code settings, after a backup, and can undo it; and it writes combined certificate
@@ -90,7 +90,7 @@ impl Action {
     }
 }
 
-/// One `trust` line (design §17.1). `message` is fixed text; everything variable is a field.
+/// One `trust` line. `message` is fixed text; everything variable is a field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Line {
     pub target: Target,

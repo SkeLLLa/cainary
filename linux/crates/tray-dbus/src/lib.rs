@@ -1,4 +1,4 @@
-//! The tray's D-Bus side (plan §5, I5, I6): the StatusNotifierItem, notifications, the
+//! The tray's D-Bus side: the StatusNotifierItem, notifications, the
 //! single-instance interface, resume from sleep, the file manager. No Qt
 //! here; it all runs on one thread and talks to the controller only through channels.
 

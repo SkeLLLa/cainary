@@ -264,7 +264,7 @@ open; the details window SwiftUI opens at launch is closed again.
 
 An off-by-default toggle in Settings that runs `cainary-otel-debug`, a separate local OTLP/HTTP
 receiver, as a child of the app, so you can see what an AI tool's telemetry export contains. The
-design is `docs/design/otel-payload-preview.md` §8, §9 and §14. `cainary scan` never starts it, and
+helper itself is described in [architecture.md](architecture.md) §12. `cainary scan` never starts it, and
 the app never talks to it over the network: it reads the child's stdout.
 
 - **Helper:** `Contents/Helpers/cainary-otel-debug`; DEBUG builds also honour
@@ -313,7 +313,7 @@ the app never talks to it over the network: it reads the child's stdout.
 - **Notifications:** a red flag posts a plain-text notification titled `Red flag: <pattern>` with
   the body `<event> · <attribute> (<match>)`, at most one per pattern per 60 s. Control and bidi
   characters are escaped first. A click opens the pane.
-- **HTTPS takeover** (design §16, §17; `TakeoverSettingsSection`, `TrustStore`, `TrustClient`).
+- **HTTPS takeover** (architecture.md §12.10, §12.11; `TakeoverSettingsSection`, `TrustStore`, `TrustClient`).
   For an agent whose managed settings pin its telemetry to an HTTPS host. The collector forwards
   nothing: while it runs, your organization's collector receives nothing for those names.
   - **Settings:** "Use HTTPS takeover" adds `--tls`, one `--tls-host <name>` per valid host

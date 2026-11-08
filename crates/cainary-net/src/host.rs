@@ -1,4 +1,4 @@
-//! DNS host-name validation for `--tls-host` (design §16.1, §16.7.6). Pure; not feature-gated, so
+//! DNS host-name validation for `--tls-host`. Pure; not feature-gated, so
 //! the argument parser can reject a bad name in any build.
 
 pub const MAX_HOSTS: usize = 32;

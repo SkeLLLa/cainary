@@ -119,7 +119,27 @@ else `Fusion`.
 **Secret store.** Keys that must survive a restart (the rules key, the proxy CA key) go in the
 login keyring through a small hand-written Secret Service client in `tray-dbus` (`secrets.rs`),
 with no libsecret, glib or GTK. Startup never unlocks the keyring; prompts only follow a user
-action. Design, error mapping and the same-user caveat: [design/secret-store.md](design/secret-store.md).
+action.
+
+- **What is stored.** Only the rules key (`rules-key/v1`) and the proxy CA key (`proxy-ca-key/v1`),
+  as opaque bytes under an item name in the default collection (`ReadAlias("default")`; cAInary
+  never creates one). Never a plaintext key file as a fallback. Items carry only the attributes
+  `xdg:schema = ua.SkeLLLa.cAInary.Secret`, `application = cainary` and `item = <name>`; neither
+  attributes nor labels hold secret material, since attributes are readable while the collection
+  is locked.
+- **Same-user caveat.** Each call opens a `plain` session, so the secret crosses the session bus
+  unencrypted; the bus is private to the user, but this gives **no protection against other
+  programs running as the same user**, which can read the same item (the Secret Service has no
+  per-application access) or claim `org.freedesktop.secrets` when no keyring runs. The store
+  protects against stray key files, not against hostile code running as the user. The UI says:
+  "Stored in your login keyring. Other programs running as you can read it."
+- **Errors.** `Unavailable` (no service, or no default collection), `Locked` (locked and no
+  prompt allowed, or the prompt was dismissed), `Malformed` (an unexpected reply) and `Bus`
+  (anything else). A missing item is not an error: a read answers "none" and a delete succeeds.
+  An unlock prompt is given up after 120 s, or when the keyring service goes away.
+- **No surprise prompts.** Startup, and anything the user didn't click, never unlocks: a locked
+  keyring is `Locked`. If the stored key can't be read, the feature that needs it refuses to start
+  with the reason; it never generates a replacement or falls back to a file.
 
 ## 2. Popup placement
 

@@ -1193,9 +1193,24 @@ Error bodies are `{"code":3,"message":"…"}` with fixed messages. Exporters ret
 to **10 per second**, then one summary line with `dropped`.
 
 Protobuf and gzip are read (the default OTLP protocol is protobuf, and under takeover the
-organization's settings choose it); the setup lines still ask for `http/json`. gRPC and zstd are
-not supported. A protobuf request gets protobuf answers: an empty `200`, and `google.rpc.Status`
-error bodies. Limits and details: otel-payload-preview.md §18.
+organization's settings choose it); the setup lines still ask for `http/json`. Content-Type
+parameters are ignored and values compared in any case. gRPC (HTTP/2), zstd and deflate are not
+supported, and the `415` messages say so. A protobuf request is transcoded to OTLP/JSON, then
+classified, matched and masked like any other body. A protobuf request gets protobuf answers: an
+empty `200` in the request's media type, and a `google.rpc.Status` (field 1 `code` = 3, field 2
+`message`) for errors, with the same HTTP status and text as the JSON error. The signal comes from
+the path; in takeover mode a protobuf body on a path that names none is `400`, because it can't be
+sniffed the way JSON can.
+
+- **gzip limits.** The 16 MiB cap applies to the decoded size; the 20 MiB wire budget counts the
+  compressed bytes. Several gzip members are read as one stream. Decompression has a budget of 2 s
+  (or the request deadline if sooner), checked at least every 64 KiB of compressed input: past it
+  the answer is `413` `compressed body too costly to decompress`, and so is a protobuf body whose
+  deadline passed before transcoding.
+- **Protobuf limits.** Nesting depth ≤ 100 and ≤ 600,000 values (room for 10,000 histogram points
+  with 20 buckets). A malformed or non-UTF-8 body is `400`, too many values `413`.
+- Decoding and transcoding run inside the job semaphore. A `batch` line reports `format` and
+  `encoding`, and `bytes` is the wire size.
 
 **Own-user check (Linux).** Before TLS and before a byte is read, the client's socket is looked
 up in `/proc/net/tcp` and `/proc/net/tcp6` (`peer.rs` parses, `peer_proc.rs` streams them line
@@ -1207,8 +1222,13 @@ the same peer address. Another uid is refused with `connection from another loca
 no match (after up to three reads 5 ms apart), several matches (final, not retried), the kernel's
 overflow uid on either side, or unreadable tables with `connection refused: couldn't confirm it
 comes from this user`.
-Plain mode answers `403`; TLS and takeover close without a reply. There is no check on macOS (no
-`/proc`; see macos.md). Details: otel-payload-preview.md §14.4.
+Plain mode answers `403`; TLS and takeover close without a reply; each refusal is one
+rate-limited `error` line. There is no check on macOS (no `/proc`, and no equivalent that needs no
+extra privilege; see macos.md), so the unauthenticated note stands there. The tables are read with
+no size limit, skipping over-long lines, and rows printed twice while the table changes count
+once. Programs of the same user are still not told apart, and the check says nothing about which
+program sent a request; in takeover mode it keeps another user's agents' telemetry out of this
+user's feed and log.
 
 ### 12.3 What is printed (one policy for every payload-derived string)
 
@@ -1376,7 +1396,7 @@ in argv).
   never its text. It keeps pattern text out of argv, where any process of the same user can read
   it. After the config line, stdin stays open as the lifeline.
 - The apps' stream handling (line cap, retention, alerts, notifications) and their toggle UI are
-  specified in `docs/design/otel-payload-preview.md` §9 and each app's own document.
+  described in [macos.md](macos.md) §2.8 and [linux.md](linux.md) §10.
 
 ### 12.8 "Point an agent at it"
 
@@ -1401,10 +1421,12 @@ endpoint:
 
 ### 12.9 Goal 3 compatibility
 
-The collector stays inbound-only for good. The traffic watchdog (`docs/design/ai-traffic-watchdog.md`)
-would be a separate `cainary-proxy` binary behind a non-default `mitm` feature, with its own
-`MITM_ONLY` package set; guard 4's closure rule is a table so a third set is one more row. The
-JSON-lines contract is open for a future `leak` type, and `redflag` is reusable.
+The collector stays inbound-only for good. A traffic watchdog would be a separate, explicit,
+loopback-only `cainary-proxy` binary behind a non-default `mitm` feature, for traffic from a
+client the user points at it (never transparent capture or a system proxy change). It would be
+the only outbound code, and only to the host that client asked for, with its own package set;
+guard 4's closure rule is a table so a third set is one more row. The JSON-lines contract is open
+for a future `leak` type, and `redflag` is reusable.
 
 ### 12.10 Endpoint takeover (`--tls`)
 

@@ -1,6 +1,6 @@
 import Foundation
 
-// The state behind the "HTTPS takeover" buttons (design §17.4). Every action is one
+// The state behind the "HTTPS takeover" buttons. Every action is one
 // `cainary-otel-debug` call; nothing is written until the user confirms the previewed change.
 
 @MainActor

@@ -1,8 +1,8 @@
-//! Routing and the OTLP/JSON pipeline (design §8.2, §14.2): from a request body
+//! Routing and the OTLP/JSON pipeline: from a request body
 //! to the owned events the output thread prints. Pure: no I/O.
 //!
 //! Classification is `cainary_core::rules::otel_classify`; this module applies the output policy
-//! (design §14.2) to everything it returns: names print verbatim only when they are catalog
+//! to everything it returns: names print verbatim only when they are catalog
 //! entries or pass the name rule after a complete red-flag scan, values are masked.
 
 use crate::decode::{Encoding, Format};
@@ -19,11 +19,11 @@ pub const MAX_ATTRS: usize = 20_000;
 pub const MAX_ALERT_GROUPS: usize = 1024;
 pub const MAX_EVENT_SAMPLES: usize = 8;
 pub const MAX_IDENT: usize = 256;
-/// A raw `--show-values` match is cut here; the limits of §14 still apply.
+/// A raw `--show-values` match is cut here; the limits of architecture.md §12.2 still apply.
 const MAX_RAW_MATCH: usize = 1024;
 /// Leaves (strings, numbers, nested keys) examined per attribute value.
 const MAX_LEAVES_PER_VALUE: usize = 20_000;
-/// Text-mode output kept per batch, and per value (design §14.1: retained output is bounded).
+/// Text-mode output kept per batch, and per value.
 const MAX_TEXT_BODY: usize = 256 << 10;
 const MAX_TEXT_VALUE: usize = 512;
 /// What the output thread adds in front of a batch's JSON tail.
@@ -84,7 +84,7 @@ pub fn route(method: &str, path: &str) -> Route {
     }
 }
 
-/// Takeover mode (design §16.3, §16.7.7): the exporter's own URL path is an organization's, so
+/// Takeover mode: the exporter's own URL path is an organization's, so
 /// the signal comes from the path suffix `/v1/<signal>`, else the last path segment, else (the
 /// caller falls back to) the JSON root key. The query is ignored by the caller.
 pub fn route_any(path: &str) -> Option<Signal> {
@@ -297,7 +297,7 @@ fn kind_str(k: ItemKind) -> &'static str {
     }
 }
 
-// ── naming policy and alerts (design §14.2) ──────────────────────────────────────────────────
+// ── naming policy and alerts ──────────────────────────────────────────────────
 
 /// `^[A-Za-z0-9_.:/-]{1,128}$`
 fn safe_name(s: &str) -> bool {
@@ -463,7 +463,7 @@ impl<'m> Proc<'m> {
         let mut hits = std::mem::take(&mut self.hits);
         hits.clear();
         let complete = self.scanner.scan(s, &mut hits);
-        // Verbatim only after a complete, negative scan (design §14.2).
+        // Verbatim only after a complete, negative scan.
         let shown = self
             .namer
             .name(s, kind, known, !hits.is_empty() || !complete);
@@ -519,7 +519,7 @@ impl<'m> Proc<'m> {
             return;
         }
         // Streamed: borrowed text goes straight to the scanner, nothing is built per leaf, and
-        // the walk stops as soon as a budget is spent (design §14.1, §14.6).
+        // the walk stops as soon as a budget is spent.
         let mut hits = std::mem::take(&mut self.hits);
         let mut leaves = 0usize;
         let end = otel_classify::visit_text(v, &mut |part| {
@@ -551,7 +551,7 @@ impl<'m> Proc<'m> {
         escape(&cut(&self.display(v), MAX_TEXT_VALUE))
     }
 
-    /// The `F` object of design §8.6.
+    /// One field as the `F` object of the JSON line.
     fn field(&self, label: &str, f: &Field<'_>) -> Value {
         let (ty, len) = any_type(f.value);
         let mut m = Map::new();
@@ -831,7 +831,7 @@ pub fn process_with(
         }).collect::<Vec<_>>(),
     });
 
-    // The host is attacker-influenced metadata like any name: the §14.2 policy applies, after the
+    // The host is attacker-influenced metadata like any name: the architecture.md §12.3 policy applies, after the
     // rest has been scanned so an exhausted budget labels it instead of passing it through.
     let host_label = meta
         .host

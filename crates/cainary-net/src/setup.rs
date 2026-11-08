@@ -1,4 +1,4 @@
-//! The "point an agent at it" lines (design §8.7): `--help`, the text-mode startup note on
+//! The "point an agent at it" lines: `--help`, the text-mode startup note on
 //! stderr, and `hello.setup`.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6,7 +6,7 @@ pub struct Setup {
     pub claude_code: Vec<String>,
     pub codex: Vec<String>,
     pub notes: Vec<String>,
-    /// Takeover mode only: the instructions of design §16 (hosts lines, redirect, trust, undo).
+    /// Takeover mode only: the instructions of architecture.md §12.10 (hosts lines, redirect, trust, undo).
     pub takeover: Option<Vec<String>>,
 }
 
@@ -79,7 +79,7 @@ pub struct Takeover<'a> {
     pub v6: bool,
 }
 
-/// The takeover instructions (design §16.4, §16.7.5, §16.7.7), as lines. Printed, never run:
+/// The takeover instructions, as lines. Printed, never run:
 /// the program calls neither sudo, nft nor anything that edits `/etc/hosts`. Commands
 /// are valid in fish and in sh.
 pub fn takeover(t: &Takeover<'_>) -> Vec<String> {

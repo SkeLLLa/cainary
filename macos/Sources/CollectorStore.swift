@@ -1,6 +1,6 @@
 import Foundation
 
-// State of the opt-in OTel debug collector (design §9): the child's lifecycle, what it printed
+// State of the opt-in OTel debug collector: the child's lifecycle, what it printed
 // (kept in memory only, bounded) and red-flag notifications. No auto-restart: a crash shows
 // "Stopped" with Retry. The persisted `enabled` means intent, so it starts at launch.
 
@@ -36,7 +36,7 @@ final class CollectorStore: ObservableObject {
     static let maxAlerts = 200
     static let maxRetainedBytes = 16 << 20
     static let notifyInterval: TimeInterval = 60
-    /// Shown as the quit budget (design §14.9); a toggle off allows 2 s.
+    /// Shown as the quit budget; a toggle off allows 2 s.
     static let quitGrace: TimeInterval = 1
     static let stopGrace: TimeInterval = 2
 

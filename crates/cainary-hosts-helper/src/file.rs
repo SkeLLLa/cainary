@@ -1,4 +1,4 @@
-//! The file procedure (design §3). Every step is descriptor-relative (`openat` and friends on a
+//! The file procedure. Every step is descriptor-relative (`openat` and friends on a
 //! directory descriptor, `O_CLOEXEC` throughout), and this is the only file that touches the file
 //! system: the whole crate goes through the libc `*at` calls below. The names it may touch are the
 //! `c"…"` constants right here. `apply` walks to `/etc`; `apply_in` takes the directory

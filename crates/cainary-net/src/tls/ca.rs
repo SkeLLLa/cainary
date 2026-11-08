@@ -1,4 +1,4 @@
-//! The ephemeral CA and the per-host leaves (design §16.2, §16.7.1, §16.7.6).
+//! The ephemeral CA and the per-host leaves.
 //!
 //! A new CA per start: ECDSA P-256, name-constrained to exactly the `--tls-host` names. Its
 //! private key lives in this struct and nowhere else: it is never serialized, written, printed or
@@ -350,7 +350,7 @@ mod tests {
         // A subordinate CA under it, and a leaf below that for a name the constraints don't
         // permit. (webpki does not enforce a *trust anchor's* pathLen, so a sub-CA leaf for a
         // *permitted* name verifies; that is the "defence in depth, not containment" of
-        // design 16.7.1, and why the leaf issuer and the SNI allowlist carry the restriction.)
+        // architecture.md §12.10, and why the leaf issuer and the SNI allowlist carry the restriction.)
         let mut sub = CertificateParams::new(Vec::<String>::new()).unwrap();
         sub.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
         sub.key_usages = vec![KeyUsagePurpose::KeyCertSign];

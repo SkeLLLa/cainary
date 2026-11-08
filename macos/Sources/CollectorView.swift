@@ -1,6 +1,6 @@
 import SwiftUI
 
-// The Details pane for the opt-in OTel debug collector (design §9): status, how to point an agent
+// The Details pane for the opt-in OTel debug collector: status, how to point an agent
 // at it, red flags, and what each batch carried, drawn from `summary`. Values are masked by the
 // collector; "Raw records" shows its masked `resources`. Nothing is computed here.
 

@@ -1,5 +1,5 @@
 //! The same OTLP export in every way a client may send it: JSON, protobuf, either one gzipped.
-//! Shared by the plain and the takeover tests (design §8.2).
+//! Shared by the plain and the takeover tests.
 #![allow(dead_code)]
 
 use flate2::{Compression, write::GzEncoder};

@@ -1,4 +1,4 @@
-//! The output thread and the line formats (design §8.6, §14.2). Everything that reaches a
+//! The output thread and the line formats. Everything that reaches a
 //! terminal, the log file or a GUI passes through here, so this is where escaping lives.
 
 use crate::logfile::LogFile;

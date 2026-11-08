@@ -9,7 +9,7 @@ rust-version.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
-# Until design §12 is answered; `cargo install cainary` stays network-free.
+# Not published: `cargo install cainary` stays network-free.
 publish = false
 
 [lib]
@@ -35,5 +35,5 @@ time = { workspace = true, optional = true }
 
 [features]
 default = []
-# The endpoint takeover (`--tls`, design §16). Release builds enable it.
+# The endpoint takeover (`--tls`). Release builds enable it.
 tls = ["dep:rustls", "dep:rcgen", "dep:time"]

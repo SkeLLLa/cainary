@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-// The collector pane (design §9) on the sample lines of the contract (Tests/Support). The Details
+// The collector pane on the sample lines of the contract (Tests/Support). The Details
 // split view doesn't render in ImageRenderer, so the pane is rendered directly.
 
 @MainActor

@@ -1,4 +1,4 @@
-//! Where the CLI and the icons are (plan §4, I8). There is never a `PATH` lookup: a directory
+//! Where the CLI and the icons are. There is never a `PATH` lookup: a directory
 //! earlier in `PATH` must not be able to stand in for the scanner.
 
 use std::ffi::OsString;

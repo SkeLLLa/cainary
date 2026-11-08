@@ -1,4 +1,4 @@
-//! Pure HTTP/1.1 parsing and response bytes (design §8.2). Reads from `impl BufRead`; no sockets,
+//! Pure HTTP/1.1 parsing and response bytes. Reads from `impl BufRead`; no sockets,
 //! no clocks (the server's reader enforces the deadlines).
 
 use std::io::{self, BufRead, Read};
@@ -367,7 +367,7 @@ impl Response {
             status,
             headers: vec![("Content-Type", "application/json".to_string())],
             body: body.into_bytes(),
-            // Every non-200 closes (design §8.2).
+            // Every non-200 closes.
             close: status != 200 || !keep_alive,
         }
     }

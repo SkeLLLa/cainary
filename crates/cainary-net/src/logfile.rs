@@ -1,4 +1,4 @@
-//! The log file: the only writer in this crate (design §8.4, §14.3).
+//! The log file: the only writer in this crate.
 //!
 //! The file is opened `O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC` and validated on the descriptor
 //! (`fstat`), never by path afterwards, so there's no check-then-use window to race.

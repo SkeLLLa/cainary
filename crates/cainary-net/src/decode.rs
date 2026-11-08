@@ -1,4 +1,4 @@
-//! What the body is and how to get the OTLP/JSON document out of it (design §8.2): the
+//! What the body is and how to get the OTLP/JSON document out of it: the
 //! `Content-Type` / `Content-Encoding` check, then gunzip and protobuf transcoding. Pure: reads
 //! from a byte slice, no I/O.
 

@@ -1,4 +1,4 @@
-//! The two bounded resources between connections and the output thread (design §14.1):
+//! The two bounded resources between connections and the output thread:
 //! a counting semaphore for parse/match jobs, and an output queue bounded by items and bytes.
 //! Both wait with a deadline, so a stalled consumer turns into a 503, never into memory.
 

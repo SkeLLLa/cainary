@@ -1,4 +1,4 @@
-//! What crosses between the D-Bus thread and the controller (plan I5). The controller sends
+//! What crosses between the D-Bus thread and the controller. The controller sends
 //! [`Command`]s in; everything the desktop asks for comes back as a [`UiEvent`].
 
 /// Something the desktop asked the app to do.

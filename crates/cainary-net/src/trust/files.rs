@@ -273,7 +273,7 @@ pub(super) fn unlink_unchanged(
 }
 
 /// The one lock every `--trust` and `--trust-status` call holds across recovery, reads, edits and
-/// the final state write (design §17.2). Not the CA directory's run lock: `--trust` has to work
+/// the final state write. Not the CA directory's run lock: `--trust` has to work
 /// while the collector runs. Dropped (and released) with the file.
 pub(crate) struct TrustLock {
     _f: File,

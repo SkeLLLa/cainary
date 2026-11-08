@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-// "What it sends" (design §7): what a telemetry export carries, drawn from the core's `payload`.
+// "What it sends": what a telemetry export carries, drawn from the core's `payload`.
 // Text, labels and the sample come from the core; nothing here is computed from the scan.
 
 extension Sent {

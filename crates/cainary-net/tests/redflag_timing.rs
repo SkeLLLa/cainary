@@ -1,4 +1,4 @@
-//! Timing and false-positive surveys (design §8.5, §14.6). All `#[ignore]`: run with
+//! Timing and false-positive surveys. All `#[ignore]`: run with
 //! `cargo test -p cainary-net --release -- --ignored --nocapture`.
 
 use cainary_net::redflag::{self, Kind, Matcher, Pattern, presets};
@@ -124,9 +124,9 @@ fn bench(values: &[String], mut f: impl FnMut(&str)) -> f64 {
     )
 }
 
-/// The text path's per-value cost (20 literals, 10 present). Design §13 records the one-off
-/// comparison with Aho-Corasick (0.87x, so the dependency was dropped); this keeps the number
-/// visible so a regression shows.
+/// The text path's per-value cost (20 literals, 10 present). A one-off
+/// comparison with Aho-Corasick found it no faster (0.87x, so the dependency was dropped); this
+/// keeps the number visible so a regression shows.
 #[test]
 #[ignore]
 fn text_path_cost() {

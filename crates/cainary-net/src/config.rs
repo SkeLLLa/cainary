@@ -1,4 +1,4 @@
-//! `--config-stdin` (design §14.7): the first stdin line is one JSON object with the red-flag
+//! `--config-stdin`: the first stdin line is one JSON object with the red-flag
 //! patterns, so a GUI never puts pattern text in argv (visible in `ps`).
 //!
 //! Errors name the pattern or the key, never its text, and serde's own messages (which can

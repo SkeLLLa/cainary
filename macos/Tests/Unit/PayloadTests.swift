@@ -1,6 +1,6 @@
 import Foundation
 
-// The `payload` of a finding (design §2, §7): every core golden decodes with it, and a payload
+// The `payload` of a finding: every core golden decodes with it, and a payload
 // that is malformed or from a newer core never breaks the report.
 
 private func goldenURLs() -> [URL] {

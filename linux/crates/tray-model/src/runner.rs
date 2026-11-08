@@ -1,4 +1,4 @@
-//! Runs the CLI with hard bounds (plan §4) and decodes what it prints. This is the only place
+//! Runs the CLI with hard bounds and decodes what it prints. This is the only place
 //! the tray starts a process.
 //!
 //! The child gets its own process group, so a deadline kills everything it started. Pipes are

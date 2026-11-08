@@ -1,4 +1,4 @@
-//! OTLP/HTTP protobuf bodies transcoded into OTLP/JSON (design §8.2): `to_json` turns an
+//! OTLP/HTTP protobuf bodies transcoded into OTLP/JSON: `to_json` turns an
 //! `Export*ServiceRequest` into the `serde_json::Value` that `otlp` already consumes for JSON
 //! bodies, so everything downstream stays one pipeline. Pure: no I/O, no dependencies, no
 //! `unsafe`.

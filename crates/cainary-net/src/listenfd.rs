@@ -1,4 +1,4 @@
-//! Already-bound listening sockets handed down by the parent (`--listen-fd`, design §12.1).
+//! Already-bound listening sockets handed down by the parent (`--listen-fd`).
 //!
 //! The tray gets loopback sockets for a privileged port from a root helper and passes them on
 //! as inherited file descriptors. Nothing the parent says is trusted: every descriptor is

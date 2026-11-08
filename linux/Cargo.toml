@@ -13,7 +13,7 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/SkeLLLa/cainary"
 homepage = "https://github.com/SkeLLLa/cainary"
 
-# The only direct dependencies the tray may have (linux-plan §8, guard L1). Adding one is a
+# The only direct dependencies the tray may have (guard L1). Adding one is a
 # reviewed change; crates/cainary-tray/tests/guards.rs checks every crate manifest and Cargo.lock.
 [workspace.dependencies]
 cainary-tray-model = { path = "crates/tray-model" }

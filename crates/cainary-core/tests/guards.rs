@@ -654,7 +654,7 @@ const NET_ONLY: &[&str] = &[
     "simd-adler32",
 ];
 
-/// Packages only the `tls` feature of `cainary-net` may use (design §16.5): rustls with the ring
+/// Packages only the `tls` feature of `cainary-net` may use: rustls with the ring
 /// provider, rcgen, and everything they pull in that the core doesn't already have (`syn` and
 /// `time` are already `CORE_ALLOWED`). The lock lists rcgen's optional `x509-parser` too, so those
 /// names are here though no build compiles them. Never `aws-lc-rs`.
@@ -1073,7 +1073,7 @@ fn check_policies_of(
     bad
 }
 
-// ---- The hosts helper (`cainary-hosts-helper`): hosts-quick-edit design §6 task 2 and §9 ----
+// ---- The hosts helper (`cainary-hosts-helper`) ----
 
 const HOSTS_HELPER: &str = "cainary-hosts-helper";
 const HOSTS_FILE_RS: &str = "cainary-hosts-helper/src/file.rs";

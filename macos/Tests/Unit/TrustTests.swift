@@ -1,6 +1,6 @@
 import Foundation
 
-// The HTTPS takeover (design §16, §17.4): its settings and argv, the one-shot trust calls against
+// The HTTPS takeover: its settings and argv, the one-shot trust calls against
 // stub scripts, the confirm-before-write flow, host suggestions and the listen-error note.
 
 private func stub(_ name: String) -> URL {

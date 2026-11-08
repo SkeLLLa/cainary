@@ -27,7 +27,7 @@ enum PrefKey {
     static let menuBarIconStyle = "menuBarIconStyle"
     static let refreshMinutes = "refreshMinutes"
     static let notInstalledExpanded = "notInstalledExpanded"
-    // The opt-in OTel debug collector (design §9).
+    // The opt-in OTel debug collector.
     static let otelCollectorEnabled = "otelCollectorEnabled"
     static let otelCollectorPort = "otelCollectorPort"
     static let otelCollectorLogToFile = "otelCollectorLogToFile"
@@ -37,7 +37,7 @@ enum PrefKey {
     /// JSON `[{name, kind, pattern, caseSensitive}]`.
     static let otelCollectorPatterns = "otelCollectorPatterns"
     static let otelCollectorNotify = "otelCollectorNotify"
-    // The HTTPS takeover (design §17.4).
+    // The HTTPS takeover.
     static let otelCollectorTls = "otelCollectorTls"
     static let otelCollectorTlsHosts = "otelCollectorTlsHosts"
     static let otelCollectorTlsPort = "otelCollectorTlsPort"

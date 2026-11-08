@@ -20,7 +20,7 @@ pub struct Knobs {
     pub write_chunk: usize,
 }
 
-/// A point in the file procedure (design §3), named for the mutation that just happened.
+/// A point in the file procedure, named for the mutation that just happened.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Step {
     LockCreate,

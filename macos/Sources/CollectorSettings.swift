@@ -1,8 +1,8 @@
 import Foundation
 
-// The "OTel debug collector" preferences (design §9) and what they turn into: the helper's
+// The "OTel debug collector" preferences and what they turn into: the helper's
 // argv (port, log file, --json) and the one config line sent over stdin. Pattern text never
-// goes in argv, where `ps` would show it (§14.7).
+// goes in argv, where `ps` would show it (architecture.md §12.7).
 
 /// A built-in red-flag preset. Names match `cainary-otel-debug --list-presets`.
 struct CollectorPreset: Hashable, Sendable {
@@ -65,7 +65,7 @@ struct CollectorPattern: Codable, Hashable, Identifiable, Sendable {
 struct CollectorSettings: Equatable, Sendable {
     static let defaultPort = 4318
     static let portRange = 1024...65535
-    /// The collector's own limit on the config line (design §14.7).
+    /// The collector's own limit on the config line.
     static let maxConfigBytes = 1 << 20
 
     var enabled = false
@@ -76,7 +76,7 @@ struct CollectorSettings: Equatable, Sendable {
     var presets = CollectorPreset.defaultOnNames
     var patterns: [CollectorPattern] = []
     var notify = true
-    /// The HTTPS takeover (design §16, §17.4): `--tls`, with the host names to answer for.
+    /// The HTTPS takeover: `--tls`, with the host names to answer for.
     var takeover = false
     var takeoverHosts: [String] = []
     var takeoverPort = defaultTakeoverPort
@@ -196,7 +196,7 @@ struct CollectorSettings: Equatable, Sendable {
 }
 
 extension KeyValueStore {
-    /// The collector preferences with their defaults (design §9 table). A stored port outside
+    /// The collector preferences with their defaults (macos.md §2.8). A stored port outside
     /// 1024...65535 is clamped; an unreadable pattern list is empty.
     var collectorSettings: CollectorSettings {
         get {

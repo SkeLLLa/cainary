@@ -1,6 +1,8 @@
 //! Canonical encoding v1: a typed, length-prefixed TLV form with sorted map keys.
 //!
-//! Every item is `tag:u8 ‖ len:u32 big-endian ‖ payload`. See `docs/design/signatures.md`.
+//! Every item is `tag:u8 ‖ len:u32 big-endian ‖ payload`. Map pairs are sorted by the
+//! key's UTF-8 bytes with no Unicode normalization; depth is at most 32 and the total size at most
+//! 1 MiB, and exceeding either is an error, never a truncation.
 
 const TAG_ABSENT: u8 = 0x00;
 const TAG_NULL: u8 = 0x01;

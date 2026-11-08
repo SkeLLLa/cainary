@@ -1,4 +1,4 @@
-//! Single instance (plan I6): the first `cainary-tray` owns `ua.SkeLLLa.cAInary` on the session
+//! Single instance: the first `cainary-tray` owns `ua.SkeLLLa.cAInary` on the session
 //! bus and serves `ua.SkeLLLa.cAInary1`; a later one forwards its request there and exits.
 
 use crate::events::UiEvent;

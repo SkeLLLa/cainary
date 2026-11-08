@@ -1,4 +1,4 @@
-//! Built-in red-flag presets (design §8.5). All regex, case-sensitive; `ipv4` is off by default.
+//! Built-in red-flag presets. All regex, case-sensitive; `ipv4` is off by default.
 //! IPv6 is left out: its regexes match hex-and-colon strings such as timestamps.
 
 use super::{Kind, Pattern};

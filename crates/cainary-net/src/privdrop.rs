@@ -1,4 +1,4 @@
-//! Dropping `CAP_NET_BIND_SERVICE` after the listeners are bound (design §16.7.5).
+//! Dropping `CAP_NET_BIND_SERVICE` after the listeners are bound.
 //!
 //! The collector never runs as root. If it was given the capability (`setcap` on an installed
 //! binary), it needs it only for `bind`; this clears the effective, permitted and inheritable sets

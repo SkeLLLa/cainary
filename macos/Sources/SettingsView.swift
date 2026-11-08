@@ -184,7 +184,7 @@ private final class NotificationAuthorization: ObservableObject {
     }
 }
 
-/// The "OTel debug collector" section (design §9). Every change is saved through the store, which
+/// The "OTel debug collector" section. Every change is saved through the store, which
 /// restarts a running collector after a short pause.
 private struct CollectorSettingsSection: View {
     @ObservedObject var collector: CollectorStore
@@ -337,7 +337,7 @@ private struct CollectorSettingsSection: View {
     }
 }
 
-/// The "HTTPS takeover" section (design §16, §17.4). The takeover makes the collector answer for
+/// The "HTTPS takeover" section. The takeover makes the collector answer for
 /// the host names you list, so you must also point those names at this Mac yourself; the
 /// collector prints the steps once it runs. The trust buttons run one-shot collector commands.
 private struct TakeoverSettingsSection: View {

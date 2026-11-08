@@ -1,7 +1,7 @@
 //! Rules-key decisions: pure logic over what the secret store returned. No D-Bus and no I/O; the
 //! caller (the tray, through tray-dbus) maps the store's answer to [`Stored`], asks [`decide`],
-//! and does whatever I/O the [`Decision`] calls for. See "Key decisions" in
-//! `docs/design/secret-store.md`.
+//! and does whatever I/O the [`Decision`] calls for. A stored key that is the wrong length, or
+//! that no saved rule carries, is never overwritten; a locked or unavailable store never creates one.
 
 use cainary_sig::{Key, KeyId};
 use core::sync::atomic::{Ordering, compiler_fence};

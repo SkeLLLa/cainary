@@ -1,4 +1,4 @@
-//! The `--red-flags` TOML file (design §8.5): read once, strict. Unknown keys are an error
+//! The `--red-flags` TOML file: read once, strict. Unknown keys are an error
 //! that names the key. The only reader of the file system in this crate.
 
 use super::{Kind, Pattern, presets};

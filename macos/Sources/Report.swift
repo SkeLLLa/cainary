@@ -178,12 +178,12 @@ struct Finding: Codable, Hashable, Sendable {
     var maybe: Bool
     var config: Config
     var docs: String?
-    /// What an in-effect telemetry export sends (§3.7). Nil when absent or unreadable.
+    /// What an in-effect telemetry export sends (architecture.md §3.7). Nil when absent or unreadable.
     var payload: Payload?
 }
 
 extension Finding {
-    /// A malformed `payload` hides the preview; it never fails the report (design §2.3).
+    /// A malformed `payload` hides the preview; it never fails the report.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)

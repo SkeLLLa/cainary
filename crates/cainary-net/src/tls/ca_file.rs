@@ -1,4 +1,4 @@
-//! Publishing the CA's *public* certificate (design §16.2, §16.7.2): the only file writer of the
+//! Publishing the CA's *public* certificate: the only file writer of the
 //! takeover mode, and the only place that touches the certificate directory.
 //!
 //! The directory is opened once through a descriptor (`O_DIRECTORY | O_NOFOLLOW`) and validated
@@ -152,7 +152,7 @@ fn readlink_at(dirfd: &OwnedFd, name: &CString) -> io::Result<Vec<u8>> {
 
 impl CaDir {
     /// Walks `dir` from `/` one component at a time, each opened relative to its parent's
-    /// descriptor with `O_DIRECTORY | O_NOFOLLOW` (design §16.7.2), so no ancestor can be swapped
+    /// descriptor with `O_DIRECTORY | O_NOFOLLOW`, so no ancestor can be swapped
     /// for a symlink between the check and the use.
     ///
     /// - Every directory on the way must be owned by root or by us; one that group/other can

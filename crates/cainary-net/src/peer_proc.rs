@@ -1,5 +1,5 @@
 //! Reads `/proc/net/tcp`, `/proc/net/tcp6`, `/proc/self/status` and `/proc/sys/kernel/overflowuid`
-//! for the own-user check (design D3). The only files here are those four fixed kernel paths,
+//! for the own-user check. The only files here are those four fixed kernel paths,
 //! read-only; parsing is `peer.rs`, which touches no file, so guard N2's `std::fs` exemption
 //! covers just this module.
 

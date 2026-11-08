@@ -1,6 +1,6 @@
 import Foundation
 
-// One-shot `cainary-otel-debug --trust …` and `--trust-status` calls (design §17). Each prints one
+// One-shot `cainary-otel-debug --trust …` and `--trust-status` calls. Each prints one
 // JSON line (v1). The only file the helper edits is `env.NODE_EXTRA_CA_CERTS` in the user's
 // `~/.claude/settings.json`, after a backup, and only when the user confirms.
 

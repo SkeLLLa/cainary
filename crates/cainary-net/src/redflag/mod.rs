@@ -1,7 +1,7 @@
-//! Red-flag patterns: the model, compilation and matching. Reusable by goal 3 (design §8.5).
+//! Red-flag patterns: the model, compilation and matching. Reusable by goal 3.
 //!
 //! Text patterns are escaped into regexes with ASCII-only case folding (non-ASCII letters match
-//! exactly): the timing test (design §13) found Aho-Corasick no faster than a `RegexSet` here.
+//! exactly): the timing test found Aho-Corasick no faster than a `RegexSet` here.
 //! Everything runs through one `RegexSet` per mode, then `Regex::find` for the span. Both are
 //! linear-time, so hostile input can't ReDoS, and compilation has hard size limits.
 
@@ -13,7 +13,7 @@ use std::fmt;
 
 pub const MAX_PATTERN_BYTES: usize = 1024;
 pub const MAX_PATTERNS: usize = 64;
-/// All compiled regexes together, the set included (design §14.6).
+/// All compiled regexes together, the set included.
 pub const REGEX_BUDGET: usize = 16 << 20;
 /// Text matched per request, and per single value; past either the batch is `scanIncomplete`.
 pub const MAX_REQUEST_BYTES: usize = 4 << 20;
@@ -328,7 +328,7 @@ pub fn resolve(sel: &Selection, configs: &[file::FileConfig]) -> Result<Matcher,
     Matcher::new(patterns).map_err(|e| fail(e.to_string()))
 }
 
-/// One request's matching budget (design §14.6). Nothing is silently truncated: whenever a
+/// One request's matching budget. Nothing is silently truncated: whenever a
 /// limit cuts a scan short, `incomplete` is set.
 pub struct Scanner<'m> {
     matcher: &'m Matcher,

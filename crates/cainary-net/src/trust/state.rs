@@ -66,7 +66,7 @@ pub(super) enum PendingKind {
     Undo,
 }
 
-/// A transaction that was started and maybe not finished (design §17.2): written durably before
+/// A transaction that was started and maybe not finished: written durably before
 /// the settings change, cleared after the new record is. Whatever state the file is found in,
 /// the hashes say how far it got.
 #[derive(Debug, Clone, PartialEq, Eq)]

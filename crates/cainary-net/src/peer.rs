@@ -1,4 +1,4 @@
-//! Which local user owns a loopback client's socket (design D3). Pure parsers over the text of
+//! Which local user owns a loopback client's socket. Pure parsers over the text of
 //! `/proc/net/tcp` and `/proc/net/tcp6`; reading them is `peer_proc.rs`, so this
 //! module touches no file, no socket and no `std::net` type (guards N1/N2).
 //!

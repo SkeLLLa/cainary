@@ -1,6 +1,6 @@
 import Foundation
 
-// Sample lines of the `cainary-otel-debug --json` stream, written from design §8.6 with synthetic
+// Sample lines of the `cainary-otel-debug --json` stream, written from the line contract (architecture.md §12.6) with synthetic
 // values only. Shared by the unit and snapshot binaries.
 
 enum CollectorSamples {

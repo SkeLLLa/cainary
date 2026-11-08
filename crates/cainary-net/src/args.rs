@@ -1,11 +1,11 @@
-//! Argument parser for `cainary-otel-debug` (design §8.3). Parsed by hand, like `cainary`.
+//! Argument parser for `cainary-otel-debug`. Parsed by hand, like `cainary`.
 
 use crate::redflag::{self, Kind, Pattern, presets};
 use crate::server;
 use std::path::PathBuf;
 
 pub const DEFAULT_PORT: u16 = 4318;
-/// `--tls` listens here unless `--port` says otherwise; a redirect maps 443 to it (design §16.7.5).
+/// `--tls` listens here unless `--port` says otherwise; a redirect maps 443 to it.
 pub const DEFAULT_TLS_PORT: u16 = 8443;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,7 +14,7 @@ pub enum Action {
     ListPresets,
     /// `--delete-ca`: remove the takeover CA's certificate file and exit.
     DeleteCa,
-    /// `--trust <target> [--dry-run] [--undo]` (design §17).
+    /// `--trust <target> [--dry-run] [--undo]`.
     Trust {
         target: TrustTarget,
         dry_run: bool,
@@ -52,9 +52,9 @@ pub struct Options {
     pub presets: Vec<String>,
     pub no_default_red_flags: bool,
     pub exit_on_stdin_eof: bool,
-    /// The first stdin line is the JSON config; implies `exit_on_stdin_eof` (design §14.7).
+    /// The first stdin line is the JSON config; implies `exit_on_stdin_eof`.
     pub config_stdin: bool,
-    /// `--tls`: the endpoint takeover (design §16); needs the `tls` cargo feature to run.
+    /// `--tls`: the endpoint takeover; needs the `tls` cargo feature to run.
     pub tls: bool,
     /// Validated, lowercased, deduplicated.
     pub tls_hosts: Vec<String>,

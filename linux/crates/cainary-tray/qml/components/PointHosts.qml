@@ -7,9 +7,8 @@ import "style.js" as Style
 
 // The body of Setup › HTTPS takeover › "Point the host names at this computer": what each host
 // name resolves to, the one-click "Add to /etc/hosts…", what to do when it can't be used or didn't
-// work, and always the lines to add by hand until the names point here. The copy is the design's
-// (docs/local/design/hosts-quick-edit.md §5); the states come from the app's `hostsFile` and
-// `hostCheck` (tray-model hostsview, hostcheck).
+// work, and always the lines to add by hand until the names point here. The states come from the
+// app's `hostsFile` and `hostCheck` (tray-model hostsview, hostcheck).
 ColumnLayout {
     id: root
 

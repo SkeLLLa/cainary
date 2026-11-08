@@ -1,6 +1,6 @@
 import Foundation
 
-// Runs the opt-in `cainary-otel-debug` helper as a child process (design §9, §14.7, §14.9). The
+// Runs the opt-in `cainary-otel-debug` helper as a child process. The
 // app holds the write end of the child's stdin for as long as it runs: the child exits on EOF, so
 // it can't outlive the app, SIGKILL included. The config goes over stdin once, never in argv.
 

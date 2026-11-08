@@ -1,7 +1,7 @@
 //! Pure JSON view model for the Linux QML UI. The core report remains the source of labels,
 //! levels, summaries, finding text and changes; this module only shapes those values.
 //!
-//! The view is a tree of `Serialize` structs (the §4.4 contract); the key names are what the QML
+//! The view is a tree of `Serialize` structs (the JSON contract with the QML); the key names are what the QML
 //! reads. What changes on every scan event rather than with the report (`busy`, `phase`, the
 //! last-checked time) is not in it: see [`status`].
 
@@ -216,7 +216,7 @@ pub fn status(state: &ScanState, format_time: impl Fn(&str) -> String) -> ViewSt
     }
 }
 
-/// Builds the §4.4 JSON contract. `format_time` converts the report timestamp into the system
+/// Builds the JSON contract with the QML. `format_time` converts the report timestamp into the system
 /// locale's short time; tests can use a stable formatter.
 pub fn build(
     state: &ScanState,

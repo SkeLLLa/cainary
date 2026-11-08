@@ -1,4 +1,4 @@
-//! A lossless, targeted editor for one member of a JSON settings file (design §17.2).
+//! A lossless, targeted editor for one member of a JSON settings file.
 //!
 //! `trust` must change `env.NODE_EXTRA_CA_CERTS` and nothing else, so it can't round-trip the
 //! document through a value tree (integers past 64 bits, precise decimals and duplicate members

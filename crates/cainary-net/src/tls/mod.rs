@@ -1,4 +1,4 @@
-//! The endpoint takeover (design §16): a TLS receiver for a pinned HTTPS telemetry host.
+//! The endpoint takeover: a TLS receiver for a pinned HTTPS telemetry host.
 //!
 //! The user points that host name at loopback; this accepts the connection with a certificate
 //! from an ephemeral, name-constrained CA whose public half is written to a file the exporting

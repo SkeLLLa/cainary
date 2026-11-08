@@ -1,6 +1,6 @@
 import Foundation
 
-// The `cainary-otel-debug --json` stream, version 1 (design §8.6). One JSON object per line.
+// The `cainary-otel-debug --json` stream, version 1. One JSON object per line.
 // Within v1 changes are additive, so unknown types, keys and `error.source` values are ignored,
 // and every field the app only displays is optional. Another `v` is refused.
 
@@ -168,7 +168,7 @@ extension String {
     }
 
     /// Text safe to show or notify: control, bidi and escape characters become `\u{…}`. The child
-    /// already escapes what it prints (§14.8); this covers stderr and anything it missed.
+    /// already escapes what it prints (architecture.md §12.3); this covers stderr and anything it missed.
     var plainText: String {
         var out = ""
         for scalar in unicodeScalars {

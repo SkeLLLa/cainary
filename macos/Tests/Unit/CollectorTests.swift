@@ -1,6 +1,6 @@
 import Foundation
 
-// The opt-in OTel debug collector (design §8.6, §9, §14): the line contract, the settings it
+// The opt-in OTel debug collector: the line contract, the settings it
 // turns into argv and a stdin config, the child process client with stub collectors, and the
 // store's retention, throttle and failure handling.
 

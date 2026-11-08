@@ -1,4 +1,4 @@
-//! `cainary-otel-debug` (design §8): a local OTLP/JSON receiver for checking what an AI tool's
+//! `cainary-otel-debug`: a local OTLP/JSON receiver for checking what an AI tool's
 //! telemetry export carries. Reads the environment and owns the process exit; the rest lives
 //! in the library.
 
@@ -146,7 +146,7 @@ fn stdin_thread(
     let (ack_tx, ack_rx) = mpsc::channel::<Result<(), String>>();
     std::thread::spawn(move || {
         // This thread was started before the bind, so it inherited any bind capability: it has
-        // no use for it (design §16.7.5). It drops its copy, verified, and says so; the main
+        // no use for it. It drops its copy, verified, and says so; the main
         // thread won't bind or accept until it has heard. The bind thread drops its own right
         // after binding.
         let dropped = cainary_net::privdrop::drop_capabilities()
@@ -194,7 +194,7 @@ fn stdin_thread(
 }
 
 /// A refused bind to a privileged port: the error as a line (JSON on stdout under `--json`, text
-/// on stderr otherwise), then the note on stderr with the ways to get the port (design: the
+/// on stderr otherwise), then the note on stderr with the ways to get the port (the
 /// program prints these commands and never runs them).
 fn refused_port(message: &str, port: u16, json: bool, args: &[String]) -> u8 {
     if json {
@@ -248,7 +248,7 @@ fn fatal_port(
 #[cfg(not(feature = "tls"))]
 const NO_TLS: &str = "this build has no TLS support (cargo feature `tls`)";
 
-/// Where the takeover CA's public certificate lives (design §16.2): the state directory, so a
+/// Where the takeover CA's public certificate lives: the state directory, so a
 /// stable path survives restarts.
 #[cfg(feature = "tls")]
 fn ca_dir() -> Result<std::path::PathBuf, String> {
