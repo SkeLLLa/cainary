@@ -202,7 +202,9 @@ private struct CollectorBatchRow: View {
         } else if let vendor = batch.vendor {
             parts.append(vendor)
         }
-        if let records = batch.records { parts.append(records == 1 ? "1 record" : "\(records) records") }
+        if let records = batch.records {
+            parts.append(records == 1 ? "1 record" : "\(records) records")
+        }
         if let bytes = batch.bytes {
             parts.append(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file))
         }

@@ -177,7 +177,9 @@ struct TrustClient: Sendable {
     func previewClaudeCode() async -> TrustOutcome {
         await call(["--trust", "claude-code", "--dry-run", "--json"])
     }
-    func applyClaudeCode() async -> TrustOutcome { await call(["--trust", "claude-code", "--json"]) }
+    func applyClaudeCode() async -> TrustOutcome {
+        await call(["--trust", "claude-code", "--json"])
+    }
     func undoClaudeCode() async -> TrustOutcome {
         await call(["--trust", "claude-code", "--undo", "--json"])
     }
@@ -192,7 +194,8 @@ struct TrustClient: Sendable {
         }
         let helper = helper
         let timeout = timeout
-        let result = await withCheckedContinuation { (k: CheckedContinuation<OneShotResult?, Never>) in
+        let result = await withCheckedContinuation {
+            (k: CheckedContinuation<OneShotResult?, Never>) in
             DispatchQueue.global().async {
                 k.resume(returning: OneShot.run(helper: helper, args: args, timeout: timeout))
             }
@@ -217,7 +220,8 @@ struct TrustClient: Sendable {
             guard probe.v == 1 else {
                 return .failed("Update cAInary: this collector speaks a newer format.")
             }
-            if probe.type == "trust", let report = try? decoder.decode(TrustReport.self, from: data) {
+            if probe.type == "trust", let report = try? decoder.decode(TrustReport.self, from: data)
+            {
                 return .report(report)
             }
             if probe.type == "trust-status",
@@ -236,7 +240,8 @@ struct TrustClient: Sendable {
 /// The path is single-quoted when it needs it (the macOS state directory has a space); the
 /// quoting is the same in fish and POSIX shells.
 func nodeExtraCACommand(caPath: String) -> String {
-    let safe = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./:=+-@%,")
+    let safe = CharacterSet(
+        charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./:=+-@%,")
     let quoted =
         caPath.unicodeScalars.allSatisfy(safe.contains)
         ? caPath : "'" + caPath.replacingOccurrences(of: "'", with: "'\\''") + "'"

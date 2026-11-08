@@ -33,8 +33,9 @@ struct CollectorPattern: Codable, Hashable, Identifiable, Sendable {
     var pattern: String
     var caseSensitive: Bool
 
-    init(name: String = "", kind: String = "text", pattern: String = "", caseSensitive: Bool = false)
-    {
+    init(
+        name: String = "", kind: String = "text", pattern: String = "", caseSensitive: Bool = false
+    ) {
         self.name = name
         self.kind = kind
         self.pattern = pattern
@@ -101,7 +102,9 @@ struct CollectorSettings: Equatable, Sendable {
         var out: [String] = []
         for raw in takeoverHosts {
             let h = raw.trimmingCharacters(in: .whitespaces).lowercased()
-            if Self.validHost(h), seen.insert(h).inserted, out.count < Self.maxHosts { out.append(h) }
+            if Self.validHost(h), seen.insert(h).inserted, out.count < Self.maxHosts {
+                out.append(h)
+            }
         }
         return out
     }
@@ -185,7 +188,9 @@ struct CollectorSettings: Equatable, Sendable {
             ])
         }
         var presetFlags: [String: Bool] = [:]
-        for preset in CollectorPreset.all { presetFlags[preset.name] = presets.contains(preset.name) }
+        for preset in CollectorPreset.all {
+            presetFlags[preset.name] = presets.contains(preset.name)
+        }
         let object: [String: Any] = ["v": 1, "redFlags": flags, "presets": presetFlags]
         guard !overLimit,
             let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
@@ -209,7 +214,9 @@ extension KeyValueStore {
             }
             s.logToFile = bool(forKey: PrefKey.otelCollectorLogToFile)
             s.logPath = string(forKey: PrefKey.otelCollectorLogPath) ?? ""
-            if let presets = stringArray(forKey: PrefKey.otelCollectorPresets) { s.presets = presets }
+            if let presets = stringArray(forKey: PrefKey.otelCollectorPresets) {
+                s.presets = presets
+            }
             if let stored = data(forKey: PrefKey.otelCollectorPatterns),
                 let patterns = try? JSONDecoder().decode([CollectorPattern].self, from: stored)
             {

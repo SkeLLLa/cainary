@@ -106,9 +106,25 @@ check_version() {
 check_version "$CLI" cainary
 check_version "$OTEL_DEBUG" cainary-otel-debug
 check_version "$TRAY" cainary-tray
-# The helpers refuse to run as root and print `NAME V protocol N`; this build runs unprivileged.
+# The helpers print `NAME V protocol N` only to a caller that isn't root; as root every call has to
+# be the pkexec protocol. Under root (CI containers) the check runs as nobody, on a copy in a
+# directory nobody can traverse.
+helper_version() {
+    if [ "$(id -u)" -ne 0 ]; then
+        "$1" --version
+        return
+    fi
+    command -v setpriv > /dev/null 2>&1 || { echo "error: checking $1 as root needs setpriv (util-linux)" >&2; return 1; }
+    hv_dir="$(mktemp -d)"
+    chmod 755 "$hv_dir"
+    cp "$1" "$hv_dir/helper"
+    hv_rc=0
+    setpriv --reuid=65534 --regid=65534 --clear-groups -- "$hv_dir/helper" --version || hv_rc=$?
+    rm -rf "$hv_dir"
+    return "$hv_rc"
+}
 check_helper_version() {
-    got="$("$1" --version)" || { echo "error: '$1 --version' failed" >&2; exit 1; }
+    got="$(helper_version "$1")" || { echo "error: '$1 --version' failed" >&2; exit 1; }
     case "$got" in
         "$2 $VERSION protocol "[0-9]*) ;;
         *) echo "error: $1 reports '$got', expected '$2 $VERSION protocol N' (stale build?)" >&2; exit 1 ;;

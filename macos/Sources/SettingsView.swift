@@ -324,7 +324,8 @@ private struct CollectorSettingsSection: View {
     private func chooseLogFile() {
         let panel = NSSavePanel()
         let start = URL(
-            fileURLWithPath: collector.settings.effectiveLogPath ?? CollectorSettings.defaultLogPath)
+            fileURLWithPath: collector.settings.effectiveLogPath ?? CollectorSettings.defaultLogPath
+        )
         panel.directoryURL = start.deletingLastPathComponent()
         panel.nameFieldStringValue = start.lastPathComponent
         panel.canCreateDirectories = true
@@ -357,7 +358,8 @@ private struct TakeoverSettingsSection: View {
         Section("HTTPS takeover") {
             Toggle(
                 "Use HTTPS takeover",
-                isOn: Binding(get: { settings.takeover }, set: { on in update { $0.takeover = on } }))
+                isOn: Binding(
+                    get: { settings.takeover }, set: { on in update { $0.takeover = on } }))
             Text(
                 "For an agent whose managed settings pin its telemetry to an HTTPS host. The collector answers for the names below and forwards nothing: while it is on, your organization's collector receives nothing from this Mac for those names."
             )
@@ -433,9 +435,13 @@ private struct TakeoverSettingsSection: View {
                     TextField(
                         "host.example.com",
                         text: Binding(
-                            get: { i < settings.takeoverHosts.count ? settings.takeoverHosts[i] : "" },
+                            get: {
+                                i < settings.takeoverHosts.count ? settings.takeoverHosts[i] : ""
+                            },
                             set: { value in
-                                update { if i < $0.takeoverHosts.count { $0.takeoverHosts[i] = value } }
+                                update {
+                                    if i < $0.takeoverHosts.count { $0.takeoverHosts[i] = value }
+                                }
                             }))
                     Button("Remove") {
                         update { if i < $0.takeoverHosts.count { $0.takeoverHosts.remove(at: i) } }

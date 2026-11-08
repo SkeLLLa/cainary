@@ -60,7 +60,8 @@ final class CollectorStore: ObservableObject {
     private let now: () -> Date
     private let restartDelay: Duration
     private let makeClient:
-        (URL, [String], Data, @escaping @Sendable (CollectorClient.Event) -> Void) -> CollectorClient
+        (URL, [String], Data, @escaping @Sendable (CollectorClient.Event) -> Void) ->
+            CollectorClient
 
     private var client: CollectorClient?
     /// Bumped on every start and stop, so late events from an old child are dropped.
@@ -76,11 +77,12 @@ final class CollectorStore: ObservableObject {
         defaults: KeyValueStore, poster: AlertPosting? = nil,
         helper: URL = CollectorClient.locate(), now: @escaping () -> Date = Date.init,
         restartDelay: Duration = .milliseconds(800),
-        makeClient: @escaping (
-            URL, [String], Data, @escaping @Sendable (CollectorClient.Event) -> Void
-        ) -> CollectorClient = { helper, args, config, onEvent in
-            CollectorClient(helper: helper, args: args, config: config, onEvent: onEvent)
-        }
+        makeClient:
+            @escaping (
+                URL, [String], Data, @escaping @Sendable (CollectorClient.Event) -> Void
+            ) -> CollectorClient = { helper, args, config, onEvent in
+                CollectorClient(helper: helper, args: args, config: config, onEvent: onEvent)
+            }
     ) {
         self.defaults = defaults
         self.poster = poster
@@ -223,7 +225,8 @@ final class CollectorStore: ObservableObject {
                 let first = stderr.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
                 if sawListenError, !stderr.isEmpty { failureNote = stderr.plainMultilineText }
                 return fail(
-                    first.isEmpty ? "Stopped: exited with code \(code)." : "Stopped: \(first.plainText)")
+                    first.isEmpty
+                        ? "Stopped: exited with code \(code)." : "Stopped: \(first.plainText)")
             }
         case .failed(let reason): fail("Couldn't start: \(reason.plainText)")
         }

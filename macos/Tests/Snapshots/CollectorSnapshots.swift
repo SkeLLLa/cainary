@@ -6,7 +6,9 @@ import SwiftUI
 
 @MainActor
 func collectorSnapshot(out: URL) {
-    func event(_ line: String) -> CollectorEvent { CollectorEvent.decode(CollectorSamples.data(line)) }
+    func event(_ line: String) -> CollectorEvent {
+        CollectorEvent.decode(CollectorSamples.data(line))
+    }
     guard case .hello(let hello) = event(CollectorSamples.hello),
         case .batch(let batch) = event(CollectorSamples.batch),
         case .alert(let alert) = event(CollectorSamples.alert)

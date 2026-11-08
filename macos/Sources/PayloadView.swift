@@ -166,7 +166,8 @@ struct PayloadView: View {
                 if let unit = record.unit { Tag(unit) }
                 if let sent = record.sent { SentChip(sent: sent) }
             }
-            Text(record.what).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(record.what).foregroundStyle(.secondary).fixedSize(
+                horizontal: false, vertical: true)
             ForEach(record.attrs.indices, id: \.self) { j in
                 let attr = record.attrs[j]
                 HStack(alignment: .firstTextBaseline, spacing: 6) {

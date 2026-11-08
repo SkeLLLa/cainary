@@ -8,7 +8,9 @@ private func goldenURLs() -> [URL] {
     return dirs.flatMap { dir -> [URL] in
         let url = repoRoot().appendingPathComponent(dir)
         let names = (try? FileManager.default.contentsOfDirectory(atPath: url.path)) ?? []
-        return names.filter { $0.hasSuffix(".json") }.sorted().map { url.appendingPathComponent($0) }
+        return names.filter { $0.hasSuffix(".json") }.sorted().map {
+            url.appendingPathComponent($0)
+        }
     }
 }
 
@@ -17,7 +19,8 @@ private func payloadKeys(_ object: [String: Any]) -> Set<String> {
     var found: Set<String> = []
     for group in ["apps", "others"] {
         for entry in object[group] as? [[String: Any]] ?? [] {
-            for finding in entry["findings"] as? [[String: Any]] ?? [] where finding["payload"] != nil {
+            for finding in entry["findings"] as? [[String: Any]] ?? []
+            where finding["payload"] != nil {
                 found.insert("\(entry["id"] as? String ?? "?")/\(finding["key"] as? String ?? "?")")
             }
         }
@@ -86,7 +89,9 @@ func payloadTests() {
         check("payload: gates", !payload.gates.isEmpty && !payload.gates[0].text.isEmpty)
         check("payload: gate sent", payload.gates.contains { $0.sent.slug == "redacted" })
         check("payload: records", !payload.records.isEmpty && !payload.sample.isEmpty)
-        check("payload: attr group", payload.records.flatMap(\.attrs).allSatisfy { !$0.group.isEmpty })
+        check(
+            "payload: attr group", payload.records.flatMap(\.attrs).allSatisfy { !$0.group.isEmpty }
+        )
         check("payload: optional gate fields", payload.gates.contains { $0.setBy == nil })
     } else {
         check("payload: claude-code-org-macos has one", false)
@@ -99,7 +104,9 @@ func payloadTests() {
         oopsKey = $0["key"] as? String ?? ""
         $0["payload"] = "oops"
     }
-    if let report = decode(o), let f = report.entries.flatMap(\.findings).first(where: { $0.key == oopsKey }) {
+    if let report = decode(o),
+        let f = report.entries.flatMap(\.findings).first(where: { $0.key == oopsKey })
+    {
         check("payload: string payload is nil", f.payload == nil)
         check("payload: string payload keeps the finding", !f.title.isEmpty)
     } else {
@@ -114,7 +121,9 @@ func payloadTests() {
         p["export"] = nil
         $0["payload"] = p
     }
-    if let report = decode(o2), let f = report.entries.flatMap(\.findings).first(where: { $0.key == targetKey }) {
+    if let report = decode(o2),
+        let f = report.entries.flatMap(\.findings).first(where: { $0.key == targetKey })
+    {
         check("payload: missing export hides it", f.payload == nil)
         check("payload: finding itself intact", !f.title.isEmpty && f.key == targetKey)
     } else {
@@ -149,7 +158,8 @@ func payloadTests() {
         let payload = report.entries.flatMap(\.findings).first(where: { $0.key == key4 })?.payload
     {
         check("payload: unknown export slug kept", payload.export.slug == "spans")
-        check("payload: unknown sent slug kept", payload.gates.first?.sent.slug == "from-the-future")
+        check(
+            "payload: unknown sent slug kept", payload.gates.first?.sent.slug == "from-the-future")
         check("payload: unknown kind slug kept", payload.records.first?.kind.slug == "profile")
         check("payload: absent maybe is false", !payload.maybe)
     } else {
