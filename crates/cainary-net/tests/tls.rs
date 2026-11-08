@@ -1263,15 +1263,21 @@ fn tls_refusals_share_the_rate_limit() {
 
 #[test]
 fn a_retry_storm_is_one_line_per_category_with_a_count() {
-    let run = start_with("storm", |c| {
-        c.tunables.tls_error_window = Duration::from_millis(700)
-    });
+    // Wide enough for 30 handshakes on a slow runner (about 2 s on macOS CI).
+    let window = Duration::from_secs(5);
+    let run = start_with("storm", |c| c.tunables.tls_error_window = window);
     let a = run.srv.addrs[0];
     let cfg = client_config(&run.ca_pem, &[b"http/1.1"]);
+    let t0 = Instant::now();
     for _ in 0..30 {
         let _ = connect(a, &cfg, "evil.example.test");
     }
     std::thread::sleep(Duration::from_millis(200));
+    assert!(
+        t0.elapsed() < window,
+        "the storm outlasted the window: {:?}",
+        t0.elapsed()
+    );
     let lines: Vec<Value> = run
         .out
         .lines()
@@ -1280,7 +1286,9 @@ fn a_retry_storm_is_one_line_per_category_with_a_count() {
         .collect();
     assert_eq!(lines.len(), 1, "{lines:?}");
     // After the window the next one reports how many were skipped.
-    std::thread::sleep(Duration::from_millis(800));
+    std::thread::sleep(
+        (t0 + window + Duration::from_millis(500)).saturating_duration_since(Instant::now()),
+    );
     let _ = connect(a, &cfg, "evil.example.test");
     let end = Instant::now() + Duration::from_secs(5);
     loop {
