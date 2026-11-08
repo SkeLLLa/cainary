@@ -4,7 +4,8 @@ import SwiftUI
 // The Details entry pane on fixtures, scanned by the real helper. EntryDetailView is rendered
 // directly: the split view and its ScrollView don't render in ImageRenderer.
 
-/// An `EntryDetailView` with every finding row open, and every "What it sends" with it (or none).
+/// An `EntryDetailView` with every finding row open (or none). Its "What it sends" sections stay
+/// closed: open, they make the pane too tall for one image, so each gets its own snapshot.
 private struct DetailHost: View {
     let entry: Entry
     let expandAll: Bool
@@ -12,8 +13,7 @@ private struct DetailHost: View {
     var body: some View {
         EntryDetailView(
             entry: entry,
-            expanded: .constant(
-                expandAll ? Set(entry.findings.flatMap { [$0.key, "\($0.key)#payload"] }) : [])
+            expanded: .constant(expandAll ? Set(entry.findings.map(\.key)) : [])
         )
         .frame(width: 570, alignment: .topLeading)
     }
@@ -46,7 +46,20 @@ func detailSnapshots(root: URL, out: URL) async {
     }
 
     let org = await scan("claude-code-org-macos")
-    snap("detail-claude.png", org?.apps.first { $0.id == "claude" }, expandAll: true)
+    let claude = org?.apps.first { $0.id == "claude" }
+    snap("detail-claude.png", claude, expandAll: true)
+    // Each "What it sends", open. The longest lists hundreds of attributes, hence the taller limit.
+    let payloads = claude?.findings.compactMap { f in f.payload.map { (f.key, $0) } } ?? []
+    check("detail-claude: findings with a payload", !payloads.isEmpty)
+    for (i, (key, payload)) in payloads.enumerated() {
+        let file = "detail-claude-payload-\(i + 1).png"
+        let url = out.appendingPathComponent(file)
+        let open = "\(key)#payload"
+        let view = PayloadView(payload: payload, key: open, expanded: .constant([open]))
+            .padding(12)
+            .frame(width: 570, alignment: .topLeading)
+        checkPNG(file, url, size: writePNG(view, to: url), heights: 100...8000)
+    }
     let managed = await scan("device-macos-managed")
     snap("detail-monitor.png", managed?.others.first)
     let empty = await scan("empty-macos")
