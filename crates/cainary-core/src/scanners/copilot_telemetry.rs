@@ -304,6 +304,10 @@ fn env_layer(ctx: &ScanCtx, vscode: bool) -> Option<Layer> {
     let mut first = None;
     let mut ep_var = None;
     let mut take = |m: &mut Map<String, Value>, var: &'static str, key: &str| {
+        // `COPILOT_OTEL_ENDPOINT` beats `OTEL_EXPORTER_OTLP_ENDPOINT` (CP.3).
+        if key == "endpoint" && ep_var.is_some() {
+            return;
+        }
         if let Some(v) = h.env(var) {
             set(m, key, Value::String(v.to_string()));
             first.get_or_insert(var);
@@ -664,6 +668,35 @@ mod tests {
         let f = scan_with(&cfg, &[]);
         assert_eq!(f.len(), 1);
         assert!(f[0].signals.is_empty() && f[0].in_effect);
+    }
+
+    #[test]
+    fn copilot_endpoint_beats_the_generic_otlp_endpoint() {
+        let h = Harness::test(
+            Os::Macos,
+            &[
+                ("COPILOT_OTEL_ENDPOINT", "https://copilot.example-corp.com"),
+                (
+                    "OTEL_EXPORTER_OTLP_ENDPOINT",
+                    "https://otlp.example-corp.com",
+                ),
+            ],
+        );
+        let ctx = ScanCtx::new(&h, Tool::Copilot);
+        let l = env_layer(&ctx, true).unwrap();
+        assert_eq!(l.v["endpoint"], "https://copilot.example-corp.com");
+        assert_eq!(l.src.path, "env:COPILOT_OTEL_ENDPOINT");
+        let h = Harness::test(
+            Os::Macos,
+            &[(
+                "OTEL_EXPORTER_OTLP_ENDPOINT",
+                "https://otlp.example-corp.com",
+            )],
+        );
+        let ctx = ScanCtx::new(&h, Tool::Copilot);
+        let l = env_layer(&ctx, true).unwrap();
+        assert_eq!(l.v["endpoint"], "https://otlp.example-corp.com");
+        assert_eq!(l.src.path, "env:OTEL_EXPORTER_OTLP_ENDPOINT");
     }
 
     #[test]

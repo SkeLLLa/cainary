@@ -20,7 +20,8 @@ pub struct Analysis {
     pub complete: bool,
 }
 
-/// Does the finding count at `mode`? Only the `status` subcommand's badge uses this.
+/// Does the finding count at `mode`? Sets each finding's `counts` flag in the report; the
+/// `status` badge counts entries by level instead.
 pub fn counts(f: &Finding, mode: AlertMode) -> bool {
     if !f.in_effect || f.signals.is_empty() {
         return false;

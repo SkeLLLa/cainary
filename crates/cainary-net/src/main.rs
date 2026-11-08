@@ -1,4 +1,4 @@
-//! `cainary-otel-debug`: a local OTLP/JSON receiver for checking what an AI tool's
+//! `cainary-otel-debug`: a local OTLP/HTTP receiver for checking what an AI tool's
 //! telemetry export carries. Reads the environment and owns the process exit; the rest lives
 //! in the library.
 

@@ -27,7 +27,7 @@ const CLOUD_IGNORED: [&str; 4] = [
 ];
 const PROFILE_NOTE: &str = "Findings about telemetry, analytics, model providers, `notify` and hooks describe your base config; a `--profile` you use can change them.";
 
-// Plain data, no methods: concern tests build it by hand.
+// Plain data, no methods: unit tests build it by hand.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum CxLayerId {
     #[default]

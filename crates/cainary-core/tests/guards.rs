@@ -1,4 +1,5 @@
-//! Source-level safety guards (architecture.md §10, guards 1–4, and N1–N4 for `cainary-net`).
+//! Source-level safety guards (architecture.md §10): guards 1–4, N1–N5 for `cainary-net`, and
+//! H1–H8 for the root helpers.
 //!
 //! These are regression checks over marker strings, not proofs. Each file is cut at its first
 //! `#[cfg(test)] mod` (the guarded files keep their test modules last), and whole-line `//`

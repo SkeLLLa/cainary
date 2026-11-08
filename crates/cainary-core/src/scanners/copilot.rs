@@ -11,7 +11,7 @@ use crate::value::{self, Format, Value};
 use serde_json::Map;
 use std::collections::BTreeSet;
 
-// Plain data, no methods: concern tests build it by hand.
+// Plain data, no methods: unit tests build it by hand.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum Surface {
     #[default]
@@ -52,6 +52,8 @@ const CLI_REF: &str =
 const HOOKS_REF: &str = "https://docs.github.com/en/copilot/reference/hooks-reference";
 const VSC_POLICY_REF: &str = "https://code.visualstudio.com/docs/enterprise/policies";
 const VSC_TELEMETRY_REF: &str = "https://code.visualstudio.com/docs/configure/telemetry";
+const VSC_PROXY_REF: &str =
+    "https://code.visualstudio.com/docs/setup/network#_proxy-server-support";
 
 /// A user-tier file in `~` owned by root is org-installed.
 pub(crate) fn user_origin(ctx: &ScanCtx, loc: &Loc) -> Origin {
@@ -393,6 +395,7 @@ fn emit_vscode_user(ctx: &mut ScanCtx, cfg: &CpConfig) {
             )
             .source(file_source(loc, origin))
             .evidence([format!("http.proxy host = {host}")])
+            .reference(VSC_PROXY_REF)
             .best_effort(true),
         );
     }

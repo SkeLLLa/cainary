@@ -95,8 +95,8 @@ impl Default for Filter {
     }
 }
 
-/// Clamps a user-configured line count to `100..=50_000`. The wiring milestone calls this on the
-/// `[logs] max_lines` setting (default 2,000) before building or resizing a [`Logbook`].
+/// Clamps a user-configured line count to `100..=50_000`, for a `[logs] max_lines` setting
+/// (default 2,000) before building or resizing a [`Logbook`]. The tray doesn't use it yet.
 pub fn clamp_max_entries(n: u32) -> usize {
     (n as usize).clamp(MIN_MAX_ENTRIES, MAX_MAX_ENTRIES)
 }

@@ -96,7 +96,7 @@
               "http.proxy host = proxy.example-corp.com"
             ]
           },
-          "docs": null
+          "docs": "https://code.visualstudio.com/docs/setup/network#_proxy-server-support"
         },
         {
           "id": "copilot-2",

@@ -128,10 +128,9 @@ core-universal:
 			$(foreach t,$(APPLE_TARGETS),target/$(t)/release/$$b) || exit 1; \
 	done
 
-# Targets backed by scripts that later tasks add; they fail clearly until then.
 # The SwiftUI app: swiftc only (no SwiftPM, no Xcode). Host arch, -Onone and DEBUG by default;
 # RELEASE=1 builds -O for arm64 and x86_64 and joins them with lipo. The default module cache
-# isn't writable in the agent sandbox, so it goes in $TMPDIR. mise sets SWIFTC (see mise.toml).
+# isn't writable in a sandbox, so it goes in $TMPDIR. mise sets SWIFTC (see mise.toml).
 SWIFTC ?= swiftc
 SDKROOT ?= $(shell xcrun --sdk macosx --show-sdk-path)
 SWIFT_TMP := $(patsubst %/,%,$(or $(TMPDIR),/tmp))

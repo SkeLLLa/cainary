@@ -9,7 +9,7 @@ use crate::value::{self, Format, Value};
 use serde_json::Map;
 use std::collections::BTreeSet;
 
-// Plain data, no methods: concern tests build it by hand.
+// Plain data, no methods: unit tests build it by hand.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum CcTierId {
     #[default]
