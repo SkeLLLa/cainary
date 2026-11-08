@@ -2,11 +2,14 @@
 
 The Linux tray app for cAInary, `cainary-tray`: a Qt 6 / QML status icon, popup and Details window.
 Like the macOS app it runs the `cainary` CLI and draws its JSON: the report model is in
-architecture.md §3, change detection in §4, and the subprocess contract in §9.1–§9.2.
+architecture.md §3, change detection in §4, and the subprocess contract in §9.1–§9.2. Planned
+work is in the [roadmap](roadmap.md).
 
 **Ground rules.** The tray holds no scanning logic. It never computes a level, a summary or a diff.
-It reads no credential files and opens no sockets of its own. It writes only its settings, its
-baseline and the autostart entry (§3).
+It reads no credential files. Its only sockets are the D-Bus session, host-name lookups for the
+HTTPS takeover check, and the loopback listening sockets the port helper hands it for the
+collector. It writes only its settings, its baseline and notified ids, the autostart entry (§3)
+and its icons under `$XDG_RUNTIME_DIR/cainary/icons`.
 `linux/crates/cainary-tray/tests/guards.rs` enforces these rules and the dependency policy
 (architecture.md §2).
 
@@ -17,15 +20,18 @@ ksni and zbus never enter the root `Cargo.lock` or the core's dependency guard.
 
 ```
 linux/
-  Cargo.toml  Cargo.lock       own workspace, same version as the root (guard L4)
+  Cargo.toml  Cargo.lock       own workspace, same version as the root (checked by tests/guards.rs)
   data/                        desktop entry, autostart template, AppStream, icons
   crates/
     tray-model/                pure Rust, no Qt, no D-Bus: report model, bounded runner, CLI lookup,
                                store, change tracker, notification plan, settings, autostart,
-                               baseline, refresh schedule
+                               baseline, refresh schedule, collector, takeover guide, /etc/hosts
+                               (hostsfile, hostsedit, hostcheck, hostsview), privileged port
+                               (privport, portaccess), logbook and secret (not used yet)
     tray-dbus/                 zbus + ksni, no Qt: tray icon, notifications, single instance,
-                               logind, file manager, StatusNotifierWatcher
-    cainary-tray/              binary `cainary-tray`: cxx-qt bridge, QML, placement, ~360 lines of C++
+                               logind, file manager, file chooser portal, StatusNotifierWatcher,
+                               Secret Service client (not used yet)
+    cainary-tray/              binary `cainary-tray`: cxx-qt bridge, QML, placement, a few hundred lines of C++
                                (cpp/: icons, layer-shell, Qt shims)
 ```
 
@@ -57,7 +63,7 @@ app does. When a baseline exists it adds `--since -` and sends the baseline on s
   release build started with `--dev`), then `cainary` next to the tray executable, then
   `/usr/bin/cainary`. `CAINARY_SCAN_ARGS` is honoured in debug builds only.
 - The scan has a 20 s deadline, stdout is capped at 8 MiB and stderr keeps its last 64 KiB. stdin
-  is `/dev/null`. The child runs in its own process group: on the deadline it gets SIGTERM, then
+  is the baseline when there is one, else `/dev/null`. The child runs in its own process group: on the deadline it gets SIGTERM, then
   SIGKILL after 2 s. The runner does not wait for pipe EOF once the child exits, so a descendant
   that holds the pipes open can't block it.
 - A schema major other than 3 is refused with "Update cAInary". Unknown enum values show as a grey
@@ -80,8 +86,9 @@ a Qt-rendered pixmap of the same SVG as a fallback. The "Tray icon" setting pick
 "Monochrome, colored badge" (the default: the app icon's symbolic silhouette follows the panel's
 text color, the count badge is yellow, orange or red), "Monochrome" (everything follows the panel)
 or "Color" (the colored app icon once a scan has a level; before that, the silhouette). Panel-colored icons are named `…-symbolic` and use `ColorScheme-Text`, so
-Plasma and GTK-based hosts recolor them. The menu lists one disabled row per tool with its level, then
-Refresh now, Open details…, Settings… and Quit. Primary activation toggles the popup at the click
+Plasma and GTK-based hosts recolor them. The menu lists one disabled row per tool with its level,
+then Open details, Refresh now, Copy report, Settings…, About cAInary, a Support Ukraine submenu
+and Quit cAInary. Primary activation toggles the popup at the click
 point; secondary activation refreshes.
 
 **Single instance.** The app owns the session bus name `ua.SkeLLLa.cAInary` and serves
@@ -93,7 +100,9 @@ split on spaces) apply to debug builds, or to a release build started with `--de
 `CAINARY_ICON_THEME_PATH` sets where the app icon is looked up first; by default it is
 `../share/icons` next to the executable for a private prefix such as the tarball's, and the system
 theme under `/usr`. `QT_QPA_PLATFORMTHEME` and `QT_QUICK_CONTROLS_STYLE` are set only when
-unset (§6).
+unset (§6). Development only (debug builds or `--dev`): `CAINARY_OTEL_DEBUG` (the collector
+binary, §10) and `CAINARY_PLACEMENT` (§2). `CAINARY_UI_SNAPSHOTS` is where `--self-test` saves its
+snapshots.
 
 **Command line.**
 
@@ -103,20 +112,25 @@ unset (§6).
 | `--background` | Start with the tray icon only, whatever "Start minimized to the tray" says. |
 | `--autostart` | What the autostart entry runs: "Start minimized to the tray" decides, and a running instance is left alone. |
 | `--details [entry]` | Open Details, at an entry if given. |
-| `--self-test` | Force the offscreen platform, load the QML, render the popup, Details and Settings windows to PNG files with sample data, and exit 0. Any Qt warning or error message fails it, and a 60 s deadline stops a hang. |
+| `--self-test` | Force the offscreen platform, load the QML and show every sample scenario (popup, Details pages, About), then exit 0. With `CAINARY_UI_SNAPSHOTS=<dir>` it saves one PNG per scenario there. Any Qt warning or error fails it, and a 60 s deadline stops a hang. |
 | `--dev` | Enable the developer overrides in a release build. |
 | `--verbose` | Print the diagnostics block to stderr at startup, then one line per scan start and finish, per UI event and per placement decision. |
 
-**UI.** The popup is 360 px wide and up to 520 px tall: a header with the overall level and last
-check time, one row per tool, and Refresh, Details… and Settings. It closes on Esc or when it loses
-focus. Details is a normal window (780×560, minimum 640×420) with the tools and entries on the left
-and the selected entry's explanation and evidence on the right; paths can be revealed in the file
-manager (`FileManager1.ShowItems`), URLs opened in the browser, and the entry's JSON copied. The
-window size is remembered, the position isn't (Wayland can't set it). Settings is a page in the
-same window. `QT_QUICK_CONTROLS_STYLE` is chosen only when unset: `org.kde.desktop` if importable,
+**UI.** The popup is 360 px wide and up to 640 px tall: a header with the overall level, the last
+check time and a Refresh button; Changes (up to 5 rows, "+N more", **Mark as seen**); AI apps
+(not-installed ones folded); Other monitoring on this device; an OTel collector row; and a footer
+with **Open details** and a ⋯ menu (Copy report, Settings…, About cAInary, Support Ukraine, Quit
+cAInary). It closes on Esc or when it loses focus. Details is a normal window (900×600, minimum
+640×440). Its sidebar has a **Scan** section (AI apps, Other monitoring, Changes, Checked
+locations) and a **Live** section (OTel collector), and the selected entry's explanation and
+evidence are on the right. Paths can be revealed in the file manager (`FileManager1.ShowItems`),
+URLs opened in the browser, and the entry's JSON copied. Settings is a page in the same window,
+with Notifications ("Notify about changes", "Notify about red flags"), OTel debug collector,
+Refresh, Startup, Tray icon, Support Ukraine, Privacy tools and Version. The window size and
+position are not remembered. `QT_QUICK_CONTROLS_STYLE` is chosen only when unset: `org.kde.desktop` if importable,
 else `Fusion`.
 
-**Secret store.** Keys that must survive a restart (the rules key, the proxy CA key) go in the
+**Secret store (library only; not used by the app yet).** Keys that must survive a restart (the rules key, the proxy CA key) go in the
 login keyring through a small hand-written Secret Service client in `tray-dbus` (`secrets.rs`),
 with no libsecret, glib or GTK. Startup never unlocks the keyring; prompts only follow a user
 action.
@@ -131,8 +145,7 @@ action.
   unencrypted; the bus is private to the user, but this gives **no protection against other
   programs running as the same user**, which can read the same item (the Secret Service has no
   per-application access) or claim `org.freedesktop.secrets` when no keyring runs. The store
-  protects against stray key files, not against hostile code running as the user. The UI says:
-  "Stored in your login keyring. Other programs running as you can read it."
+  protects against stray key files, not against hostile code running as the user.
 - **Errors.** `Unavailable` (no service, or no default collection), `Locked` (locked and no
   prompt allowed, or the prompt was dismissed), `Malformed` (an unexpected reply) and `Bus`
   (anything else). A missing item is not an error: a read answers "none" and a delete succeeds.
@@ -184,9 +197,11 @@ everywhere on Wayland.
 
 | Path | Content |
 | --- | --- |
-| `$XDG_CONFIG_HOME/cainary/tray.toml` | Settings: `refresh`, `notifications`, `launch_at_login`, `start_minimized`, `close_to_tray`, `icon_style` and the Details window size. |
+| `$XDG_CONFIG_HOME/cainary/tray.toml` | Settings: `refresh`, `notifications`, `launch_at_login`, `start_minimized`, `close_to_tray`, `icon_style`, `notInstalledExpanded`, `scanCollapsed`, `liveCollapsed`, `details_width`/`details_height` (stored, not used yet) and a `[collector]` table (`enabled`, `start_at_launch`, `port`, `tls`, `tls_port`, `tls_hosts`, `log_to_file`, `log_path`, `presets`, `notify`, `patterns`). |
 | `$XDG_STATE_HOME/cainary/baseline.json`, `notified.json` | The baseline report and the change ids already notified. Private to the user, because a report lists config paths. |
 | `$XDG_CONFIG_HOME/autostart/ua.SkeLLLa.cAInary.desktop` | Written when "Launch at login" is on. |
+| `$XDG_RUNTIME_DIR/cainary/icons` | The tray icons, drawn at run time (§1). |
+| `$XDG_STATE_HOME/cainary/otel-debug.jsonl`, `otel-debug-ca.pem`, the Codex bundle | Written by the collector child or its `--trust` calls (§10), not by the tray; the log only when you choose a file. |
 
 To reset the app, delete `~/.config/cainary/` and `~/.local/state/cainary/`.
 
@@ -198,8 +213,9 @@ To reset the app, delete `~/.config/cainary/` and `~/.local/state/cainary/`.
 tray icon, at login or from the app menu; off, the Details window opens too. Launching the app
 again while it runs opens Details. "Close button minimizes to the tray" (on by default) makes
 closing Details hide it; off, closing Details quits. Without a tray host the Details window always
-opens, and closing it quits. No package installs system-wide
-autostart, and `install-user.sh --uninstall` removes the entry.
+opens, and closing it quits. No package installs system-wide autostart. Turn off "Launch at
+login" before uninstalling, or delete `~/.config/autostart/ua.SkeLLLa.cAInary.desktop`;
+`install-user.sh --uninstall` doesn't remove it.
 
 > **Caveat: the autostart environment.** The tray passes `--env-kind launchd`, the core's mode for
 > an app started without a login shell, as the macOS app does. A tray started by the session at
@@ -213,7 +229,7 @@ Stock GNOME has no status area, so no StatusNotifierWatcher. Install the AppIndi
 (`gnome-shell-extension-appindicator`, or from extensions.gnome.org) and enable it. Without it,
 the tray notices at startup that `org.kde.StatusNotifierWatcher` is missing and opens the Details
 window, so there is still a way in. The .deb and .rpm only suggest the extension; the AUR package
-lists it as an optional dependency.
+(not published yet) lists it as an optional dependency.
 
 With the extension, GNOME places the tray menu; the popup is an ordinary window the compositor
 places (§2). Notifications work without the extension.
@@ -228,7 +244,7 @@ the layer-shell feature. Packages are built against Debian trixie (Qt 6.8, Layer
 | Debian 13 (trixie) and newer | .deb, tarball |
 | Ubuntu 25.04 and newer, including 26.04 LTS | .deb, tarball |
 | Fedora 44 and newer | .rpm, tarball |
-| Arch Linux | AUR `cainary-bin`, tarball |
+| Arch Linux | tarball (AUR `cainary-bin` not published yet) |
 | openSUSE Tumbleweed | tarball |
 | **Ubuntu 24.04 LTS** | **Not supported for the app**: Qt 6.4 and no Qt 6 LayerShellQt. |
 
@@ -246,12 +262,14 @@ listed by hand.
 - **.deb:** `libQt6*` and `liblayershellqtinterface6` are filled in automatically. It also
   depends on the `qml6-module-*` packages (QtQuick, Controls, Layouts, Window, Templates,
   WorkerScript), `qt6-wayland` and `qt6-svg-plugins`. It recommends `qml6-module-org-kde-desktop`
-  (the Plasma style) and suggests `gnome-shell-extension-appindicator`.
+  (the Plasma style) and `pkexec | policykit-1` (the root helpers, §10), and suggests
+  `gnome-shell-extension-appindicator`.
 - **.rpm:** requires `qt6-qtbase-gui`, `qt6-qtdeclarative`, `qt6-qtsvg`, `qt6-qtwayland` and
   `layer-shell-qt`, plus automatic library requirements. It recommends `kf6-qqc2-desktop-style`
-  and suggests `gnome-shell-extension-appindicator`.
-- **AUR:** `glibc gcc-libs qt6-base qt6-declarative qt6-svg qt6-wayland layer-shell-qt`. Optional:
-  `qqc2-desktop-style` and `gnome-shell-extension-appindicator`.
+  and `polkit`, and suggests `gnome-shell-extension-appindicator`.
+- **AUR** (not published yet): `glibc gcc-libs qt6-base qt6-declarative qt6-svg qt6-wayland
+  layer-shell-qt`. Optional: `qqc2-desktop-style`, `polkit` and
+  `gnome-shell-extension-appindicator`.
 - The Plasma style (`qqc2-desktop-style`, `qml6-module-org-kde-desktop` on Debian) gives the native look and pulls in KDE Frameworks, so it is only
   recommended where the package manager supports that. Without it the app uses Fusion.
 
@@ -269,9 +287,8 @@ That doesn't make the running process GTK-free:
 
 ## 7. Install
 
-**Packages.** Install the .deb with `sudo apt install ./cainary_<version>_<amd64|arm64>.deb`, the
-.rpm with `sudo dnf install ./cainary-<version>-1.<x86_64|aarch64>.rpm`, and the AUR package with
-an AUR helper (`yay -S cainary-bin`). They put `cainary` and `cainary-tray` in `/usr/bin` and the
+**Packages.** Install the .deb with `sudo apt install ./cainary_<version>_<amd64|arm64>.deb` and
+the .rpm with `sudo dnf install ./cainary-<version>-1.<x86_64|aarch64>.rpm`. They put `cainary` and `cainary-tray` in `/usr/bin` and the
 desktop entry, AppStream data and icons under `/usr/share`. They also install the low-port helper
 `/usr/libexec/cainary/cainary-bind-helper` (0755 root:root; no setuid, no file capabilities, no `setcap`)
 and its polkit policy `/usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.policy` (action
@@ -286,7 +303,7 @@ The packages also install the `/etc/hosts` helper `/usr/libexec/cainary/cainary-
 **Tarball.** Unpack `cainary-<version>-linux-<x86_64|aarch64>.tar.gz`, then run
 `./install-user.sh` from the directory. It installs to `~/.local/bin` and `~/.local/share`, with no
 root, and `./install-user.sh --uninstall` removes it. Put `~/.local/bin` on `PATH` to use the CLI
-from a shell. `PREFIX` changes the prefix. The installer cannot add root files, so it skips the helper
+from a shell. Data files go to `$XDG_DATA_HOME` when it is set. The installer cannot add root files, so it skips the helper
 and the polkit policy and prints the `sudo install` commands an administrator runs for them
 (`/usr/libexec/cainary/` and `/usr/share/polkit-1/actions/`, from the unpacked directory).
 
@@ -301,8 +318,12 @@ You need Rust 1.99 or newer (`mise install`), a C++ compiler, and the Qt 6 devel
 | Distribution | Packages |
 | --- | --- |
 | Debian, Ubuntu | `build-essential pkg-config musl-tools qt6-base-dev qt6-base-dev-tools qt6-declarative-dev qt6-wayland-dev qt6-svg-dev liblayershellqtinterface-dev libwayland-dev`, plus the runtime `qml6-module-*` packages, `qt6-wayland`, `qt6-svg-plugins`, `dbus-daemon`. `QMAKE=/usr/lib/qt6/bin/qmake`. |
-| Fedora | `gcc-c++ make pkgconf-pkg-config qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtwayland-devel qt6-qtsvg-devel layer-shell-qt-devel wayland-devel dbus-daemon`. `QMAKE=/usr/bin/qmake6`. |
-| Arch | `base-devel qt6-base qt6-declarative qt6-wayland qt6-svg layer-shell-qt wayland dbus` |
+| Fedora | `gcc-c++ make pkgconf-pkg-config musl-gcc qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtwayland-devel qt6-qtsvg-devel layer-shell-qt-devel wayland-devel dbus-daemon`. `QMAKE=/usr/bin/qmake6`. |
+| Arch | `base-devel musl qt6-base qt6-declarative qt6-wayland qt6-svg layer-shell-qt wayland dbus` |
+
+`musl-tools`, `musl-gcc` or `musl` is for the static CLI and helpers (`make linux-cli`,
+`linux-helper`). All three distributions also need `appstream` and `desktop-file-utils` for
+`make linux-check`.
 
 The lists live in `packaging/ci/deps-lib.sh`, shared by the CI containers
 (`packaging/ci/linux-ci.sh deps build`, which installs without asking) and by
@@ -329,7 +350,7 @@ The mise tasks wrap the same targets (`mise tasks` lists them):
 | `linux:build`, `linux:test`, `linux:lint`, `linux:fmt` | `make linux-build`, `-test`, `-lint`, `-fmt` |
 | `linux:check`, `linux:ui-test`, `linux:run` | `make linux-check`, `-ui-test`, `-run` |
 | `linux:build:release`, `linux:run:release` | `make linux-build-release`, `-run-release`: the release tray, run with `--dev` against the release `cainary` and `cainary-otel-debug` from `target/release/` (`build:release`), nothing installed |
-| `linux:cli` | the static musl `cainary` for `LINUX_ARCH` (default: this machine) that `make linux` ships beside the tray |
+| `linux:cli` | the static musl `cainary`, `cainary-otel-debug`, `cainary-bind-helper` and `cainary-hosts-helper` for `LINUX_ARCH` (default: this machine) that `make linux` ships beside the tray |
 | `linux:package` | tarball, .deb and .rpm in `dist/` for this machine (needs `cargo-deb`, `cargo-generate-rpm`) |
 | `linux:deps` | the distro packages above; `-- --install` to install them |
 | `linux:container:deb`, `linux:container:rpm` | CI's build, package, inspect and install smoke test in `debian:trixie` or `fedora:44`; artifacts in `dist/container/<deb\|rpm>/` |
@@ -348,8 +369,8 @@ check, and its `cargo:` tools are `cargo install` anyway.
 The tests don't need a display or a real machine's state. `tray-model` runs the bounded runner
 against the shell stubs in `macos/Tests/stubs/` and report fixtures. `tray-dbus` runs against a
 private session bus with fake notification and watcher services. `cainary-tray` has the guard
-tests (`tests/guards.rs`) and an offscreen test that runs `--self-test` and checks the three
-snapshots.
+tests (`tests/guards.rs`) and an offscreen test that runs `--self-test` and checks one snapshot
+per sample scenario.
 
 ## 9. Troubleshooting
 
@@ -368,8 +389,8 @@ snapshots.
   `install-user.sh` install such an entry; a build run from source (`make linux-run`) has none.
   The warning is harmless there: the tray, notifications and window icon don't go through the portal.
 - **Won't start: a Qt platform plugin or QML module is missing.** Install the runtime packages from
-  §5. `cainary-tray --self-test` prints the Qt messages of the failing module. It writes its snapshots
-  to `$CAINARY_UI_SNAPSHOTS`, else `$XDG_RUNTIME_DIR/cainary/ui-snapshots`, else `./cainary-ui-snapshots`.
+  §5. `cainary-tray --self-test` prints the Qt messages of the failing module. It saves snapshots
+  only when `CAINARY_UI_SNAPSHOTS` names a directory.
 - **Results differ from a terminal scan.** See the autostart caveat in §3.
 - **Reporting a problem.** Open About and press **Copy diagnostics**, or run
   `cainary-tray --verbose`. Both give the same `key: value` block: versions, Qt platform, desktop
@@ -385,35 +406,45 @@ snapshots.
 
 ## 10. OTel debug collector
 
-The **OTel debug collector** in Settings is off by default. When enabled, the tray starts the
-bundled `cainary-otel-debug` child and stops it when the setting is turned off or the tray quits.
-The enabled setting is saved in `$XDG_CONFIG_HOME/cainary/tray.toml` under `[collector]`; an older
-settings file without that table still loads with the collector disabled. If it remains enabled,
-the collector starts again when the tray next launches.
+The **OTel debug collector** is off by default. Turn it on with the switch on its page (Details →
+Live → OTel collector). The tray starts the bundled `cainary-otel-debug` child and stops it when you
+switch it off or quit. Settings are saved in `tray.toml` under `[collector]`; an older file without
+that table loads with the collector off. Every launch starts with the collector off unless **Start
+the collector when cAInary starts** (Settings, off by default) is on.
+
+The page has four tabs: **Feed** (the received batches, with search and filters), **Red flags**
+(alerts grouped by rule, and the rules), **Setup** (how agents reach the collector, the received
+data settings and the HTTPS takeover) and **Logs** (§11). The header has the on/off switch and, when the
+collector has failed or stopped, **Retry**.
 
 The receiver listens on loopback only and makes no outbound connections. It is unauthenticated,
 so any local process of your own user can send it telemetry; connections from other local users are
-refused (the collector looks the sender up in `/proc/net/tcp`). It reads OTLP over HTTP as JSON or
+refused (the collector looks the sender up in `/proc/net/tcp` and `/proc/net/tcp6`, matching the
+exact client socket). It reads OTLP over HTTP as JSON or
 protobuf, gzip or not; gRPC isn't supported. Details shows the endpoint, setup lines, red-flag
 alerts, and a bounded recent batch summary. Collector output stays in memory: the tray retains at
 most 16 MiB of lines, 50 batches, and 200 alerts. Desktop notifications for red flags are enabled
 by default and limited to one per pattern every 60 seconds.
 
-Choose **Show in UI only** to keep the stream in memory. **Also save to** writes a JSONL log at the
-selected path; **Choose…** opens the desktop's xdg-desktop-portal file chooser. The default
+Choose **Show in this window only** to keep the stream in memory. **Also save to a file** writes a
+JSONL log at the selected path; **Choose…** opens the desktop's xdg-desktop-portal file chooser. The default
 suggested path is `$XDG_STATE_HOME/cainary/otel-debug.jsonl` (or the XDG default state directory).
 Custom red-flag patterns are sent to the child over stdin, not placed in its command-line
 arguments.
 
 ### HTTPS takeover and certificate trust
 
-The collector settings include an optional **HTTPS takeover**. It listens on loopback, uses port
-8443 by default, and only handles the host names listed there. Suggestions come from Claude Code
-and Codex telemetry endpoints in the latest scan report. A privileged-port failure offers **Open port N**
-(see [Opening a port below 1024](#opening-a-port-below-1024)).
+The collector page's **Setup** tab offers **Point agents here** or an optional **HTTPS takeover**.
+The takeover listens on loopback on port 443 by default (asking for administrator permission once
+per session, see below) or on another port with a 443 redirect, and only handles the host names
+listed there. Suggestions come from Claude Code and Codex telemetry endpoints in the latest scan
+report. A privileged-port failure offers **Open port N** (see
+[Opening a port below 1024](#opening-a-port-below-1024)).
 
-The Details page shows the takeover setup lines, local CA path and fingerprint. **Let Claude Code
-trust the collector…** first asks the helper for a dry-run preview. The confirmation dialog shows
+The takeover guide walks through: host names and port, **Point the host names at this computer**,
+**Redirect port 443 to N** (only for a non-443 port), **Let the agents trust the certificate**,
+**Restart the agents**, and **Undo the takeover**. It shows the local CA path and fingerprint.
+**Let Claude Code trust…** first asks the helper for a dry-run preview. The confirmation dialog shows
 the exact `NODE_EXTRA_CA_CERTS` change and backup path; nothing is written until **Confirm**. Claude
 Code must be restarted. Undo restores the previous value or removes the value cAInary added. The
 tray enables Undo only while `--trust-status` reports the setting as applied.
@@ -453,7 +484,8 @@ While the tray holds the port and the collector is stopped, Setup says **Port N 
 collector stopped**; **Retry** starts it again on the same port. The tray gives the port back when
 the collector is switched off, the port changes, the collector fails to start (it then offers
 **Open port N** again), after ten minutes of being stopped, or when you quit the tray. Port numbers
-1024 and above need none of this.
+1024 and above need none of this. While the port is open, **Close port N** gives it back and turns
+the collector off.
 
 When the collector can't start, a box on Setup says why and offers one action: **Open port N**
 (`port-privileged`, `listen-fd`), **Add host name** (`tls-no-host`), **Try port N+1**
@@ -494,8 +526,11 @@ them); it uses `/usr/local/libexec/cainary/` and the `.local` policy
 sudo install -d -m 0755 -o root -g root /usr/local/libexec/cainary
 sudo install -m 0755 -o root -g root (pwd)/target/(uname -m)-unknown-linux-musl/release/cainary-bind-helper /usr/local/libexec/cainary/cainary-bind-helper
 sudo install -m 0644 -o root -g root (pwd)/packaging/linux/polkit/ua.SkeLLLa.cAInary.local.policy /usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.local.policy
+sudo install -m 0755 -o root -g root (pwd)/target/(uname -m)-unknown-linux-musl/release/cainary-hosts-helper /usr/local/libexec/cainary/cainary-hosts-helper
+sudo install -m 0644 -o root -g root (pwd)/packaging/linux/polkit/ua.SkeLLLa.cAInary.hosts.local.policy /usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.hosts.local.policy
 # uninstall
 sudo rm /usr/local/libexec/cainary/cainary-bind-helper /usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.local.policy
+sudo rm /usr/local/libexec/cainary/cainary-hosts-helper /usr/share/polkit-1/actions/ua.SkeLLLa.cAInary.hosts.local.policy
 sudo rmdir /usr/local/libexec/cainary
 ```
 
@@ -512,7 +547,7 @@ and ends with `# <<< cAInary takeover <<<`. Everything outside the block is left
 was. Before the first change it saves a copy of the file as `/etc/hosts.cainary-backup` (0600,
 root-owned), and while it works it holds the lock `/etc/.cainary-hosts.lock`, so two edits never
 overlap. The helper is never setuid and has no file capabilities. It is not a general editor: it
-takes at most a few validated host names, refuses reserved names such as `localhost`, and refuses a
+takes at most 8 validated host names, refuses reserved names such as `localhost`, and refuses a
 symlinked, non-regular, hard-linked or writable-by-others `/etc/hosts`, or a file whose cAInary
 markers are damaged (the tray shows why; fix the file by hand, then try again).
 
@@ -523,7 +558,7 @@ markers are damaged (the tray shows why; fix the file by hand, then try again).
 - If the tray can't tell whether the edit landed (for example the helper was killed), it checks the
   file again and does not retry on its own.
 
-To undo, use the tray's **Remove** button (it asks for the password again and deletes the block),
+To undo, use the tray's **Remove from /etc/hosts…** button (it asks for the password again and deletes the block),
 or open `/etc/hosts` as an administrator and delete the lines from the `>>>` marker through the
 `<<<` marker, markers included. `/etc/hosts.cainary-backup` is only a safety copy; it is not
 restored automatically, and deleting it is safe.
@@ -538,24 +573,9 @@ answers with one line `cainary-hosts-helper/1 ok <set|clear> <changed|unchanged|
 
 ## 11. Logs
 
-The tray keeps an in-memory activity log (`tray-model/src/logbook.rs`) for the Logs view. It is
-never written to disk. The newest entries are kept: 2,000 by default, configurable from 100 to 50,000 lines, and never
-more than a byte budget of 1 KiB per allowed line (2 MiB to 32 MiB; message plus detail bytes);
-older ones are evicted and counted, and "Copy all" starts with "N older entries dropped".
+The collector page's **Logs** tab shows the collector's own messages (**Copy messages**) and,
+after a listen failure, its stderr (**Copy error details**). Its badge counts them. Nothing is
+written to disk.
 
-An entry has:
-
-| Field | Meaning |
-| --- | --- |
-| `seq` | Increasing number; survives Clear. |
-| `ts` | UTC time, RFC 3339 in JSON (`2026-11-07T12:34:56Z`). |
-| `level` | `info`, `warn` or `error`. |
-| `source` | `tray`, `scan`, `collector`, `trust` or `privilege`. |
-| `message` | One line, at most 300 characters (cut with `…`). |
-| `detail` | Optional text, at most 16 KiB (cut with `… [truncated]`). |
-
-Control characters, bidi overrides/isolates and other invisible format characters are escaped as
-`\u{XXXX}` in both fields. Callers redact: never log batches, alerts, matches, values, stdin
-config, red-flag names or environment values. "Copy all" emits `HH:MM:SS LEVEL source message`
-lines with detail indented four spaces, an optional diagnostics block first, and the home
-directory shown as `~`.
+`tray-model/src/logbook.rs` holds a bounded in-memory activity log for a wider Logs view; the app
+doesn't use it yet.

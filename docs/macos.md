@@ -12,6 +12,12 @@ Docs and Support links open in the browser on click (`NSWorkspace.open`, http(s)
 listening socket belongs to the opt-in collector child (§2.8), on loopback. No credential files: it reads its
 prefs, its own bundle, and (through `NSWorkspace`, for icons) the AI apps' `Info.plist`.
 
+**Scope.** This page describes what the macOS app does today. The newer collector features are
+Linux-first: the tabbed collector page (feed filters, red flags grouped by rule, a Logs tab), the
+step-by-step HTTPS takeover guide, one-click `/etc/hosts` editing and opening port 443 through a
+root helper are in the Linux tray only ([linux.md](linux.md) §10). Bringing them to macOS is on
+the [roadmap](roadmap.md).
+
 ## 1. Contract with the core
 
 **Helper:** `Bundle.main.bundleURL/Contents/Helpers/cainary`, kept out of `Contents/MacOS` so
@@ -76,6 +82,9 @@ count badge (a knock-out ring) in its empty top-left corner, plus a monochrome t
 
 The tooltip and accessibility label read `cAInary · HIGH · <status.summary>`, or
 `cAInary · Couldn't scan: <reason>`.
+
+Right-click or Control-click opens the same actions as a native menu (`StatusItemMenu.swift`):
+Open details, Copy report, Settings…, About cAInary, Support Ukraine ▸ and Quit cAInary.
 
 ### 2.2 Popover (`PopoverView.swift`, 360 pt wide)
 
@@ -210,8 +219,9 @@ A grouped `Form`, 480 pt wide:
   value is kept in the list.
 - **Startup:** Launch at login (`LoginItem.swift`: `SMAppService.mainApp`, the approval hint, the
   error line).
-- **OTel debug collector:** the opt-in toggle and its options (§2.8).
-- **Support Ukraine; version, Source code, About…**
+- **OTel debug collector** and **HTTPS takeover:** the opt-in toggle and its options, each its own
+  section (§2.8).
+- **Support Ukraine; Privacy tools** (a Proton link); **version, Source code, About…**
 
 There is no `--alert` picker: levels, the icon and notifications all ignore it. The legacy
 `paranoia` key is never read.
@@ -324,7 +334,9 @@ the app never talks to it over the network: it reads the child's stdout.
     host, the collector doesn't start and says why.
   - **Pane:** in takeover mode (`hello.mode == "tls-receiver"`) it lists the names, the CA path
     and SHA-256, and the `setup.takeover` steps with **Copy**. Pointing the host names at this Mac
-    (for example `/etc/hosts`) stays your step; the app never does it.
+    (for example `/etc/hosts`) stays your step; the app never does it. The collector prints the
+    443 redirect and its undo as Linux `nft` commands; on macOS that step needs a `pf` rule
+    instead, which the app doesn't offer yet ([roadmap](roadmap.md)).
   - **Listen errors:** after an `error` line with `source: "listen"` and an exit, the child's whole
     stderr (the privileged-port note) shows in a selectable box under the section. On macOS low
     ports are normally allowed, so this is rare.
@@ -352,7 +364,8 @@ the app never talks to it over the network: it reads the child's stdout.
 - **The log file** is written by the child (mode 0600, in a 0700 directory it creates), not by the
   app, so "writes only its prefs domain" still holds for the app itself.
 - The collector is unauthenticated: any local process can post to it, so the pane shows what it
-  *received*. The Linux collector refuses other local users' connections (it reads `/proc/net/tcp`);
+  *received*. The Linux collector refuses other local users' connections (it reads `/proc/net/tcp`
+  and `tcp6`);
   macOS has no such file, so nothing is checked here.
 
 ## 3. Files (`macos/`: macOS 14+, SwiftUI, Swift 6, swiftc via Makefile, no SwiftPM)
@@ -374,6 +387,8 @@ the app never talks to it over the network: it reads the child's stdout.
 | `Sources/TrustClient.swift`, `TrustStore.swift` | the takeover's one-shot trust calls and their state (§2.8) |
 | `Sources/Style.swift` | level style, `LevelChip`, display names (signal, origin, surface), `WindowAccessor` |
 | `Sources/MenuBarIcon.swift` | `image(MenuState, IconStyle) -> NSImage`, the label view |
+| `Sources/CanaryLogo.swift` | the robo-canary logo for the menu bar and the app |
+| `Sources/StatusItemMenu.swift` | the right-click menu on the menu bar icon (§2.1) |
 | `Sources/EntryIcon.swift` | §2.2 icons |
 | `Sources/PopoverView.swift`, `ChangesView.swift`, `LegendView.swift` | §2.2 |
 | `Sources/DetailView.swift` | §2.3 |
@@ -406,17 +421,20 @@ Rules:
 - `make ui-test` (needs `build`) runs `sh macos/Tests/run.sh`; `check` is `lint test ui-test`.
 
 **`packaging/bundle.sh`** (POSIX sh, shellcheck-clean). Inputs: `APP_BIN` (default
-`target/macos/cAInary`), `CORE` (default `target/debug/cainary`) and `OUT` (default `dist`).
+`target/macos/cAInary`), `CORE` (default `target/debug/cainary`), `OTEL_DEBUG` (default
+`target/debug/cainary-otel-debug`) and `OUT` (default `dist`).
 Steps:
 1. Read `VERSION` with `sed` from `[workspace.package] version` in `Cargo.toml`, the single
-   version source (architecture §11). Fail unless `"$CORE" --version` prints that version, which
-   catches a stale helper.
-2. Lay out the bundle: `Contents/MacOS/cAInary`, `Contents/Helpers/cainary`, `Contents/Info.plist`
-   and `Contents/Resources/COPYING` (from the repo root).
+   version source (architecture §11). Fail unless `"$CORE" --version` and `"$OTEL_DEBUG" --version`
+   print that version, which catches a stale helper.
+2. Lay out the bundle: `Contents/MacOS/cAInary`, `Contents/Helpers/cainary`,
+   `Contents/Helpers/cainary-otel-debug`, `Contents/Info.plist`, `Contents/Resources/COPYING` (from
+   the repo root) and `Contents/Resources/AppIcon.icns` (rendered from
+   `resources/icons/cainary-1024.png` with `sips` and `iconutil`).
 3. Stamp the plist: `sed` replaces `__VERSION__`, `__COMMIT__` (`git rev-parse`, or `unknown`;
    `-dirty` when there are local changes) and `__BUILD_DATE__`. Then run `plutil -lint`.
-4. Sign inside out: `codesign --force --options runtime` on the helper (identifier
-   `ua.SkeLLLa.cAInary.helper`), then on the app, then `codesign --verify --strict`. The signature
+4. Sign inside out: `codesign --force --options runtime` on the helpers (identifiers
+   `ua.SkeLLLa.cAInary.helper` and `ua.SkeLLLa.cAInary.otel-debug`), then on the app, then `codesign --verify --strict`. The signature
    plus a stable bundle id is what makes notifications and `SMAppService` work locally. Ad hoc by
    default; with `CODESIGN_IDENTITY` (a certificate SHA-1) it writes and checks the designated
    requirement `identifier … and certificate leaf = H"<sha1>"`, which releases use so grants
@@ -425,12 +443,10 @@ Steps:
 
 **`macos/Info.plist`**: bundle id `ua.SkeLLLa.cAInary`, executable and display name `cAInary`,
 `LSUIElement`, `LSMinimumSystemVersion` 14.0, and the `__VERSION__`/`__COMMIT__`/`__BUILD_DATE__`
-placeholders. There is no `CFBundleIconFile` yet (no artwork; SF Symbols only).
+placeholders, and `CFBundleIconFile` `AppIcon` (the robo-canary, built by `bundle.sh`).
 
 No entitlements (the collector child needs none either, §2.8), and no Python, Ruby or Node
-anywhere. `bundle.sh` is expected to put the collector at `Contents/Helpers/cainary-otel-debug`
-and sign it as `ua.SkeLLLa.cAInary.otel-debug`; that change is pending (packaging is decided
-separately).
+anywhere.
 
 ## 5. Proving it works without a human
 
@@ -557,11 +573,11 @@ make build ui-test bundle && open dist/cAInary.app
 
 ## 6. Not planned
 
-- FSEvents, a daemon or launchd agent, and the Linux UI.
+- FSEvents, and a daemon or launchd agent.
 - An alert-mode picker or a separate "Can't be seen locally" tab. Entry notes cover what
   can't be seen.
 - Opening the popover programmatically. Notification clicks go to Details.
-- App icon artwork and auto-update. Developer ID signing and notarization are not planned (see
+- Auto-update. Developer ID signing and notarization are not planned (see
   [distribution.md](distribution.md#signing)).
 - XCTest, Swift Testing and SwiftPM, which are unavailable or blocked in the sandbox.
 - Per-finding mute, change history beyond one baseline, Markdown copy and localization.

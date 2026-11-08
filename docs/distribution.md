@@ -9,7 +9,8 @@ until the user runs it, from a terminal or with the app's "OTel debug collector"
 (`LSUIElement`, no Dock icon) and requires macOS 14. For how the bundle is built, see
 [macos.md](macos.md) §4.
 
-**Linux:** a tarball, a .deb, an .rpm, APT and DNF repositories, and an AUR package. Each holds the static `cainary` CLI, the static
+**Linux:** a tarball, a .deb, an .rpm, and APT and DNF repositories (an AUR package, `cainary-bin`,
+is set up in the release workflow but not published yet). Each holds the static `cainary` CLI, the static
 `cainary-otel-debug` collector and the Qt 6 tray app `cainary-tray` (see [linux.md](linux.md)).
 `cainary-otel-debug` is inert: no service, no autostart, and nothing runs until the user starts it. The tray app needs the distro's
 Qt ≥ 6.5; the CLI runs anywhere.
@@ -27,7 +28,7 @@ Qt ≥ 6.5; the CLI runs anywhere.
 | DNF repository (Fedora 44+)             | the tray app and CLI, with updates | see [APT and DNF repositories](#apt-and-dnf-repositories) |
 | .deb (Debian 13+, Ubuntu 25.04+)        | the tray app and CLI     | `sudo apt install ./cainary_<version>_<amd64\|arm64>.deb`   |
 | .rpm (Fedora 44+)                       | the tray app and CLI     | `sudo dnf install ./cainary-<version>-1.<x86_64\|aarch64>.rpm` |
-| AUR (Arch)                              | the tray app and CLI     | `yay -S cainary-bin`                                       |
+| AUR (Arch)                              | the tray app and CLI     | not published yet; see [AUR](#aur)                         |
 | Linux tarball                           | the tray app and CLI     | unpack `cainary-<version>-linux-<x86_64\|aarch64>.tar.gz`, run `./install-user.sh` |
 | From source (Linux)                     | the tray app and CLI     | `make linux LINUX_FORMATS=tar,deb,rpm` ([linux.md](linux.md) §8) |
 
@@ -37,16 +38,19 @@ mise and packslip both verify the signed packslip manifest of the release before
 anything. They put `cainary` on `PATH`; they do not start the menu-bar app. On Linux the packslip
 manifest also lists `cainary-tray`, which needs the host's Qt 6. Without `--pin`,
 packslip trusts the repository GitHub reports for the name on first install and remembers it.
-After the first release, the signer pin (`ps1_…`) is printed in the `verify-packslip` job summary.
-Add it to the README install commands as `--pin <pin>`, and set it as the `PACKSLIP_PIN` repository
-variable.
+The `verify-packslip` job summary prints the signer pin (`ps1_…`). Adding it to the README
+install commands as `--pin <pin>`, and setting it as the `PACKSLIP_PIN` repository variable, is
+still a pending maintainer step.
 
 A release download through a browser is quarantined, and releases are not notarized (see
 [Signing](#signing)), so run `xattr -dr com.apple.quarantine /Applications/cAInary.app` once.
 
 ## Release artifacts
 
-`release.yml` runs on pushes to `master` without `[skip ci]`. When there is something to release,
+`release.yml` runs on pushes to `master` without `[skip ci]`. `pin-gate` first checks that every
+action in every workflow is pinned to a commit SHA, and `quality` (macOS `make check`),
+`quality-rust-linux` (`make check-rust`) and `quality-linux` (`make linux-check` on Debian trixie)
+rerun the CI checks; nothing is published unless they pass. When there is something to release,
 the `prepare` job works out the version and the commit to build, and changes nothing. The `build`
 (macOS), `build-linux-cli` and `build-linux` jobs check out that commit, apply the version bump
 locally (`scripts/release-tree.sh`) and build; `sign-linux` signs the .rpm files (see
@@ -78,9 +82,9 @@ records the macOS tar.gz as os `darwin` with no architecture (universal), the co
 resource `app` as `cAInary.app`. The two Linux
 tarballs list the commands `cainary`, `cainary-otel-debug` and `cainary-tray` under `bin/` in their top-level directory.
 
-The `build` job signs with the pinned certificate (see [Signing](#signing)). Until the pin is
-committed it signs ad hoc, emits a CI warning and says so in the release notes; the notes always
-carry the `xattr` step.
+The `build` job signs with the pinned certificate (see [Signing](#signing)) and fails if the
+`macos-signing` secrets are missing or don't match the pin. The release notes always carry the
+`xattr` step.
 
 ## Linux
 
@@ -155,20 +159,19 @@ sudo curl -fsSLo /etc/yum.repos.d/cainary.repo https://skellla.github.io/cainary
 sudo dnf install cainary
 
 # Debian 13+, Ubuntu 25.04+
-echo 'deb [trusted=yes] https://skellla.github.io/cainary/deb stable main' | sudo tee /etc/apt/sources.list.d/cainary.list
+sudo install -d -m 0755 /etc/apt/keyrings
+sudo curl -fsSLo /etc/apt/keyrings/cainary.asc https://skellla.github.io/cainary/cainary.asc
+echo 'deb [signed-by=/etc/apt/keyrings/cainary.asc] https://skellla.github.io/cainary/deb stable main' | sudo tee /etc/apt/sources.list.d/cainary.list
 sudo apt update
 sudo apt install cainary
 ```
 
-Like plasma-drop's, the repositories are unsigned until a signing key is pinned (`[trusted=yes]`,
-`gpgcheck=0`, `repo_gpgcheck=0`). Their integrity then rests on HTTPS to GitHub Pages; the
-checksums and attestation on the release page cover the same files. Once
-`packaging/signing/repo.asc` is committed ([Linux signing](#linux-signing)), `repo` signs the APT
-`InRelease`, every .rpm and each `repomd.xml`, publishes the public key as `cainary.asc`, and the
-index page, `cainary.list` and `cainary.repo` switch to checking it
-(`signed-by=/etc/apt/keyrings/cainary.asc`, `gpgcheck=1`, `repo_gpgcheck=1`). Adding the key
-changes the setup commands, and users who added the unsigned repository have to follow them
-again.
+`repo` signs the APT `InRelease`, every .rpm and each `repomd.xml` with the key pinned in
+`packaging/signing/repo.asc` ([Linux signing](#linux-signing)), and publishes the public key as
+`cainary.asc`; the index page, `cainary.list` and `cainary.repo` check it
+(`signed-by=/etc/apt/keyrings/cainary.asc`, `gpgcheck=1`, `repo_gpgcheck=1`). Without a pin,
+`pages-repo.sh` still builds unsigned repositories (`[trusted=yes]`, `gpgcheck=0`) for local
+testing.
 
 The job runs after `publish` on every release, unless the repository variable `PAGES_PUBLISH` is
 `false`. `PAGES_BASE_URL` overrides the URL written into the repository files (for a custom
@@ -188,7 +191,7 @@ gives the signed variant.
 `pkgver` and the checksums from the tarballs this run built, runs `makepkg --printsrcinfo` and
 pushes to `aur.archlinux.org`, in the `aur` environment. It runs on every release unless the
 repository variable `AUR_PUBLISH` is `false`, and skips with a warning until the `AUR_SSH_KEY`
-secret is set. One-time setup:
+secret is set. That secret isn't set yet, so `cainary-bin` is not on the AUR. One-time setup:
 
 1. Make an SSH key for the release (`ssh-keygen -t ed25519 -N '' -f aur-cainary`) and add the
    public half to the maintainer's AUR account (My Account → SSH Public Key).
@@ -219,17 +222,19 @@ from the first attempt is reused.
 
 One-time setup:
 
-1. Let the first release (`v0.1.0`) run; its `crates` job skips both crates with a warning.
+For a crate that isn't on crates.io yet:
+
+1. Let a release run; its `crates` job skips the new crate with a warning.
 2. Check out the tag and publish by hand with an API token (crates.io needs a crate to exist
    before it can have a trusted publisher): `cargo login --registry crates-io`, then
    `cargo publish --workspace --locked --registry crates-io`. `--registry crates-io` is needed when
    a local cargo config replaces crates-io with a mirror.
 3. Create the GitHub environment `crates-io` (Settings → Environments), limited to `master`, with
    no required reviewers.
-4. On crates.io, for both `cainary-core` and `cainary`: Settings → Trusted Publishing → add a
+4. On crates.io, for the crate: Settings → Trusted Publishing → add a
    GitHub publisher with owner `SkeLLLa`, repository `cainary`, workflow `release.yml` and
    environment `crates-io`.
-5. Turn on "trusted publishing only" for both crates, and revoke the API token from step 2.
+5. Turn on "trusted publishing only" for it, and revoke the API token from step 2.
 
 ## Signing
 
@@ -396,7 +401,7 @@ gh attestation verify cainary-<version>-linux-x86_64.tar.gz --repo SkeLLLa/caina
 packslip verify packslip.sigstore.json --artifact cainary-<version>-macos-universal.tar.gz \
   --identity-prefix https://github.com/SkeLLLa/cainary/ \
   --issuer https://token.actions.githubusercontent.com
-# Once the .rpm files are signed (see Linux signing):
+# The .rpm files are signed too (see Linux signing):
 sudo rpm --import https://raw.githubusercontent.com/SkeLLLa/cainary/master/packaging/signing/repo.asc
 rpm -K cainary-<version>-1.x86_64.rpm   # "digests signatures OK"
 ```
@@ -408,3 +413,4 @@ rpm -K cainary-<version>-1.x86_64.rpm   # "digests signatures OK"
 - Signed .deb files: APT checks the signed `InRelease` instead ([Linux signing](#linux-signing)),
   and a downloaded .deb relies on the checksums and attestation above.
 - A mise registry listing, so `mise use cainary` works without the `packslip:` prefix.
+- The AUR package `cainary-bin` ([AUR](#aur)).

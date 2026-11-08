@@ -7,9 +7,12 @@ cxx-qt; docs/linux.md describes the app, its popup placement and how to build it
 
 Layout:
 
-- `crates/tray-model/` — pure Rust: report model, bounded runner, store, settings, change tracking.
-- `crates/tray-dbus/` — zbus and ksni: tray icon, notifications, single instance.
+- `crates/tray-model/` — pure Rust: report model, bounded runner, store, settings, change tracking,
+  collector, takeover guide, `/etc/hosts` and privileged-port logic.
+- `crates/tray-dbus/` — zbus and ksni: tray icon, notifications, single instance, logind, file
+  chooser portal, Secret Service client (not used by the app yet).
 - `crates/cainary-tray/` — the `cainary-tray` binary: cxx-qt bridge, QML, placement, C++ shims.
 - `data/` — desktop entry, autostart entry, AppStream metadata and icons.
 
-Packaging is in `packaging/linux.sh`.
+Packaging is in `packaging/linux.sh`; the root helpers are `crates/cainary-bind-helper` and
+`crates/cainary-hosts-helper`.

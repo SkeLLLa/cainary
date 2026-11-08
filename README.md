@@ -293,8 +293,8 @@ Both apps run the bundled `cainary` CLI and show its result. They don't scan any
 and a Changes section, and a Details window with every finding, its source and its vendor docs.
 
 **Change notifications:** the app keeps a baseline and notifies you when a later scan adds or
-raises a finding. "Mark as seen" resets the baseline. It is in the popup on
-macOS and in the Details window on Linux. Clicking a notification opens Details.
+raises a finding. "Mark as seen" resets the baseline. It is in the popup's Changes section on
+both platforms, and in Details on Linux. Clicking a notification opens Details.
 
 ### macOS menu-bar app
 
@@ -312,19 +312,24 @@ For the design and the manual test checklist, see [docs/macos.md](docs/macos.md)
 
 The tray app is a Qt 6 / QML app. It shows its icon in any StatusNotifier tray, such as KDE
 Plasma's, or GNOME's with the AppIndicator extension. Its settings are in
-`~/.config/cainary/tray.toml`. For details, see [docs/linux.md](docs/linux.md).
+`~/.config/cainary/tray.toml`. The tray also runs the OTel debug collector, guides you through the
+HTTPS takeover, and can add the host names to `/etc/hosts` or open a port below 1024 through small
+root helpers that run only through `pkexec`, when you click (see
+[docs/linux.md §10](docs/linux.md#10-otel-debug-collector)). For details, see
+[docs/linux.md](docs/linux.md).
 
 ## OTel debug collector
 
-`cainary-otel-debug` is a small, separate program that receives OpenTelemetry (OTLP/JSON) exports
-on this machine and prints what they carry, so you can check what an AI tool's telemetry really
+`cainary-otel-debug` is a small, separate program that receives OpenTelemetry exports (OTLP over
+HTTP, JSON or protobuf, gzip or not) on this machine and prints what they carry, so you can check what an AI tool's telemetry really
 contains. Values are masked by default (`<string, 22 chars>`), and it raises an alert when a value
 looks like an email address, a private key or an API key, or contains words you chose
 (`--red-flag`, `--red-flags`).
 
 **One exception, in a separate program.** `cainary` itself never uses the network and never runs
 in the background. `cainary-otel-debug` listens only on loopback (127.0.0.1 and ::1), never opens
-an outbound connection, writes only to a log file you name, and runs only while you run it: from a
+an outbound connection, writes only a log file you name, its certificate files and, with
+`--trust`, the one setting described below, and runs only while you run it: from a
 terminal, or through the "OTel debug collector" toggle in the apps, which start it as a child
 process and stop it with the app. `cainary scan` and `status` never start or contact it.
 
@@ -352,8 +357,8 @@ codex -c 'otel.exporter={otlp-http={endpoint="http://127.0.0.1:4318/v1/logs",pro
 `cainary-otel-debug --help` prints these lines with the port it will use. Useful options:
 `--port <n>` (default 4318; ports under 1024 need a privilege on Linux, see below), `--json` (one JSON object per line, for scripts and the apps),
 `--once` (exit after the first batch), `--log-file <path>` (a `0600` file, rotated), and
-`--show-values` (print values unmasked; use with care, they can hold secrets). It reads OTLP/JSON
-only: set `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`.
+`--show-values` (print values unmasked; use with care, they can hold secrets). It reads OTLP over
+HTTP as JSON or protobuf, gzip or uncompressed; gRPC isn't supported.
 
 **Listening on a privileged port.** `--port <n>` picks the port in every mode (`--tls` defaults to
 8443). If the bind is refused for lack of privilege, the program exits 1 with a short error line
@@ -424,8 +429,8 @@ env CODEX_CA_CERTIFICATE=$HOME/.local/state/cainary/otel-debug-codex-bundle.pem 
 The no-write alternative is to set the variable for one run, as above. Either way, start the
 exporting process after the program prints its certificate path, and restart it after
 every run (each run makes a new authority). `cainary-otel-debug --delete-ca` removes the certificate
-file; a process that already loaded it keeps trusting it until it exits. It never runs `sudo`,
-`nft` itself, and it writes only that public certificate file. See
+file; a process that already loaded it keeps trusting it until it exits. It never runs `sudo` or `nft`
+itself; without `--trust` it writes only that public certificate file. See
 [architecture §12.10](docs/architecture.md#1210-endpoint-takeover---tls).
 
 The design, limits and the JSON-lines format are in
