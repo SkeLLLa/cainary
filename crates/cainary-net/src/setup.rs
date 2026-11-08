@@ -131,9 +131,9 @@ pub fn takeover(t: &Takeover<'_>) -> Vec<String> {
     l.push(format!("{}. Trust the certificate, for the exporting process only (never disable certificate verification):", next()));
     l.push(format!(
         "  Claude Code: env NODE_EXTRA_CA_CERTS={} claude",
-        t.ca_path
+        quote(t.ca_path)
     ));
-    l.push(format!("  Codex: set SSL_CERT_FILE={} or CODEX_CA_CERTIFICATE={} for the codex process (see its documentation for which it honors)", t.ca_path, t.ca_path));
+    l.push(format!("  Codex: set SSL_CERT_FILE={} or CODEX_CA_CERTIFICATE={} for the codex process (see its documentation for which it honors)", quote(t.ca_path), quote(t.ca_path)));
     l.push(format!("  Certificate SHA-256: {}", t.fingerprint));
     l.push(format!("{}. Start the exporting process after this certificate is published, and restart it after every run of this program: each run creates a new CA. Deleting the file does not revoke trust a process already loaded; `cainary-otel-debug --delete-ca` removes the file.", next()));
     if redirect {
@@ -383,6 +383,23 @@ mod takeover_tests {
         );
         let v4 = takeover(&t(&hosts, 8443, false)).join("\n");
         assert!(!v4.contains("::1 otel") && !v4.contains("ip6 daddr"));
+    }
+
+    #[test]
+    fn a_ca_path_with_a_space_stays_one_word() {
+        let hosts = vec!["a.example.test".to_string()];
+        let mut mac = t(&hosts, 443, true);
+        mac.ca_path = "/Users/u/Library/Application Support/cAInary/otel-debug-ca.pem";
+        let r = takeover(&mac).join("\n");
+        let q = "'/Users/u/Library/Application Support/cAInary/otel-debug-ca.pem'";
+        assert!(
+            r.contains(&format!("env NODE_EXTRA_CA_CERTS={q} claude")),
+            "{r}"
+        );
+        assert!(
+            r.contains(&format!("SSL_CERT_FILE={q} or CODEX_CA_CERTIFICATE={q}")),
+            "{r}"
+        );
     }
 
     #[test]

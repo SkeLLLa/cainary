@@ -775,6 +775,16 @@ fn over_the_limit_connections_close_without_a_handshake_or_a_plaintext_reply() {
 
 // ── the binary ─────────────────────────────────────────────────────────────────────────────
 
+/// The directory the binary keeps its CA in, given its HOME and XDG_STATE_HOME: macOS uses
+/// Application Support under HOME and doesn't read XDG_STATE_HOME.
+fn ca_dir_for(home: &Path, xdg_state: &Path) -> PathBuf {
+    if cfg!(target_os = "macos") {
+        home.join("Library/Application Support/cAInary")
+    } else {
+        xdg_state.join("cainary")
+    }
+}
+
 fn bin(state: &Path) -> Command {
     let mut c = Command::new(env!("CARGO_BIN_EXE_cainary-otel-debug"));
     c.env("XDG_STATE_HOME", state).env("HOME", state);
@@ -818,7 +828,7 @@ fn the_binary_prints_the_takeover_and_a_second_run_is_refused() {
         .unwrap();
     assert_ne!(port, 443);
     let ca = PathBuf::from(hello["tls"]["ca"]["path"].as_str().unwrap());
-    assert_eq!(ca, state.join("cainary/otel-debug-ca.pem"));
+    assert_eq!(ca, ca_dir_for(&state, &state).join("otel-debug-ca.pem"));
 
     // A real client against the real process, trusting only the file.
     let pem = std::fs::read_to_string(&ca).unwrap();
@@ -934,10 +944,16 @@ fn the_hello_line_golden() {
     v["ts"] = json!("<ts>");
     v["generator"] = json!("<generator>");
     let sha = v["tls"]["ca"]["sha256"].as_str().unwrap().to_string();
+    let ca_dir = ca_dir_for(&state, &state).display().to_string();
+    // The commands quote a path with a space (macOS: Application Support); the golden is unquoted.
     let masked = v
         .to_string()
         .replace(&sha, "<sha256>")
-        .replace(&state.display().to_string(), "<state>")
+        .replace(
+            &format!("'{ca_dir}/otel-debug-ca.pem'"),
+            "<ca-dir>/otel-debug-ca.pem",
+        )
+        .replace(&ca_dir, "<ca-dir>")
         .replace(&port, "<port>");
     let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/tls-hello.jsonl");
     let got = format!("{masked}\n");
@@ -955,6 +971,10 @@ fn the_hello_line_golden() {
 }
 
 #[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "macOS keeps the CA under HOME and doesn't read XDG_STATE_HOME"
+)]
 fn a_symlinked_state_directory_is_refused_with_exit_1() {
     let base = tmp("symlinked-state");
     std::fs::create_dir_all(&base).unwrap();
@@ -1304,6 +1324,10 @@ fn the_endpoint_says_https_and_both_families_are_listed_by_default() {
 }
 
 #[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "macOS keeps the CA under HOME and doesn't read XDG_STATE_HOME"
+)]
 fn a_state_path_with_dotdot_or_a_relative_one_is_refused_with_exit_1() {
     let base = tmp("dotdot-bin");
     std::fs::create_dir_all(base.join("a")).unwrap();
@@ -1365,8 +1389,8 @@ fn trust_through_the_binary_applies_reports_and_undoes() {
     std::fs::create_dir_all(&home).unwrap();
     std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
     let settings = home.join(".claude/settings.json");
-    let ca = home.join("state/cainary/otel-debug-ca.pem");
-    let bundle = home.join("state/cainary/otel-debug-claude-bundle.pem");
+    let ca = ca_dir_for(&home, &home.join("state")).join("otel-debug-ca.pem");
+    let bundle = ca_dir_for(&home, &home.join("state")).join("otel-debug-claude-bundle.pem");
 
     let st = json_line(
         &trust_bin(&home)
@@ -1531,7 +1555,7 @@ fn each_tls_start_regenerates_the_combined_bundle_at_the_same_path() {
     let v = json_line(&out);
     assert_eq!(v["action"], "applied", "{v}");
     let bundle = PathBuf::from(v["bundlePath"].as_str().unwrap());
-    let ca_file = home.join("state/cainary/otel-debug-ca.pem");
+    let ca_file = ca_dir_for(&home, &home.join("state")).join("otel-debug-ca.pem");
     let first_ca = cert(&std::fs::read_to_string(&ca_file).unwrap());
     let b1 = cert(&std::fs::read_to_string(&bundle).unwrap());
     assert_eq!(b1.len(), 2);
@@ -1577,7 +1601,7 @@ fn trusted_home(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
     let home = tmp(tag);
     std::fs::create_dir_all(&home).unwrap();
     std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let state = home.join("state/cainary");
+    let state = ca_dir_for(&home, &home.join("state"));
     drop(Tls::start(&[HOST.to_string()], &state).unwrap());
     let mine = home.join("corp.pem");
     std::fs::write(&mine, rcgen_cert("corp root")).unwrap();
