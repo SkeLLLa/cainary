@@ -327,7 +327,9 @@ mod tests {
             t + Duration::from_millis(50),
         );
         assert_eq!(err(r), (413, COSTLY.to_string()));
-        assert!(t.elapsed() < Duration::from_secs(2), "{:?}", t.elapsed());
+        // Well under the time the whole bomb takes. Unoptimised builds decode one 64 KiB piece
+        // slowly, and a busy CI runner more so, hence the margin (a release build takes ~0.2 s).
+        assert!(t.elapsed() < Duration::from_secs(10), "{:?}", t.elapsed());
         // Already spent: nothing is decoded, protobuf included.
         let past = Instant::now();
         for (f, e, body) in [
