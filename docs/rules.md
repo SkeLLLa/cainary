@@ -21,8 +21,9 @@ Conventions:
 - **Truthy** = case-insensitive `1`, `true`, `yes`, `on`. **Set** = present and non-empty.
 - **Host** = the URL host only, never path, query or userinfo (redact.rs `url_host`).
 - Every finding carries `reference` = the doc URL in the rule's "Ref" cell.
-- Origin of a file source comes from its row. A user-tier file in `~` owned by uid 0 is
-  `org-installed`. Hook origin is per hook (H.3).
+- Origin of a file source comes from its row. Claude Code, Cursor and Copilot treat a user-tier
+  file in `~` as `org-installed` when it is a regular file owned by uid 0 and not group- or
+  world-writable. Other scanners and Device use their own rules. Hook origin is per hook (H.3).
 
 ---
 
@@ -45,8 +46,8 @@ pub enum Target {
 }
 ```
 
-1. `Shell`: split on whitespace honoring simple `'…'` / `"…"` quotes, and take the first `;`,
-   `&&`, `||`, `|` segment. `Argv`: the words as given.
+1. `Shell`: split on whitespace honoring simple `'…'` / `"…"` quotes, and stop at the first `;`,
+   `&` or `|` (so `&&` and `||` end the segment too). `Argv`: the words as given.
 2. Drop leading `VAR=value` words (keep a `PATH=` value for H.2) and the wrappers `env` (with
    its `-x` options and its own `VAR=` words), `exec`, `nohup`, `command`.
 3. If the first word is an interpreter (`sh bash zsh dash ksh fish node python python3 ruby perl
@@ -77,7 +78,7 @@ stay.
 target is `Target::File`, the canonical path is **root-owned** (`ctx.root_owned`), and it sits
 under a **vendor root**: `R/Library/Application Support/<V>/`, `R/opt/<V>/`, or
 `R/usr/local/<V>/` where `<V>` isn't `bin sbin lib libexec share include etc var Cellar
-Caskroom Homebrew opt`. Otherwise it keeps the file's origin. Paths in `$HOME`, `/usr/bin`,
+Caskroom Homebrew opt local homebrew`. Otherwise it keeps the file's origin. Paths in `$HOME`, `/usr/bin`,
 `/bin`, `/System`, `/opt/homebrew`, `/nix` and so on are never org. `Unresolved` and `Inline`
 keep the file's origin. That's the whole rule: no code signatures and no launch-job markers.
 
@@ -98,11 +99,10 @@ keep the file's origin. That's the whole rule: no code signatures and no launch-
 
    | Binary | Allowed arguments |
    | --- | --- |
-   | `afplay`, `paplay`, `aplay` | options and file paths |
+   | `afplay`, `paplay`, `aplay`, `notify-send` | anything |
    | `say` | anything except `-o`, `--output-file`, `-n`, `--network-send` (and their `=` forms) |
    | `osascript` | exactly one `-e <script>`, where the script starts with `display notification` or `beep` and contains none of `do shell script`, `run script`, `load script`, `tell` |
    | `tput` | exactly `bel` |
-   | `notify-send` | anything |
 
 If all hold, the finding has **no signals** (info): "plays a sound or shows a notification". If
 any fails, the normal hook rules apply, so a look-alike `say` early on PATH, or one that a
@@ -125,7 +125,7 @@ evidence lists the events and the redacted command (max 3 commands).
 `mcp::server(name, value, origin, ctx) -> FindingBuilder` (the caller adds `.source(…)`):
 - A `url`/`http_url`/`serverUrl` gives a remote server: `[tool-details]` "receives your tool
   requests at `<host>`". BE unless the tool documents that the org server is always used.
-  Header names are evidence, values are `••••`.
+  Header names are evidence, values are `<redacted>`.
 - A `command` gives a local server, with its target resolved by H.1 (H.2 layer 2 = the server's
   `env.PATH`). From an org origin, `[tool-details]` BE ("runs `<basename>` with your tool
   requests"). From a user origin, info, unless H.3 makes it org-installed.
@@ -134,7 +134,8 @@ evidence lists the events and the redacted command (max 3 commands).
 ### H.8 Known local tool
 
 `hooks::is_known_local_tool_hook(cmd, tool_path, ctx) -> bool` recognizes only a plain `rtk hook …`
-command for now; `rtk` is held in a const tool-name table for future additions. The second word
+command for now; `rtk` is held in a const tool-name table for future additions, and every other
+bare name is rejected before any lookup. The second word
 must be `hook`. An absolute path or a bare name found through H.2's layered `PATH` (the tool's
 configured path when present, otherwise the scan's `PATH`) must resolve to a canonical path whose
 basename is `rtk`. There is no install-directory allowlist, so an absolute path such as
@@ -171,7 +172,7 @@ tracking, recall databases, or the device salt.
 
 Ref base: `https://code.claude.com/docs/en/` — `managed-settings`, `server-managed-settings`,
 `settings-reference`, `settings`, `env-vars`, `monitoring-usage`, `hooks`, `managed-mcp`,
-`data-usage`.
+`data-usage`, `network-config`.
 
 `<cfg>` = the `ClaudeConfig` tool home (`$CLAUDE_CONFIG_DIR` if absolute or `~/…` without
 `..`, else `~/.claude`).
@@ -188,8 +189,11 @@ Ref base: `https://code.claude.com/docs/en/` — `managed-settings`, `server-man
 | policy cache | `<cfg>/policy-limits.json` (internals UNVERIFIED → BE) | same | json | server |
 | env | process env | same | — | environment |
 
-The env tier reads only a fixed list of process variables, besides the `OTEL_EXPORTER_OTLP_*`
-family. For telemetry that is `CLAUDE_CODE_ENABLE_TELEMETRY`, the trace switches, the three
+The env tier reads only a fixed list of process variables (`PROCESS_VARS`), besides the
+`OTEL_EXPORTER_OTLP_*` family: `ANTHROPIC_BASE_URL` and the provider `ANTHROPIC_*_BASE_URL`s,
+`CLAUDE_CODE_USE_{BEDROCK,VERTEX,FOUNDRY}`, the proxy variables (either case),
+`NODE_EXTRA_CA_CERTS`, `DISABLE_TELEMETRY`, `DO_NOT_TRACK`,
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, and for telemetry `CLAUDE_CODE_ENABLE_TELEMETRY`, the trace switches, the three
 `OTEL_*_EXPORTER` variables, `OTEL_RESOURCE_ATTRIBUTES`, the `OTEL_LOG_*` content flags,
 `OTEL_LOG_MANAGED_SETTINGS`, and
 `OTEL_METRICS_INCLUDE_{SESSION_ID,ACCOUNT_UUID,VERSION,ENTRYPOINT,RESOURCE_ATTRIBUTES,REPOSITORY}`.
@@ -204,9 +208,9 @@ drop-ins make the scan incomplete.
 Installed marker (probe): `<cfg>` is a dir, or `which("claude")` is `Found`, or any source is
 present.
 
-Not read: project `.claude/settings*.json` and `.mcp.json` (there is no cwd scan),
-`<cfg>/.claude.json`, `<cfg>/.credentials*`, `<cfg>/projects/`, plugin caches. The access policy
-refuses these anyway.
+Not read: project `.claude/settings*.json` and `.mcp.json` (there is no cwd scan, so they are
+never opened), `<cfg>/.claude.json`, `<cfg>/.credentials*`, `<cfg>/projects/`, plugin caches. The
+access policy refuses `<cfg>/.claude.json`, `<cfg>/.credentials*` and `<cfg>/projects/`.
 
 ### CC.2 Resolution (`claude_code.rs`)
 
@@ -244,8 +248,9 @@ each one knows the handful of keys it handles.
    - `Merge`: the **top-only keys** (`apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`,
      `gcpAuthRefresh`, `otelHeadersHelper`, `proxyAuthHelper`, `forceLoginOrgUUID`,
      `forceLoginMethod` `claudeai`/`console`, `parentSettingsBehavior`, `modelPicker`,
-     `policyHelper`, `permissions.defaultMode`) come only from `policy_tier`. Lists (`hooks`,
-     `permissions.allow`, …) and `managedMcpServers` names come from every policy tier. A
+     `policyHelper`) come only from `policy_tier`. `hooks`, `permissions` (all of it),
+     `managedMcpServers`, `enabledPlugins`, the marketplace lists and `allowedHttpHookUrls` come
+     from every policy tier. A
      lock is on if any tier turns it on. Any other key comes from its highest setter.
    - A key that is not in effect gives one info finding per tier, "Settings in `<tier>` are
      ignored", listing those keys (max 20).
@@ -267,19 +272,20 @@ each one knows the handful of keys it handles.
    - a managed `OTEL_EXPORTER_OTLP_HEADERS`, `…_CLIENT_KEY` or `…_CLIENT_CERTIFICATE` drops the
      local per-signal copies of those and every local endpoint;
    - a managed logs or traces destination drops the local `BETA_TRACING_ENDPOINT`;
-   - local `OTEL_LOG_*` content flags the managed unit leaves unset stay in effect, BE.
+   - local `OTEL_LOG_*` content flags the managed unit leaves unset stay in effect, BE; so does
+     any other local telemetry value the managed unit doesn't replace, while an admin unit is in
+     effect.
 
-   Dropped variables become info, not in effect. The Swift version dropped all local routing
-   once an admin unit existed. That was wrong, and it isn't kept.
+   Dropped variables become info, not in effect.
 8. **Server tier is a guess** (`server_be`): if any `CLAUDE_CODE_USE_{BEDROCK,VERTEX,FOUNDRY}` is
    truthy, or `ANTHROPIC_BASE_URL`'s host isn't `api.anthropic.com`, Claude Code doesn't fetch
    server settings, so server-tier findings get BE ("Claude Code skips server-managed settings
    with this setup"). With `envKind = launchd`, server-tier findings are always BE, and the CC.7
    note is added.
-9. **`policy_helper(cfg)`** (CC.5).
+9. **`policy_helper(ctx, tiers, policy)`** (CC.5).
 
 ```rust
-// Plain data, no methods: concern tests build it by hand.
+// Plain data, no methods: unit tests build it by hand.
 pub enum CcTierId { Server, Mdm, File }
 pub enum Behavior { FirstWins, Merge }
 pub struct CcTier { pub id: CcTierId, pub loc: Loc, pub origin: Origin, pub value: Map<String, Value>, pub policy: bool }
@@ -311,7 +317,8 @@ pull-only (info).
 - `logs` = enabled + a counting `OTEL_LOGS_EXPORTER`.
 - `traces` = enabled + `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA` (or its alias
   `ENABLE_ENHANCED_TELEMETRY_BETA`) truthy + a counting `OTEL_TRACES_EXPORTER`. Without the beta
-  switch, a traces exporter sends nothing.
+  switch, a traces exporter sends nothing: info, not in effect, "Claude Code's trace export is set
+  up but switched off".
 - `beta` = enabled + `ENABLE_BETA_TRACING_DETAILED` truthy + `BETA_TRACING_ENDPOINT` set. It is
   allowlist-gated by Anthropic, so findings from it are BE.
 
@@ -321,7 +328,7 @@ The value of `OTEL_EXPORTER_OTLP_HEADERS` is never shown, only its names.
 
 | Condition | Signals |
 | --- | --- |
-| `metrics`, `logs`, `traces` or `beta` | usage, identity: "sends usage data and your identity to `<hosts>`". Every metric data point, event and span carries the standard attributes (`user.id`, `user.email` when signed in, `organization.id`, `session.id`, `terminal.type`; `#standard-attributes`). `OTEL_METRICS_INCLUDE_ACCOUNT_UUID=false` removes only the account IDs. |
+| `metrics`, `logs`, `traces` or `beta` | usage, identity: "sends usage data and your identity to `<host>`". Every metric data point, event and span carries the standard attributes (`user.id`, `user.email` when signed in, `organization.id`, `session.id`, `terminal.type`; `#standard-attributes`). `OTEL_METRICS_INCLUDE_ACCOUNT_UUID=false` removes only the account IDs. |
 
 Content flags (truthy unless noted) and where each one lands:
 
@@ -341,12 +348,13 @@ that flag, and "tool details" when it comes from `OTEL_LOG_RAW_API_BODIES`. Phra
 order usage data, your identity, your prompts, Claude's responses, the tool phrase, file contents.
 
 - `OTEL_LOG_RAW_API_BODIES` = `file:<dir>` → info, BE: "writes raw API bodies to `<dir>` on this
-  machine" (local disk). Any other value → info, BE: "unrecognised value".
+  machine" (local disk). Any value other than `1`, `true`, `0`, `false`, `no`, `off` → info, BE:
+  "unrecognised value".
 - A content flag with none of its destinations on → info, not in effect: "would log … if
   `<logs/traces>` export were on".
 - Telemetry variables present but not enabled → info.
 
-One finding per destination (logs, traces, beta) and contributing source. The evidence lists the
+One finding per destination (metrics, logs, traces, beta) and contributing source. The evidence lists the
 contributing variables, redacted. Ref `monitoring-usage`.
 
 The detail is the destination's sentence (every data point, event or span is tagged with your
@@ -386,13 +394,17 @@ the keys with redacted values (max 20 lines). Lock-style keys (`allowManaged*`, 
 | Group | Keys |
 | --- | --- |
 | login | `forceLoginMethod`, `forceLoginOrgUUID`, `allowedProviders` |
-| permissions | `permissions`, `allowManagedPermissionRulesOnly`, `sandbox` (except `sandbox.network.tlsTerminate`, which → traffic) |
+| permissions | `permissions`, `allowManagedPermissionRulesOnly`, `sandbox` (whole) |
 | mcp & plugins | `allowedMcpServers`, `deniedMcpServers`, `allowManagedMcpServersOnly`, `managedMcpServers`, `enabledPlugins`, `strictKnownMarketplaces`, `blockedMarketplaces`, `extraKnownMarketplaces`, `disableClaudeAiConnectors` |
 | hooks | `allowManagedHooksOnly`, `disableAllHooks`, `allowedHttpHookUrls` |
 | models & updates | `availableModels`, `model`, `requiredMinimumVersion`, `autoUpdatesChannel` |
 | instructions | `claudeMd`, `companyAnnouncements` (character count only) |
 | other | any other key (names only) |
 
+- A truthy `sandbox.network.tlsTerminate` in effect also gives a separate traffic finding: "Your
+  organization can inspect Claude Code's sandboxed network traffic".
+- `managedMcpServers` in effect from an admin tier → also `[tool-details]` BE: "Your organization
+  added N MCP servers to Claude Code", plus one H.7 finding per remote server.
 - `enabledPlugins` in effect from an admin tier → also `[tool-details]` BE: "plugins your
   organization enabled may run hooks or MCP servers". Plugin caches are not read.
 - `managed-mcp.json` `mcpServers` → policy "your organization fixes which MCP servers Claude
@@ -402,11 +414,12 @@ the keys with redacted values (max 20 lines). Lock-style keys (`allowManaged*`, 
 - User `settings.json` `permissions`/`sandbox.enabled` → info "you restricted Claude Code
   yourself".
 
-**`policyHelper`** (`policy_helper(cfg) -> Option<(Loc, CcTierId)>`): it is *selected* when
-`policy_tier` is mdm or file and that tier sets `policyHelper` as an object with a string `path`
-(`timeoutMs` and `refreshIntervalMs` are evidence). A server `policy_tier` suppresses a lower
-helper, even under `Merge`; that case is info, not in effect. A non-object value is dropped
-(info "invalid `policyHelper` ignored"). A selected helper can replace **all** managed settings,
+**`policyHelper`** (`policy_helper(ctx, tiers, policy) -> Option<(Loc, CcTierId)>`): it is
+*selected* when `policy_tier` is mdm or file and that tier sets `policyHelper` as an object with a
+string `path` that is absolute or starts with `~/` (`timeoutMs` and `refreshIntervalMs` are
+evidence). A server `policy_tier` suppresses a lower helper, even under `Merge`; that case is
+info, not in effect: "A policy helper is ignored because server-managed settings take
+precedence". Any other value is dropped (info "An invalid policy helper setting is ignored"). A selected helper can replace **all** managed settings,
 including the cross-source keys and env. cAInary never runs it, so:
 
 - `ctx.not_run(helper path, origin, "policyHelper output decides the managed settings")`
@@ -455,8 +468,7 @@ where a missing `type` means `command`. A `command` hook with an `args` array is
 
 ## CD. Claude Desktop (`scanners/claude_desktop.rs`) — macOS only
 
-Ref: `https://claude.com/docs/third-party/claude-desktop/configuration`, `…/mdm`, `…/telemetry`,
-`https://support.claude.com/en/articles/12622667`.
+Ref: `https://claude.com/docs/third-party/claude-desktop/configuration`, `…/mdm`, `…/telemetry`.
 
 | Source | Path | Origin |
 | --- | --- | --- |
@@ -470,8 +482,8 @@ Mode: 3P when `inferenceProvider` is set, else 1P.
 | --- | --- |
 | `otlpEndpoint` set | usage + identity: "sends usage telemetry to `<host>`". Identity always: the exported resource carries `process.owner` (your OS login). `endUserAttribution = false` removes only `enduser.id`, and `otlpResourceAttributes` can add more, so neither clears identity |
 | `otlpContentCapture` (array or JSON-array string): `userPrompts` → prompts, responses (Desktop 1.17377+ also sends replies and conversation titles); `assistantResponses` → responses; `toolDetails` → tool-details (tool input); `toolContent` → file-contents (tool output); `rawApiBodies` → prompts, responses, tool-details, file-contents | as listed when `otlpEndpoint` is set; BE on 1P without it (row below); info if the array is empty |
-| 1P, OTLP keys but no `otlpEndpoint` | identity BE, "collector may be set in the admin console" |
-| `otlpAuthMode = inference-credential` | + identity: "the collector receives your sign-in token" |
+| 1P, any `otlp*` key or `endUserAttribution` but no `otlpEndpoint` | identity BE, "collector may be set in the admin console" |
+| `otlpAuthMode = inference-credential` | + identity: "the collector receives your sign-in token"; BE without `otlpEndpoint` |
 | `inferenceGatewayBaseUrl` | traffic: "model requests go through `<host>`" |
 | else `inferenceProvider` | traffic: "model requests go to `<provider>` instead of Anthropic" |
 | `egressProxyPacUrl` / `egressProxyUrl` | traffic (host; PAC query stripped) |
@@ -503,7 +515,7 @@ Ref: `https://learn.chatgpt.com/docs/` — `enterprise/managed-configuration`,
 | --- | --- | --- | --- | --- | --- |
 | mdm req | `MDM(com.openai.codex)` key `requirements_toml_base64` | — | base64 TOML | mdm | requirements |
 | mdm cfg | same, key `config_toml_base64` | — | base64 TOML | mdm | config |
-| cloud | `<home>/cloud-config-bundle-cache.json` (`signed_payload.bundle.{requirements_toml,config_toml}.enterprise_managed[].contents` = TOML text, merged in order; shape from vendor source → BE) | same | json+toml | server | both |
+| cloud | `<home>/cloud-config-bundle-cache.json` (`signed_payload.bundle.{requirements_toml,config_toml}.enterprise_managed[].contents` = TOML text, merged in order; shape from vendor source → telemetry and hooks findings from it are BE) | same | json+toml | server | both |
 | legacy req | `R/etc/codex/managed_config.toml` keys `approval_policy`, `approvals_reviewer`, `sandbox_mode`, read as constraints | same ✅ | toml | system | requirements |
 | sys req | `R/etc/codex/requirements.toml` | same ✅ | toml | system | requirements |
 | managed cfg | `R/etc/codex/managed_config.toml` | same ✅ | toml | system | config |
@@ -539,14 +551,12 @@ Ref: `https://learn.chatgpt.com/docs/` — `enterprise/managed-configuration`,
 Codex ignores exactly these keys from cloud requirements: `allowed_login_methods`,
 `allowed_chatgpt_workspaces`, `cli_auth_credentials_store`, `chatgpt_base_url`. They give info,
 not in effect: "set in your organization's cloud policy, but Codex doesn't enforce it here".
-(The Swift list also had `model_provider(s)`. The current vendor docs don't, so it is not
-kept.)
 
 ### CX.3 Policy and routing
 
 | Key (effective) | Signals |
 | --- | --- |
-| requirements: any key | policy, one finding per layer; evidence = keys (values redacted) grouped as approvals/sandbox, login (`allowed_login_methods`, `allowed_chatgpt_workspaces`), features, telemetry (`otel`), mcp, hooks (`allow_managed_hooks_only`), other |
+| requirements: any key | policy, one finding per layer; evidence = keys (values redacted) grouped as approvals/sandbox (`approval_policy`, `approvals_reviewer`, `sandbox_mode`, `allowed_approval_policies`, `allowed_sandbox_modes`), login (`allowed_login_methods`, `allowed_chatgpt_workspaces`), features, telemetry (`otel`), mcp (any key containing `mcp`), hooks (`allow_managed_hooks_only`, `hooks`), other |
 | selected provider = requirements `model_provider`, else config `model_provider`, else `openai` | |
 | `model_providers.<selected>.base_url` | traffic: "model traffic goes through `<host>`" (+ policy if from requirements). An unselected provider → info |
 | `openai_base_url` (selected = openai) / config `chatgpt_base_url` | traffic |
@@ -556,7 +566,8 @@ kept.)
 | managed layer, any other key | policy "your organization sets Codex defaults" |
 | `CODEX_CA_CERTIFICATE` / `SSL_CERT_FILE` (env) | traffic BE (path only) |
 
-Plugin servers use the manifest's `mcpServers` path or `./.mcp.json` by default. The path must
+Plugin servers use the manifest's `mcpServers` path or `./.mcp.json` by default; an inline
+`mcpServers` object in the manifest is not read. The path must
 start with `./`, contain no `..`, and resolve inside the plugin root. A server disabled in that
 file or by `plugins.<p>.mcp_servers.<s>.enabled = false` is skipped.
 
@@ -570,8 +581,8 @@ pub fn exporter(v: &Value) -> Exporter;
 `exporter` accepts the string `none`, `statsig`, `otlp-http` or `otlp-grpc`, or a table with
 exactly one key, `otlp-http` or `otlp-grpc`. That key's table may hold `endpoint`, `protocol`,
 `headers` and `tls.*`. Anything else is `Unknown(<shape>)`. `otel.exporter` (log events) and
-`otel.trace_exporter` take `none|otlp-http|otlp-grpc`. `otel.metrics_exporter` also takes
-`statsig`, and defaults to `Statsig`.
+`otel.trace_exporter` take `none|otlp-http|otlp-grpc` (`statsig` there counts as
+unrecognised). `otel.metrics_exporter` also takes `statsig`, and defaults to `Statsig`.
 
 The `otel.*` keys resolve through CX.1; a finding whose exporter or flag comes from requirements
 cites that layer, and its detail ends with: 'Your organization enforces this; Codex CLI before
@@ -585,7 +596,7 @@ cloud cache is best effort (worded "may"), because the cache's shape is undocume
 | … + `otel.log_agent_responses = true` | + responses | |
 | `otel.trace_exporter` OTLP | tool-details, usage, identity, BE | "Codex sends traces of your session to `<host>`" |
 | `log_user_prompt` or `log_agent_responses` with only a trace exporter | info | "Codex would log prompts only through `otel.exporter`, which is off"; "Codex would log its replies only through `otel.exporter`, which is off" |
-| OTLP `headers` / `tls` client certificate | + identity (names only) | |
+| OTLP `headers` / `tls` client certificate | evidence only (header names; "tls client certificate is set"); identity is already there | |
 | an `Unknown` exporter | info BE: "unrecognised exporter setting" | |
 
 `file-contents` is there because `tool_result.output` is sent by default: reading a file with a
@@ -598,8 +609,8 @@ fields, so what they carry may differ from the log events."
 
 **Payload preview.** The finding for each OTLP exporter carries `payload` (architecture §3.7):
 `logs` for `otel.exporter`, `traces` (`maybe`) for `otel.trace_exporter`. Its gates
-(`otel.log_user_prompt`, `otel.log_agent_responses`, `otel.log_guardian_assessments`) resolve from
-`CxConfig.cfg`: the value is the TOML scalar as text, and the origin and path come from the layer
+(`otel.log_user_prompt`, `otel.log_agent_responses`, `otel.log_guardian_assessments`) resolve
+through `CxConfig.otel` (requirements first), then `CxConfig.cfg`: the value is the TOML scalar as text, and the origin and path come from the layer
 that set it.
 
 A missing endpoint reads as "a collector". Hosts only.
@@ -608,13 +619,14 @@ A missing endpoint reads as "a collector". Hosts only.
 
 | Condition | Result |
 | --- | --- |
-| `analytics.enabled = false` | info "usage metrics are off" (this turns off custom metrics too) |
-| `metrics_exporter` = `None` | info "usage metrics are off" |
+| `analytics.enabled = false` | info "OpenAI usage metrics is turned off" (this turns off custom metrics too) |
+| `metrics_exporter` = `None` | info "OpenAI usage metrics is turned off" |
 | `Statsig` (explicit or the default) | vendor: "OpenAI receives anonymous usage metrics by default" (origin vendor-default unless set explicitly) |
 | OTLP | usage: "sends usage metrics to `<host>`", with a `metrics` payload. No OpenAI finding |
-| `Unknown` | vendor BE (unlike Swift, an unknown kind doesn't hide the default) |
+| `Unknown` | vendor BE (an unknown kind doesn't hide the default) |
 
-The vendor row needs Codex to be installed.
+The vendor row needs Codex to be installed. A `metrics_exporter` from the cloud cache, or an
+`Unknown` one, uses the "may" wording.
 
 ### CX.6 Profiles
 
@@ -623,13 +635,13 @@ you start Codex with, so it doesn't resolve profiles and doesn't list `<home>`. 
 installed, one note is added: "Findings about telemetry, analytics, model providers, `notify`
 and hooks describe your base config; a `--profile` you use can change them." Findings from
 requirements and managed layers stay firm. A top-level `profile` key or `[profiles.*]` tables
-(retired by Codex) → info "Codex no longer reads this". A later `--codex-profile <name>` option
-could read one profile file; it is out of scope now.
+(retired by Codex) → info "Codex no longer reads `profile`" (or `profiles`).
 
 ### CX.7 Hooks
 
-From `hooks.json`, from `hooks` in any in-effect config layer, and from each
-requirements layer's own `hooks` table. Requirements hooks are the managed hooks: each takes the origin of the layer that set it, and is never blocked by `allow_managed_hooks_only`. They are BE only when more than one requirements layer has hook events (composition uncertain) or the layer is the cloud cache (CX.1); a single plain `requirements.toml` is not BE. Non-array
+From `hooks.json` (which may wrap the events in a `hooks` object), from `hooks` in the highest
+config layer that sets it (no merge across layers), and from each requirements layer's own
+`hooks` table. Requirements hooks are the managed hooks: each takes the origin of the layer that set it, and is never blocked by `allow_managed_hooks_only`. They are BE only when more than one requirements layer has hook events (composition uncertain) or the layer is the cloud cache (CX.1); a single plain `requirements.toml` is not BE. Non-array
 keys in the table (`managed_dir`, `windows_managed_dir`) are ignored. The shape is
 `hooks.<Event>[] { hooks[] { type, command } } | { command }`, where `command` is a string
 (`Cmd::Shell`) or an argv array (`Cmd::Argv`). Signals: transcript always; + prompts on
@@ -641,7 +653,7 @@ notifier rule.
 
 **Plugin hooks.** Each `[plugins."<name>@<marketplace>"]` table with `enabled = true` (merged across config layers; missing or false is disabled) can contribute hook sources from the highest installed version (dotted-number order; hidden dirs such as `.tmp` are skipped). The chosen version directory must canonicalize inside `plugins/cache/<marketplace>/<name>/`, and the manifest must resolve inside that version directory. If the manifest has a `hooks` field, it replaces the default `<plugin-root>/hooks/hooks.json`; otherwise that default file is read. The field may be a `./` path, an array of paths and inline objects, or one inline object. Referenced paths must start with `./`, contain no `..`, and canonicalize inside the plugin root. A JSON file or inline object uses its top-level `hooks` object when present, otherwise the value itself. Findings cite the hooks file or `plugin.json` (origin user).
 
-Plugin hooks run only after the user trusts them with `/hooks`; cAInary cannot see the trust records. Plugin findings are best-effort and include a trust detail. Plugin hooks are not managed: `allow_managed_hooks_only` blocks them like user hooks, and both `features.hooks` gates apply. Only `command` and `mcp_tool` handlers are used; `prompt` and `agent` handlers are skipped. A handler `{ type = "mcp_tool", server, tool, input }` has no `command`; it gives one finding per `<server>.<tool>`, with the same event signals (`Interrupt` is transcript only). `input` isn't shown.
+Plugin hooks run only after the user trusts them with `/hooks`; cAInary cannot see the trust records. Plugin findings are best-effort and include a trust detail. Plugin hooks are not managed: `allow_managed_hooks_only` blocks them like user hooks, and both `features.hooks` gates apply. Only `command` and `mcp_tool` handlers are used, for every hook source, not only plugins; `prompt` and `agent` handlers are skipped. A handler `{ type = "mcp_tool", server, tool, input }` has no `command`; it gives one finding per `<server>.<tool>`, with the same event signals (`Interrupt` is transcript only). `input` isn't shown.
 
 When an in-effect hook from a user-origin source is present, one scan note says: "Codex runs hooks that don't come from your organization only after you trust them with /hooks; cAInary can't see which ones you trusted." Organization config layers and requirements hooks do not trigger this note. User hook findings remain firm.
 
@@ -653,7 +665,7 @@ uses H.8 on a best-effort (`may`) basis, with a detail that cAInary couldn't tel
 Not read: project `<repo>/.codex/` (no cwd scan), hook trust records, plugin `skills/` and `.app.json`.
 
 ```rust
-// Plain data, no methods: concern tests build it by hand.
+// Plain data, no methods: unit tests build it by hand.
 pub enum CxLayerId { MdmReq, MdmCfg, CloudReq, CloudCfg, LegacyReq, SysReq, ManagedCfg, UserCfg, SysDefaults }
 pub struct CxLayer { pub id: CxLayerId, pub loc: Loc, pub origin: Origin }
 pub struct CxSetting { pub value: Value, pub layer: CxLayerId, pub shadowed: Vec<CxLayerId> }
@@ -669,8 +681,12 @@ pub struct CxConfig {
     pub layers: Vec<CxLayer>,                   // every present layer, requirements and config
     pub req: BTreeMap<String, CxSetting>,       // composed requirements, by top-level key
     pub req_hooks: Vec<(CxLayerId, Value)>,     // each requirements layer's own hooks table
-    pub cfg: BTreeMap<String, CxSetting>,       // effective config for CX_KEYS
+    pub cfg: BTreeMap<String, CxSetting>,       // effective config for CX_KEYS, plus every other
+                                                // top-level key a managed config layer sets
+    pub otel: BTreeMap<String, CxSetting>,      // effective OTel keys: requirements win per key
+    pub otel_shadowed: BTreeMap<String, Vec<CxLayerId>>, // config layers overridden by requirements
     pub hooks_file: Option<(Loc, Value)>,       // <home>/hooks.json
+    pub config_mcp_servers: Vec<(CxLayerId, String, Value)>, // merged by name, with their layer
     pub plugin_hooks: Vec<(Loc, Value)>,         // one file or inline hook object per source
     pub plugin_mcp_servers: Vec<(Loc, String, Value)>, // enabled entries and their source
     pub cloud_ignored: Vec<String>,             // CX.2 keys found in cloud requirements
@@ -692,17 +708,19 @@ Ref: `https://cursor.com/docs/hooks`, `…/enterprise/deployment-patterns`,
 | Source | macOS | Linux | Origin |
 | --- | --- | --- | --- |
 | enterprise hooks | `R/Library/Application Support/Cursor/hooks.json` | `R/etc/cursor/hooks.json` ✅ https://cursor.com/docs/hooks | system |
-| user hooks | `~/.cursor/hooks.json` (JSONC) | same | user (§H per hook) |
-| CLI config | `~/.cursor/cli-config.json` (JSONC) | same | user |
+| user hooks | `~/.cursor/hooks.json` (JSONC) | same | user, or org-installed when the file is root-owned (§H per hook) |
+| CLI config | `~/.cursor/cli-config.json` (JSONC) | same | user, or org-installed when the file is root-owned |
 | MDM | `MDM(com.todesktop.230313mzl4w4u92)`, `MDM(co.anysphere.cursor.nightly)` | — | mdm |
-| marker | `R/Applications/Cursor.app`, `~/Applications/Cursor.app`, `~/Library/Application Support/Cursor` | `~/.config/Cursor`, `cursor` on PATH | — |
+| marker | `R/Applications/Cursor.app`, `~/Applications/Cursor.app`, `~/Library/Application Support/Cursor` | `$XDG_CONFIG_HOME/Cursor` (default `~/.config/Cursor`), `cursor` on PATH | — |
 
 Hooks: the shape is `{version:1, hooks:{<event>:[{command, type?}]}}`, and `type:"prompt"` is
 skipped. Every event → identity (`user_email`). Every event except `workspaceOpen` → transcript.
 Plus `beforeSubmitPrompt` → prompts; `beforeReadFile`/`beforeTabFileRead`/`afterFileEdit`/
 `afterTabFileEdit` → file-contents; shell/MCP/tool events (`before|afterShellExecution`,
 `before|afterMCPExecution`, `preToolUse`, `postToolUse`, `postToolUseFailure`) → tool-details;
-`afterAgentResponse`/`afterAgentThought` → responses. All hook tiers run (no blocking).
+`afterAgentResponse`/`afterAgentThought` → responses. All hook tiers run (no blocking). A
+local notifier (H.4) is info, "Cursor hook `<name>` plays a sound or shows a notification", and
+a plain `rtk hook …` (H.8) is titled "Cursor hook `rtk` …".
 
 MDM: `AllowedTeamId`, `AllowedExtensions`, `ExtensionGalleryServiceUrl`, `UpdateMode`,
 `WorkspaceTrustEnabled`, `NetworkDisableHttp2` → policy (one finding); other non-`Payload*` keys
@@ -720,7 +738,8 @@ Ref: `https://docs.github.com/en/copilot/reference/enterprise-administrators/ent
 `…/copilot-cli-reference/cli-config-dir-reference`, `…/hooks-reference`,
 `https://code.visualstudio.com/docs/enterprise/policies`,
 `https://code.visualstudio.com/docs/agents/guides/monitoring-agents`,
-`https://code.visualstudio.com/docs/configure/telemetry`.
+`https://code.visualstudio.com/docs/configure/telemetry`,
+`https://code.visualstudio.com/docs/setup/network#_proxy-server-support`.
 
 `<cp>` = the `CopilotHome` tool home (`$COPILOT_HOME` if absolute or `~/…` without `..`, else
 `~/.copilot`). `<vsc>` = macOS `~/Library/Application Support/Code/User` (and `Code -
@@ -733,7 +752,7 @@ Insiders`), Linux `<xdg>/Code/User` ✅ (`$XDG_CONFIG_HOME`, default `~/.config`
 | Copilot MDM | `MDM(com.github.copilot)` | — | mdm |
 | Copilot managed file | `R/Library/Application Support/GitHubCopilot/managed-settings.json` | `R/etc/github-copilot/managed-settings.json` ✅ https://docs.github.com/en/copilot/how-tos/administer-copilot/manage-for-enterprise/use-managed-settings/deploy-managed-settings | system |
 | Copilot policy hooks | `R/etc/github-copilot/policy.d/*.json` | — no `policy.d` in GitHub's Copilot docs (deploy-managed-settings, cli-config-dir-reference) | system |
-| VS Code policy | `MDM(com.microsoft.VSCode)` (BE), `MDM(com.microsoft.VSCodeInsiders)` | `R/etc/vscode/policy.json` ✅ https://code.visualstudio.com/docs/enterprise/policies | mdm / system |
+| VS Code policy | `MDM(com.microsoft.VSCode)`, `MDM(com.microsoft.VSCodeInsiders)` (both BE) | `R/etc/vscode/policy.json` ✅ https://code.visualstudio.com/docs/enterprise/policies | mdm / system |
 | VS Code user | `<vsc>/settings.json` (JSONC) | same | user |
 | CLI settings | `<cp>/settings.json` (JSONC), `<cp>/hooks/*.json`, `<cp>/providers.json` | same | user |
 | surface markers (probe) | VS Code: `~/.vscode/extensions/github.copilot*` (listing); CLI: `<cp>` dir or `which("copilot")` `Found` | same | — |
@@ -751,7 +770,7 @@ The winning channel's `telemetry` object is used **whole**; a lower channel's ob
 not in effect. Its fields: `enabled`, `endpoint`, `protocol`, `headers`, `headersProvider`
 (CLI), `serviceName`, `resourceAttributes`,
 `capture.{identity,prompts,responses,toolArguments,toolOutput,policyDetail}`, `captureContent`
-(legacy), `lockCaptureContent`.
+(legacy), `lockCaptureContent`, `exporterType` and `outfile`.
 
 `capture(class)` for each content class (`prompts`, `responses`, `toolArguments`,
 `toolOutput`, `policyDetail`) takes the first of:
@@ -778,10 +797,10 @@ use, so it emits one telemetry finding per installed surface:
 | --- | --- | --- |
 | Copilot CLI | all | `COPILOT_OTEL_*` env, then `<cp>/settings.json` telemetry |
 | VS Code, local chat | identity + legacy `captureContent` (all content) only | `COPILOT_OTEL_ENDPOINT` > `OTEL_EXPORTER_OTLP_ENDPOINT` env, then `github.copilot.chat.otel.*` settings; `CopilotOtel*` VS Code policies |
-| VS Code, agent sessions (Agent Host) | all except identity | as for the CLI |
+| VS Code, agent sessions (Agent Host) | all except identity | `COPILOT_OTEL_*` env *above* managed, then `<cp>/settings.json` telemetry below it |
 
-- For VS Code, the local-chat classes are certain. Classes only the Agent Host honors are added
-  BE: "in Copilot agent sessions inside VS Code".
+- For VS Code, the local-chat classes are certain. Classes only the Agent Host honors get their
+  own BE finding: "Copilot agent sessions in VS Code sends … to `<host>`".
 - In the Copilot Chat extension, env beats managed values, except identity and
   `resourceAttributes`. A VS Code finding that relies on that is BE.
 - VS Code `CopilotOtel*` policies: `Enabled`, `Endpoint`, `ExporterType`, `Protocol`,
@@ -795,6 +814,7 @@ use, so it emits one telemetry finding per installed surface:
 ### CP.4 VS Code policy
 
 - `TelemetryLevel`: `off` → policy; anything else → vendor + policy.
+- When policy sources set the same key, the first one read wins.
 - The chat/MCP/extension policy keys (`ChatHooks`, `ChatAllowManagedHooksOnly`, `ChatMCP`,
   `ChatAllowedMcpServers`, `AllowedExtensions`, `ChatToolsAutoApprove`, …) → policy, one
   finding, names only.
@@ -805,12 +825,15 @@ use, so it emits one telemetry finding per installed surface:
 
 ### CP.5 VS Code user and CLI
 
-- **VS Code user:** `http.proxy` → traffic BE (host); `telemetry.telemetryLevel` ≠ `off` →
-  vendor; unset and Copilot present → vendor BE, origin vendor-default.
-- **CLI:** `proxyUrl` → traffic; `providers.json` entries with a URL → traffic ("can send
-  requests to your own model providers at `<hosts>`"); `disableAllHooks: true` blocks user
-  hooks (policy.d still runs). Vendor default when `<cp>` exists: vendor "Copilot CLI sends usage
-  telemetry to GitHub".
+- **VS Code user** (needs the VS Code surface; skipped when a policy sets `TelemetryLevel`; settings
+  from Code first, then Code - Insiders): `http.proxy` → traffic BE (host);
+  `telemetry.telemetryLevel` ≠ `off` → vendor; unset and Copilot present → vendor BE, origin
+  vendor-default.
+- **CLI:** `proxyUrl` → traffic; `providers.json` entries with a URL (any string value containing
+  `://` under a key containing "url") → traffic ("can send requests to your own model providers at
+  `<hosts>`"); `disableAllHooks: true` blocks user hooks (policy.d still runs). Vendor default when
+  the CLI surface is detected (`<cp>` is a directory, or `copilot` is on PATH): vendor "Copilot CLI
+  sends usage telemetry to GitHub".
 
 ### CP.6 Hooks
 
@@ -824,7 +847,7 @@ else → usage. `url` → + traffic. `powershell`-only → info (doesn't run her
 "always runs". H applies.
 
 ```rust
-// Plain data, no methods: concern tests build it by hand.
+// Plain data, no methods: unit tests build it by hand.
 pub enum Surface { Cli, VsCode }
 pub struct CpManaged { pub loc: Loc, pub origin: Origin, pub value: Map<String, Value> }
 pub struct CpConfig {
@@ -852,7 +875,7 @@ Ref: `https://help.openai.com/en/articles/20001535`, `…/20001276`,
 
 | Source | Path | Rule |
 | --- | --- | --- |
-| app | `R/Applications/ChatGPT.app/Contents/Info.plist`, `~/Applications/…` | `CFBundleIdentifier == com.openai.codex` → installed (merged app). `ChatGPT Classic.app` → installed, BE |
+| app | `R/Applications/ChatGPT.app/Contents/Info.plist`, `~/Applications/…` | `CFBundleIdentifier == com.openai.codex` → installed (merged app). `ChatGPT Classic.app` → installed only, no finding |
 | MDM | `MDM(com.openai.codex)` minus `requirements_toml_base64`/`config_toml_base64` (Codex owns those) | Chromium policies of the **in-app browser**: `ProxyMode` (not direct/system), `ProxyServer`, `ProxyPacUrl` → traffic "the built-in browser goes through your organization's proxy" (hosts only); `ExtensionInstallForcelist` → traffic BE; `BrowserSignin`/`RestrictSigninToPattern` → policy; `CloudReportingEnabled`/`ReportingPolicies` → usage BE ("may be inert"); any other key → policy (count + names) |
 | Computer Use | `<codex home>/computer-use/Codex Computer Use.app` (stat) | info "Computer Use is set up; its grants live in TCC.db, which cAInary can't read" |
 | Locked use | `R/Library/Security/SecurityAgentPlugins/CodexComputerUseAuthorizationPlugin.bundle` (stat) | device-access "ChatGPT can unlock this Mac" |
@@ -867,8 +890,9 @@ Notes: "Workspace restrictions, Memory and Compliance API are server-side."
 Ref: Apple's TCC payload schema
 (`https://github.com/apple/device-management/blob/release/mdm/profiles/com.apple.TCC.configuration-profile-policy.yaml`),
 `https://www.electronjs.org/docs/latest/api/net`,
-`https://code.visualstudio.com/docs/setup/network#_proxy-server-support`. Device is always
-"installed".
+`https://code.visualstudio.com/docs/setup/network#_proxy-server-support`. Device findings appear
+as monitor entries (named by the finding's agent, else "This device"), not as an app; a clean
+machine has no device row.
 
 | Source | macOS | Linux | Origin |
 | --- | --- | --- | --- |
@@ -878,7 +902,7 @@ Ref: Apple's TCC payload schema
 | sysext policy | `R/Library/Managed Preferences/com.apple.system-extension-policy.plist` | — | mdm |
 | web content filter | `R/Library/Managed Preferences/com.apple.webcontent-filter.plist` (stat only) | — | mdm |
 | system proxy | `/usr/sbin/scutil --proxy` (architecture.md §6.4; fixture: `scutilProxy` text) | `R/etc/environment` `http_proxy`/`https_proxy`/`all_proxy` (either case) | unattributed (macOS), system (Linux) |
-| package registries | macOS: `~/.cargo/config.toml` (`$CARGO_HOME`), `~/.config/pip/pip.conf`, `~/.pip/pip.conf`, `~/Library/Application Support/pip/pip.conf`, `~/.config/uv/uv.toml`, `~/Library/Application Support/go/env`, `~/.nuget/NuGet/NuGet.Config`, `~/.yarnrc.yml`; `R/Library/LaunchDaemons/*.plist` only to attribute a hit | same, with `$XDG_CONFIG_HOME` in place of Application Support; no launchd attribution | org-installed if the file is root-owned or has no owner write bit, else unattributed; env: environment |
+| package registries | macOS: `~/.cargo/config.toml` (`$CARGO_HOME`), `~/.config/pip/pip.conf` (`$XDG_CONFIG_HOME` is honoured here and for uv), `~/.pip/pip.conf`, `~/Library/Application Support/pip/pip.conf`, `~/.config/uv/uv.toml`, `~/Library/Application Support/go/env`, `~/.nuget/NuGet/NuGet.Config`, `~/.yarnrc.yml`; `R/Library/LaunchDaemons/*.plist` only to attribute a hit | same, with `$XDG_CONFIG_HOME` in place of Application Support; no launchd attribution | org-installed if the file is root-owned or has no owner write bit, else unattributed; env: environment |
 
 | Rule | Signals |
 | --- | --- |
@@ -891,7 +915,7 @@ Ref: Apple's TCC payload schema
 | … with the endpoint-security category | device-access BE: "`<id>` can observe app launches and file access" |
 | sysext origin | mdm if its team id is in `AllowedTeamIdentifiers` or `AllowedSystemExtensions[<team>]` lists the id; else user |
 | web content filter present | traffic BE, mdm: "Your organization installed a web content filter" |
-| proxy: `HTTPEnable`/`HTTPSEnable`/`SOCKSEnable` = 1 (host:port), `ProxyAutoConfigEnable` = 1 (PAC URL, query stripped, never fetched), `ProxyAutoDiscoveryEnable` = 1 (WPAD) | traffic BE: "Network traffic may go through a proxy at `<host>`". The detail notes that Electron apps (Desktop, Cursor, VS Code) follow the system proxy, and that CLIs do only if they honor it. `ExceptionsList` is shown as a count |
+| proxy: `HTTPEnable`/`HTTPSEnable`/`SOCKSEnable` = 1 (host:port), `ProxyAutoConfigEnable` = 1 (the PAC URL's host only, never fetched), `ProxyAutoDiscoveryEnable` = 1 (WPAD) | traffic BE: "Network traffic may go through a proxy at `<host>`". The detail notes that Electron apps (Desktop, Cursor, VS Code) follow the system proxy, and that CLIs do only if they honor it. `ExceptionsList` is shown as a count |
 | package manager registry points at `127.0.0.1`, `localhost` or `::1` | traffic: "`<manager>` downloads go through a local proxy at `<host:port>`", one finding per manager, in one monitor entry. The detail says the proxy sees the name and version of every package and can block them. Not best effort: the file proves the redirect. A non-local registry is never reported |
 | … Cargo | `[source.crates-io] replace-with = "<n>"` and `[source.<n>] registry = "<url>"` ([source replacement](https://doc.rust-lang.org/cargo/reference/source-replacement.html)); `config.toml`, else legacy `config`, under `$CARGO_HOME` (absolute, no `..`) or `~/.cargo` |
 | … pip, uv | pip `index-url` in `pip.conf` (read as `key = value` lines, any section; [pip configuration](https://pip.pypa.io/en/stable/topics/configuration/)); uv `index-url`, or the `[[index]]` entry with `default = true`, in `uv.toml` ([uv configuration files](https://docs.astral.sh/uv/concepts/configuration-files/)). Env first: `PIP_INDEX_URL`; `UV_DEFAULT_INDEX`, `UV_INDEX_URL` |

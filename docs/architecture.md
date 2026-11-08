@@ -1,9 +1,11 @@
 # cAInary — architecture
 
-cAInary has a Rust core and CLI (`crates/`) and a thin SwiftUI menu bar app (`macos/`). This
-document describes the core, the report it prints and how the pieces fit together. The detection
-rules are in [rules.md](rules.md), the macOS app in [macos.md](macos.md), and prompt and
-status-bar setups in [integrations.md](integrations.md).
+cAInary has a Rust core and CLI (`crates/`), a thin SwiftUI menu bar app (`macos/`) and a Qt 6
+tray app for Linux (`linux/`). This document describes the core, the report it prints and how the
+pieces fit together. The detection rules are in [rules.md](rules.md), the macOS app in
+[macos.md](macos.md), the Linux tray in [linux.md](linux.md), packaging and releases in
+[distribution.md](distribution.md), and prompt and status-bar setups in
+[integrations.md](integrations.md). What comes next is in the [roadmap](roadmap.md).
 
 ## 1. Goals and non-goals
 
@@ -20,9 +22,10 @@ Design rules, in priority order:
    runs in the background. The separate `cainary-otel-debug` binary (crate `cainary-net`, §12) is
    a local OTLP/HTTP receiver for checking what an AI tool's telemetry export contains. It
    listens only on loopback (127.0.0.1 and ::1) and never opens an outbound connection. It
-   refuses requests whose `Host` isn't a loopback name with its port and any request that carries
+   refuses requests whose `Host` isn't a loopback name with its port (in `--tls` mode: a
+   `--tls-host` name equal to the TLS SNI) and any request that carries
    an `Origin` or `Sec-Fetch-*` header, so a web page can't reach it. It is unauthenticated, as
-   any loopback listener is: any local process can post to it (on Linux, only processes of the same user: §12.2). It writes only to a log file the
+   any loopback listener is: any local process can post to it (on Linux, only processes of the same user: §12.2). Outside its two opt-in modes below (`--tls`, `--trust`) it writes only to a log file the
    user names, and runs only while the user runs it: from a terminal, or through the explicit
    "OTel debug collector" toggle in the macOS app or the Linux tray, which start it as a child
    process and stop it with the app. `cainary scan` and `status` never start or contact it.
@@ -31,9 +34,11 @@ Design rules, in priority order:
    throwaway CA to the user's state directory (the private key never leaves memory). It forwards
    nothing and never connects out. On an explicit user action only (the `--trust claude-code`
    command or the GUI's confirm button), `cainary-otel-debug` sets one key,
-   `env.NODE_EXTRA_CA_CERTS`, in the user's `~/.claude/settings.json`, after a backup, and can
-   undo it. It never edits Codex configuration, shell profiles or any system trust store.
-   A port below 1024 is the narrow exception to "the tray holds no privilege": a fixed root
+   `env.NODE_EXTRA_CA_CERTS`, in the user's `~/.claude/settings.json` (pointing at a combined
+   certificate bundle it writes next to the CA), after a backup, and can undo it. `--trust codex`
+   only writes a bundle and prints the command that uses it. It never edits Codex configuration,
+   shell profiles or any system trust store.
+   Two narrow exceptions to "the tray holds no privilege" exist. The first is a port below 1024: a fixed root
    helper (`cainary-bind-helper`, a few hundred lines, no file access, no exec) is started only
    by an explicit "Open port N" click, through the system's authentication dialog. It binds
    `127.0.0.1` and `::1` on that port and hands the listening sockets back, then exits. The tray
@@ -42,6 +47,15 @@ Design rules, in priority order:
    no file gets one. The tray never asks at startup, autostart or retry; it closes its copy of
    the sockets when the collector is switched off, the port changes, the collector fails to
    start, or the tray quits (§12.6, [linux.md](linux.md#privileged-ports-root-helper)).
+   The second is the root helper `cainary-hosts-helper` (Linux only; no setuid, no file
+   capabilities, runs nothing, takes no path from its caller). It runs only after an explicit
+   "Add to /etc/hosts…" or "Remove from /etc/hosts…" click in the tray, through `pkexec` and the
+   system's authentication dialog each time. It replaces or removes one marked block in
+   `/etc/hosts` that points the takeover host names the user chose at 127.0.0.1 and ::1. The
+   change affects every user and program and stays after the tray quits until removed. The first
+   edit saves `/etc/hosts.cainary-backup`. It refuses a symlinked, non-regular, hard-linked or
+   other-writable `/etc/hosts`, reserved names such as `localhost`, and more than 8 names
+   ([linux.md](linux.md#adding-host-names-to-etchosts-root-helper)).
    `cainary` itself still writes nothing outside its prefs. Guards (§10) keep network code out of
    `cainary-core` and `cainary-cli`.
 2. **Truthful.** Every rule cites an official vendor doc. A rule that isn't confirmed by one is
@@ -65,12 +79,13 @@ daemon: no autostart, pidfile or service), auto-update, and any server-side visi
 
 ```
 ./
-  Cargo.toml  Cargo.lock     workspace (members: crates/*), [workspace.dependencies], the version
-  mise.toml                  local toolchain pins and tasks (rust, swift, shellcheck, …)
+  Cargo.toml  Cargo.lock     workspace (members: the six crates under `crates/`), [workspace.dependencies], the version
+  mise.toml  mise.ci.toml    local toolchain pins and tasks (rust, swift, shellcheck, …); CI's overlay
+  mise.lock                  locked tool versions
   Makefile                   the only build entry point (mise tasks wrap it)
   rustfmt.toml  clippy.toml  .swift-format  cliff.toml
   docs/                      this file, rules.md, macos.md, linux.md, integrations.md,
-                             distribution.md
+                             distribution.md, roadmap.md
   crates/
     cainary-core/            library: model, harness, parsers, scanners, analysis, diff
       src/lib.rs             scan(): run the scanners, sort, analyze → Report
@@ -111,12 +126,13 @@ daemon: no autostart, pidfile or service), auto-update, and any server-side visi
       tests/otel-payloads/<vendor>-<version>/  sanitized OTLP/JSON captures the catalog is checked against
       tests/guards.rs        source-level safety guards (§10)
       tests/canary.rs        guard 5: credentials never reach the report (§10)
+      tests/otel_drift.rs    the OTel catalog checked against the captured payloads
     cainary-cli/             binary `cainary`
       src/main.rs  src/args.rs  src/text.rs  src/status.rs  src/explain.rs
       tests/cli.rs           runs the binary on fixtures; text/status/sources/explain goldens in tests/golden/
     cainary-net/             binary `cainary-otel-debug` (§12); `publish = false`; never linked by the core or CLI
       src/main.rs            args, `--config-stdin` / stdin lifeline thread, exit codes; the only `std::env`/`std::process`
-      src/lib.rs             `pub mod args, config, decode, http, logfile, otlp, otlp_pb, output, peer, queue, redflag, server, setup`
+      src/lib.rs             `pub mod args, config, decode, host, http, jsonedit, listenfd, logfile, otlp, otlp_pb, output, peer, peer_proc` (Linux), `privdrop, queue, redflag, server, setup`, and `tls`, `trust` under the `tls` feature
       src/args.rs            hand-written parser → `Options`; exit-2 usage errors
       src/config.rs          `--config-stdin`: the one JSON config line (≤ 1 MiB), strict
       src/server.rs          the only `std::net`: bind, accept, per-connection threads, limits, Host/Origin checks
@@ -124,15 +140,27 @@ daemon: no autostart, pidfile or service), auto-update, and any server-side visi
       src/decode.rs          Content-Type/Content-Encoding checks, gzip, protobuf → OTLP/JSON `Value`
       src/otlp_pb.rs         the hand-written protobuf wire → OTLP/JSON transcoder (logs, metrics, traces)
       src/peer.rs            pure `/proc/net/tcp{,6}` parsers: which local user owns a loopback client (Linux)
+      src/peer_proc.rs       the reads behind it: `/proc/net/tcp{,6}`, `/proc/self/status`, the overflow uid (Linux)
+      src/host.rs            DNS host-name validation for `--tls-host`
+      src/jsonedit.rs        a lossless edit of one member of a JSON settings file (`--trust claude-code`)
+      src/listenfd.rs        `--listen-fd`: validate a listening socket handed in (Linux)
+      src/privdrop.rs        drop every capability and set `no_new_privs` after bind
       src/otlp.rs            routes, OTLP/JSON walk, naming policy, alerts → events
       src/output.rs          the output thread: JSON lines, text rendering, escaping
       src/queue.rs           the job semaphore and the output queue (bounded by items and bytes)
-      src/logfile.rs         the only file writer: 0600 log, rotation, descriptor-validated open
+      src/logfile.rs         the log writer: 0600 log, rotation, descriptor-validated open (the other writers are `tls/ca_file.rs` and `trust/files.rs`)
       src/redflag/           `mod.rs` (patterns, `Matcher`), `presets.rs`, `file.rs` (the `--red-flags` TOML reader)
       src/setup.rs           the "point an agent at it" lines (text and `hello.setup`)
-      tests/server.rs  tests/redflag.rs  tests/redflag_timing.rs
+      src/tls/  src/trust/   the endpoint takeover (§12.10) and `--trust` (§12.11), `tls` feature only
+      tests/server.rs  tests/redflag.rs  tests/redflag_timing.rs  tests/tls.rs
+      tests/formats/  tests/fixtures/  tests/golden/
     cainary-sig/             pure, dependency-free SHA-256 and HMAC-SHA256; used by cainary-net and the Linux tray
-      src/sha256.rs  src/hmac.rs
+      src/sha256.rs  src/hmac.rs  src/canon.rs  src/domain.rs  src/key.rs  src/wipe.rs
+      tests/canon.rs  tests/vectors.rs  tests/vectors/
+    cainary-bind-helper/     root helper for ports below 1024, through pkexec (Linux; linux.md §10)
+      src/main.rs  src/helper.rs  tests/refuses.rs
+    cainary-hosts-helper/    root helper for the marked block in /etc/hosts, through pkexec (Linux)
+      src/main.rs  src/helper.rs  src/edit.rs  src/file.rs  src/seam.rs  tests/refuses.rs
   macos/                     SwiftUI menu bar app (macos.md)
     Info.plist  Sources/*.swift  Tests/
   linux/                     Qt 6 tray app: its own workspace, Cargo.lock and guards (linux.md)
@@ -140,7 +168,11 @@ daemon: no autostart, pidfile or service), auto-update, and any server-side visi
   packaging/bundle.sh        assemble and sign dist/cAInary.app, zip it (POSIX sh)
   packaging/linux.sh         tarball, .deb and .rpm from built binaries (distribution.md)
   packaging/aur/  packaging/ci/  packaging/dist/  packaging/packslip.toml  packaging/mise-registry/
-  scripts/                   action-pin checker and its test, set-version.sh (release)
+  packaging/linux/polkit/    the two helpers' polkit policies (and the dev-only `.local` ones)
+  packaging/signing/         the release signing pins (`release.sha1`, `repo.asc`)
+  packaging/linux-assets.txt the Linux asset list every format is built from
+  scripts/                   action-pin checker and its test, set-version.sh and release-tree.sh
+                             (release), the OTLP fixture capture and sanitizer
   .github/workflows/         ci.yml, release.yml: plain make with rustup and Xcode (§11)
 ```
 
@@ -152,24 +184,25 @@ Dependencies, all in `[workspace.dependencies]`:
 | `serde_json` | JSON in and out; the universal `Value` | `preserve_order` feature, so evidence keeps the file's key order |
 | `toml` | Codex config, requirements, managed_config | parse to `toml::Value` → `serde_json::Value` |
 | `plist` | macOS managed preferences, PPPC, app `Info.plist` (binary and XML) | read through its event stream (§5.1) |
-| `libc` | `O_NOFOLLOW`/`O_NONBLOCK`/`O_CLOEXEC` for the guarded open and `fcntl(F_GETPATH)` on macOS (§6.3) | `default-features = false`; used only in `harness/fs.rs` (and in `cainary-net/src/logfile.rs` for the same open flags and the effective uid). The flag values differ between macOS and Linux targets, so they aren't hand-written |
+| `libc` | `O_NOFOLLOW`/`O_NONBLOCK`/`O_CLOEXEC` for the guarded open and `fcntl(F_GETPATH)` on macOS (§6.3) | `default-features = false`. In `cainary-core` only in `harness/fs.rs`; in `cainary-net` only in `logfile.rs`, `tls/ca_file.rs`, `trust/files.rs`, `privdrop.rs` and `listenfd.rs` (guard N3); the two root helpers depend on it and nothing else. The flag values differ between macOS and Linux targets, so they aren't hand-written |
 | `rustls` (`std`, `tls12`, `ring`; no default features) | the takeover's TLS server (§12.10) | **`cainary-net` only, and only under its non-default `tls` feature.** The `ring` provider; never `aws-lc-rs` |
 | `rcgen` (`ring`, `pem`; no default features) | the takeover's ephemeral CA and leaves (§12.10) | same: `cainary-net` under `tls` only |
 | `time` (`std`; no default features) | validity dates for those certificates | already in the lock through `plist`; named by `cainary-net` under `tls` only |
 | `regex` | user red-flag patterns in the collector (§12.5) | **`cainary-net` only.** Linear-time matching, so a hostile pattern or input can't ReDoS, and compile-size limits (1 MiB per regex, 16 MiB in all) |
 | `cainary-sig` (path) | hand-written SHA-256 and HMAC-SHA256 primitives | no dependencies or I/O; used by `cainary-net` and Linux `tray-model`, never by `cainary` or `cainary-core` |
+| `flate2` (`rust_backend`; no default features) | gzip request bodies in the collector (§8.2) | **`cainary-net` only**, always on; pure Rust through `miniz_oxide` |
 
 Nothing else: no `clap` (a small hand-written parser), no `chrono`, and `time` only under the collector's `tls` feature (one RFC 3339
 formatter elsewhere), no `regex` in the core or CLI (substring and token checks), no `dirs`, and no async. `tests/guards.rs`
 parses `Cargo.lock` and fails if a package outside an allowlist appears, so adding a crate is a
-visible, reviewed change. `regex` pulls in `regex-automata`, `regex-syntax` and `aho-corasick`
-(the direct `aho-corasick` use was dropped after a timing test, §12.5); with `cainary-net` itself
+visible, reviewed change. `regex` pulls in `regex-automata`, `regex-syntax` and `aho-corasick`;
+with `cainary-net` itself
 they are the `NET_ONLY` set, together with `flate2` (gzip request bodies, pure Rust through
 `miniz_oxide`) and its closure `adler2`, `simd-adler32`, `crc32fast` and `cfg-if`. `memchr` is also a dependency of those, but it is already in the
 core's closure through `serde_json`, so it is not net-only. Guard 4 requires the lock to stay
 inside the allowlist **and** the dependency closure of `cainary` and `cainary-core` to miss every
-`NET_ONLY`, `TLS_ONLY` or `SIG_ONLY` package, so the collector and signature primitives can't
-reach the read-only product (§10).
+`NET_ONLY`, `TLS_ONLY`, `SIG_ONLY` or `HELPER_ONLY` package, so the collector, the signature
+primitives and the root helpers can't reach the read-only product (§10).
 That guard is a regression check, not a proof. What keeps the product
 read-only and offline is that the only call sites that open files or start a process are
 `harness/fs.rs` and the one `Command::new` in `harness/platform.rs`, and fixture-mode tests show
@@ -181,18 +214,26 @@ the root lockfile guard. Its guards live in `linux/crates/cainary-tray/tests/gua
 
 1. **L1, direct dependencies.** Every `linux/crates/*/Cargo.toml` may depend only on
    `cainary-tray-model`, `cainary-tray-dbus`, `cainary-sig`, `cxx`, `cxx-qt`, `cxx-qt-lib`, `cxx-qt-build`,
-   `ksni`, `zbus`, `serde`, `serde_json`, `toml`, `libc`, `async-channel` and `futures-lite`.
+   `ksni`, `zbus`, `serde`, `serde_json`, `toml`, `libc`, `async-channel`, `futures-lite`,
+   `async-io`, `cc` (build-time layer-shell probe) and `wayland-client`; `cainary-net` only as a
+   dev-dependency (the takeover-guide drift test).
 2. **L2, transitive denylist.** `linux/Cargo.lock` must not contain GTK, GLib or GIO crates
    (`gtk*`, `gdk*`, `glib*`, `gio*`, `gobject*`, `pango*`, `cairo*`, `atk*`), AppIndicator
    libraries, `rfd`, `tray-icon`, `muda`, `webkit*`, `wry`, `tokio*`, or HTTP, TLS and networking
    clients (`reqwest`, `hyper*`, `ureq`, `curl*`, `isahc`, `h2`, `rustls*`, `openssl`,
    `native-tls`, `tungstenite*`, `webbrowser`). `ksni`'s `gtk4` is a dev-dependency and never
    reaches the lockfile used for the build.
-3. **L3, source guards.** `Command::new` only in the runner (`tray-model/src/runner.rs`), no
-   `std::net`, file writes only in `settings.rs` (which the baseline store writes through) and `autostart.rs`,
-   and no scanning code (no `~/.claude` or similar path literals). It also needs the
-   crates' `publish = false`.
-4. **L4, version sync.** `linux/Cargo.toml` has the same version as the root workspace.
+3. **L3, source guards.** `Command::new` only in the runner (`tray-model/src/runner.rs`).
+   `std::net` only for address types and the takeover host check's `getaddrinfo` lookup
+   (`hostcheck.rs`, `hostsfile.rs`), no socket types anywhere. File writes only in `settings.rs`
+   (which the baseline store writes through) and `autostart.rs`, plus a read-only open of
+   `/etc/hosts` in `hostsfile.rs` and the runner's write to a child's stdin. No scanning code (no
+   `~/.claude` or similar path literals). C++ and QML start no processes.
+   - **L3b:** `pkexec`, `SCM_RIGHTS` and the socket calls only in `runner.rs`; each helper's
+     install path and polkit ids only in its own module (`privport.rs`, `hostsedit.rs`).
+   - **L3c:** the test fakes (a fake `pkexec`) can't reach a package or a release recipe.
+4. **L4, version and publish policy.** `linux/Cargo.toml` has the same version as the root
+   workspace, and every Linux crate sets `publish = false`.
 
 Qt itself comes from the distro, outside Cargo's view (see [linux.md](linux.md) §6 for what that
 does and doesn't mean for GTK).
@@ -306,7 +347,7 @@ Scanners build findings with `FindingBuilder::new(title).signals(..).detail(..).
 the tool, clears the signals when `!in_effect`, and runs the final `redact::text` pass.
 
 `analysis::sort_and_number` sorts findings by (app, tool, exposure desc, in_effect desc, origin
-order, title, source path), which is what makes ids and goldens deterministic, then assigns `id`
+order, title, source path, detail, evidence), which is what makes ids and goldens deterministic, then assigns `id`
 and `key`.
 
 ### 3.4 Entries
@@ -339,7 +380,8 @@ struct Entry {
   (`com.crowdstrike.` → "CrowdStrike Falcon", …), else a name derived from the bundle id or the
   containing app or Application Support directory. MDM findings use "Device management", proxy
   findings "Network proxy". Findings with no agent go into "This device" (`id` `device`). The
-  entry id is the slugified name. Monitors are always installed and ordered by level desc, then
+  entry id is the slugified name; names that slug alike are one entry, and a slug equal to an
+  app id gets a `-monitor` suffix. Monitors are always installed and ordered by level desc, then
   name. "This device" exists only when it has findings, or device notes next to other monitors.
 - **`summary`**: the worst finding's title plus " (+N more)" for the others at that level; the
   level's short phrase below `low`.
@@ -432,7 +474,9 @@ Versioning contract:
   shown as their raw text, and a change with an unknown scope or kind never notifies.
 - `cainary status --format json` is a separate one-line document:
   `{"schema":3,"level","label","badge","complete","entries":{"<id>":{"level","installed"},…}}`.
-  The four app ids are always present, so pointers like `/entries/openai/level` are always valid.
+  `entries` holds every app and monitor entry; `badge` is the number of entries at `low` or
+  above. The four app ids are always present, so pointers like `/entries/openai/level` are always
+  valid.
 - `cainary sources --json` prints `{"schema":3,"sources":[…]}` (the `sources` array has the same
   shape as in the report).
 
@@ -442,7 +486,8 @@ A telemetry finding in effect (rules CC.3, CX.4, CX.5) carries `payload`: what t
 built statically from the catalog in `rules/otel_catalog.rs` and the resolved config
 (`rules/otel_preview.rs`). Nothing is captured or read beyond the scanned config. Record
 descriptions and attribute groups (identity on every record, resource, per event, content gated
-by a flag) come from the vendor docs. Entries seen only on the wire are `maybe`. `catalog` names
+by a flag) come from the vendor docs. `observed` marks entries seen in the captured payloads;
+`maybe` marks entries the catalog treats as best effort. The two are independent. `catalog` names
 the vendor version the fixtures were captured from. Each gate states whether its flag is on in
 this scan and where that came from, as one plain line (`text`). `sample` is a minimal record
 with descriptions in place of values; it never holds a real value. The UIs draw it as is.
@@ -456,13 +501,14 @@ with descriptions in place of values; it never holds a real value. The UIs draw 
 - **Shape.** `payload` is `{export, catalog, docs, maybe?, gates[], identity[], resource[],
   records[], sample[]}`. A gate is `{flag, label, on, sent, value, setBy, path, text}` with
   `sent` one of `yes`, `redacted`, `generic`, `no`, `local`, and `value` redacted like evidence.
-  `identity`/`resource` entries and a record's `attrs` are `{key, what, group, maybe?, flag?,
-  sent?}`; a record is `{name, kind, what, unit, maybe?, observed, flag?, sent?, attrs[]}`.
+  `identity`/`resource` entries and a record's `attrs` are `{key, what, group, maybe?, when?,
+  flag?, sent?}`; a record is `{name, kind, what, unit, maybe?, observed, flag?, sent?, attrs[]}`.
 - **Gate text** is built in the core, `<label>: <state>, because <why>`, and every UI prints it
   verbatim. The state is "sent", "sent as `<REDACTED>`", `replaced by "custom"`, "not sent" or
   "kept on this machine (`<dir>`); only a pointer is sent". The reason is `<FLAG> = <value> (set
   by <origin>)`, `<FLAG> is unset` (`… (on by default)` for a default-on flag) or, for a flag that
-  follows another, `<FLAG> is unset, so it follows <OTHER> = 1 (set by …)`.
+  follows another, `<FLAG> is unset, so it follows <OTHER> = <value> (set by <origin>)`; when the
+  other flag is unset too, `<FLAG> is unset, so it follows <OTHER>, which is unset`.
 - **Resolution.** Claude Code gates come from the in-effect `CcConfig.env` values only, so a
   dropped or replaced value never counts. Codex gates come from `CxConfig.cfg`: the value is the
   TOML scalar as text, and a gate is on only for a real TOML `true`. The key names of
@@ -494,14 +540,15 @@ stable `key`:
   the same key is the same finding with a `changed` change.
 - Findings that share a key within one report get `-2`, `-3` suffixes in sorted order.
 
-Matching is best effort: when a finding's key names change, it shows as `removed` plus `added`
-instead of `raised`. That is still true, and the entry-level change is exact.
+Matching is best effort: a key match wins; otherwise a current finding is paired with an
+unmatched old finding that has the same title. Unpaired findings are `added` or `removed`; the
+entry-level change is exact.
 
 ### 4.2 What is a change (`diff.rs`)
 
 | scope | matched by | kinds | notify |
 | --- | --- | --- | --- |
-| `entry` | `id` | `raised`, `lowered`; `added`, `removed` (monitors only; app entries always exist) | `raised` to `low`+, **except** `not-installed` → `low`/`opted-out`/`ok` (a fresh install with vendor defaults); `added` monitor at `low`+ |
+| `entry` | `id` | `raised`, `lowered`; `added`, `removed` (monitors only; app entries always exist) | `raised` to `low`+, **except** `not-installed` → `low` (a fresh install with vendor defaults); `added` monitor at `low`+ |
 | `finding` | `key`, within the entry | `added`, `removed`, `raised`, `lowered`, `changed` (same level; `sends`, `setBy`, `inEffect`, `title` or `evidence` differ) | `added` or `raised` to `medium`/`high` |
 | `source` | (`tool`, `path`) | `changed` (state), `added`, `removed` | never |
 | `report` | — | `changed` (`complete` ↔ `incomplete`) | never |
@@ -528,7 +575,7 @@ Because levels ignore `--alert`, a baseline stays valid when the alert mode chan
 ```json
 "since": {"scannedAt": "2026-10-20T09:00:00Z", "error": null},
 "changes": [
-  {"id": "entry:claude:raised:high", "scope": "entry", "entry": "claude", "key": null,
+  {"id": "entry:claude:-:raised:high", "scope": "entry", "entry": "claude", "key": null,
    "kind": "raised", "from": "low", "to": "high", "notify": true,
    "text": "Claude is now HIGH: Claude Code hook `acme-guard` receives your prompts"},
   {"id": "finding:claude:3f9c2a17d04b8e61:added:high", "scope": "finding", "entry": "claude",
@@ -560,6 +607,8 @@ Every format is parsed into `serde_json::Value`, so scanners have one API:
 | TOML | `toml::Value` → convert | datetimes → strings |
 | plist (XML or binary) | `plist::stream::Reader` events → build `Value` | `Date` → RFC 3339 string; `Data` → `"<data N bytes>"`. The event stream lets the node cap stop a binary plist that points many times at one container before it expands |
 | TOML in base64 | `base64_decode`, then TOML | Codex `*_toml_base64` MDM keys |
+| `KEY=value` lines (`Format::Env`) | hand-written | `/etc/environment`, pip.conf, Go env; `#` comments, optional quotes |
+| text (`Format::Text`) | the file as one string | line scans of formats with no parser (NuGet.Config, YAML) |
 
 **Limits.** Each document has one `Budget { depth ≤ 128, nodes ≤ 100_000 }`, charged per value by
 the conversions and by `str_or_json` (JSON-in-string, common in MDM). An exceeded budget is a
@@ -578,14 +627,15 @@ Minimal by design. It masks obvious secrets and doesn't try to be clever:
 
 - `is_secret_key(k)`: a case-insensitive key contains `token`, `secret`, `password`, `passwd`,
   `apikey`/`api_key`/`api-key`, `authorization`, `cookie`, `credential`, `private`, or ends with
-  `headers`/`_key`. The helper-command keys `apiKeyHelper` and `otelHeadersHelper` and
-  `max_tokens` are exceptions. The value is shown as `<redacted>`.
+  `headers`/`_key`. The helper-command keys `apiKeyHelper` and `otelHeadersHelper`,
+  `max_tokens` and `max-tokens` are exceptions. The value is shown as `<redacted>`.
 - `url(s)`: keep scheme, host, port and path; drop userinfo, query and fragment. `url_host(s)`
   returns the host only.
 - `command(s)`: mask the word after `Bearer`/`Basic`, the value of `--token`/`--api-key`/
   `--password`/`-H 'Authorization: …'`, `NAME=value` where NAME is a secret key, and tokens with
   well-known prefixes (`sk-`, `ghp_`, `gho_`, `ghs_`, `github_pat_`, `xox?-`, `glpat-`, `AKIA`,
-  `AIza`, JWT-shaped `eyJ…`). URLs in commands go through `url()`.
+  `AIza`, JWT-shaped `eyJ…`; a prefix needs at least 6 more token characters after it). URLs in
+  commands go through `url()`.
 - `display_path(p)`: `$HOME` → `~`, control characters → `?`.
 - Header maps (`OTEL_EXPORTER_OTLP_HEADERS`, MCP `headers`, `http_headers`) show names only.
 
@@ -868,7 +918,8 @@ takes tens of milliseconds, fast enough for every prompt):
 
 The count is the number of entries (apps and monitors) at `low` or above, shown when there are
 two or more. An incomplete scan with alerts appends ` ⚠` (` !incomplete` in text). `nerd` uses
-Nerd Font glyphs, and `json` is the document in §3.6. See [integrations.md](integrations.md).
+Nerd Font glyphs, and `json` prints the compact object in §3.6 (`schema`, `level`, `label`,
+`badge`, `complete`, `entries`). See [integrations.md](integrations.md).
 
 `sources` prints a TSV of `tool  origin  state  path`, or JSON with `--json`.
 
@@ -901,8 +952,9 @@ uniffi:
 
 The macOS app bundles the helper at `cAInary.app/Contents/Helpers/cainary` (not
 `Contents/MacOS`, where `cAInary` and `cainary` would collide on a case-insensitive disk) and
-runs `scan --json --env-kind launchd [--since -]` with the baseline on stdin. Its bounded runner,
-change tracking and screens are in [macos.md](macos.md).
+runs `scan --json --env-kind launchd [--since -]` with the baseline on stdin. It also bundles the
+collector at `Contents/Helpers/cainary-otel-debug` (§12.7). Its bounded runner, change tracking
+and screens are in [macos.md](macos.md).
 
 ### 9.2 Linux UI
 
@@ -915,20 +967,27 @@ change tracking. It looks for the CLI next to its own executable, then at `/usr/
 never on `PATH`. `launchd` is the core's "no login shell" environment kind: a tray started at
 login has no shell exports, so scanners mark environment-dependent findings best effort (§6.5)
 and they can differ from a terminal scan ([linux.md](linux.md) §3). Both apps show the same text
-for the same report, and the CLI's output is identical on macOS and Linux (the shared starship
-config). Placement, packaging and the runner are in [linux.md](linux.md).
+for the same report, and the CLI uses one renderer and the same format on macOS and Linux (only
+the header names the OS). Placement, packaging and the runner are in [linux.md](linux.md).
+
+The tray also runs the collector (§12.7): `CollectorController` drives the collector page (port,
+HTTPS takeover, logging, red flags). For a port below 1024 it asks the root helper
+`cainary-bind-helper` for the listening sockets and hands them to the collector with
+`--listen-fd`; the helper checks that its socket's peer is the `PKEXEC_UID` user. The takeover
+guide's `/etc/hosts` step goes through the second root helper, `cainary-hosts-helper` (§1,
+[linux.md](linux.md) §10).
 
 **Toolkit split.** The UI is QML, driven by cxx-qt `QObject`s that stay thin: `AppController`
 and `SettingsController` hold a view as JSON that `tray-model` computes, so the QML never
-interprets the report. About 360 lines of C++ remain, in `linux/crates/cainary-tray/cpp/`,
+interprets the report. About 450 lines of C++ remain, in `linux/crates/cainary-tray/cpp/`,
 because Qt offers no Rust-callable API for them:
 
 | File | Lines (approx.) | Why it is C++ |
 | --- | --- | --- |
-| `icons.cpp` | 110 | The QML image provider and the pixmap fallback for the tray host: SVG rendering with a recoloured palette. |
-| `layershell.cpp` | 85 | LayerShellQt is a C++ API (`LayerShellQt::Window`); built only with the `layer-shell` feature. |
-| `qt_shims.cpp` | 160 | Qt message capture for `--self-test`, controls-style probe, platform name, screen geometry, clipboard, activation token, window grab and the dark palette. |
-| `cainary.h` | 35 | The declarations the bridge imports. |
+| `icons.cpp` | 159 | The QML image provider and the pixmap fallback for the tray host: SVG rendering with a recoloured palette. |
+| `layershell.cpp` | 98 | LayerShellQt is a C++ API (`LayerShellQt::Window`); built only with the `layer-shell` feature. |
+| `qt_shims.cpp` | 153 | Qt message capture for `--self-test`, controls-style probe, platform name, screen geometry, clipboard, activation token, window grab and the dark palette. |
+| `cainary.h` | 38 | The declarations the bridge imports. |
 
 Popup placement has three strategies (`layer-shell`, `x11`, `decorated`). There is no
 compositor-specific scripting: layer-shell covers Plasma and wlroots, and GNOME gets an ordinary
@@ -953,8 +1012,9 @@ exits anyway.
 
 ## 10. Testing
 
-All Rust tests are `cargo test` on macOS and Linux. They need no network and no real machine
-state.
+The root workspace tests are `cargo test` on macOS and Linux (`make test`, which also runs
+`cainary-net --features tls`). The Linux tray workspace has its own tests (`make linux-test`, Linux
+only; [linux.md](linux.md) §8). They need no network and no real machine state.
 
 - **Unit tests** sit next to the code: value conversion and budgets, each redaction rule (with
   synthetic tokens like `sk-test-EXAMPLE`), deny-list cases (relocations, aliases, case),
@@ -964,7 +1024,7 @@ state.
 - **Fixtures** live in `crates/cainary-core/tests/fixtures/<name>/` with `fixture.json`, `root/`
   and `home/`. They hold only synthetic data: `example-corp.com`, `AcmeCollector`, user `alice`.
   Names are prefixed by tool (`claude-code-org-macos`, `codex-bad-base64`, `device-only-proxy`,
-  …), and each sets `tools` to its own scanner, so a change in one scanner never touches
+  …), and each sets `tools` to its own scanner (except the two `empty-*` fixtures), so a change in one scanner never touches
   another's goldens. `empty-macos` and `empty-linux` cover a clean machine.
 - **Goldens:** `tests/golden.rs` runs every fixture and compares pretty JSON with
   `tests/golden/<name>.json`. `CAINARY_BLESS=1 cargo test` rewrites them; review the diff.
@@ -974,7 +1034,8 @@ state.
 - **Safety guards** (`tests/guards.rs`):
   1. No `std::fs`, `std::process`, `std::net` or `std::env` in `crates/*/src` outside
      `cainary-core/src/harness/` (the CLI `main.rs` may read args, `NO_COLOR` and stdin). Guards
-     1–3 leave `cainary-net/src/` to its own rules N1–N3 below.
+     1–3 leave `cainary-net/src/` to its own rules N1–N5 below, and the two helpers' `src/` to
+     H1–H8.
   2. `OpenOptions` only in `harness/fs.rs`, and no write, create, append, truncate or remove calls
      anywhere outside tests.
   3. `Command::new` exactly once, in `harness/platform.rs`, with the literal `/usr/sbin/scutil`;
@@ -984,9 +1045,10 @@ state.
      `aho-corasick`, plus `flate2`, `miniz_oxide`, `adler2`, `simd-adler32`, `crc32fast` and `cfg-if` for
      gzip request bodies) and `TLS_ONLY` (`rustls`, `ring`, `rcgen`, `rustls-webpki`, `rustls-pki-types`
      and the rest of their closure, including the optional `x509-parser` family the lock lists for
-     rcgen; no `aws-lc-rs`), and `SIG_ONLY` (`cainary-sig`). The **dependency closure** of
-     `cainary` and `cainary-core` (walked through `[[package]].dependencies` in `Cargo.lock`) must
-     not reach any `NET_ONLY`, `TLS_ONLY` or `SIG_ONLY` package. `cainary-sig` has no dependencies,
+     rcgen; no `aws-lc-rs`), `SIG_ONLY` (`cainary-sig`) and `HELPER_ONLY` (the two root helpers).
+     The **dependency closure** of `cainary` and `cainary-core` (walked through
+     `[[package]].dependencies` in `Cargo.lock`) must not reach any `NET_ONLY`, `TLS_ONLY`,
+     `SIG_ONLY` or `HELPER_ONLY` package. `cainary-sig` has no dependencies,
      performs no I/O, and is used only by `cainary-net` and the Linux tray; it never enters the
      core or CLI closure.
 
@@ -996,8 +1058,9 @@ state.
     (`TcpStream::connect`, `.connect(`, `connect_timeout`, `UdpSocket`, `ToSocketAddrs`,
     `to_socket_addrs`, `lookup_host`, Unix sockets), the identifier `connect` is banned outright,
     and renaming `std`/`core`/`alloc`/`net` in a `use` is refused so an alias can't hide a dial.
-  - **N2:** `std::fs` only in `logfile.rs` (write), `redflag/file.rs` (read), `tls/ca_file.rs`
-    (the certificate directory) and `trust/files.rs` (the `--trust` file operations; the rest of
+  - **N2:** `std::fs` only in `logfile.rs` (write), `redflag/file.rs` (read), `peer_proc.rs`
+    (read only: `/proc/net/tcp{,6}`, `/proc/self/status`, `/proc/sys/kernel/overflowuid`),
+    `tls/ca_file.rs` (the certificate directory) and `trust/files.rs` (the `--trust` file operations; the rest of
     `trust/` calls into it); `OpenOptions` and write-shaped calls only in `logfile.rs`,
     `tls/ca_file.rs` and `trust/files.rs` (`.write(` is also allowed in `server.rs` and `tls/mod.rs`, which can't open
     a file); `std::env` and `std::process` only in `main.rs`.
@@ -1006,12 +1069,20 @@ state.
     `unlinkat`, `fsync`) and `privdrop.rs`
     (`capset`, `prctl`; in every build, not behind the `tls` feature). Guard 3's "`Command::new` exactly once" counts the whole workspace.
   - **N4 (manifests):** the `cainary-core` and `cainary-cli` manifests never mention
-    `cainary-net`; the net manifest declares only `cainary-core`, `cainary-sig`, `libc`, `rcgen`, `regex`,
+    `cainary-net`; the net manifest declares only `cainary-core`, `cainary-sig`, `flate2`, `libc`, `rcgen`, `regex`,
     `rustls`, `serde`, `serde_json`, `time` and `toml` (in any dependency table) and sets
     `publish = false`.
   - **N5 (TLS crates):** `rustls`, `rcgen` and `ring` are named only under
     `cainary-net/src/tls/`, or on a line right after `#[cfg(feature = "tls")]`; `mod tls` is gated
     the same way.
+
+  The root helpers have their own guards: **H1–H4** for `cainary-bind-helper` (its source; a
+  manifest with only `libc` and `publish = false`; only `libc` in its lock closure; well-formed,
+  `auth_admin` polkit policies) and **H5–H8** for `cainary-hosts-helper` (its source; `seam.rs` as
+  the only test seam; its host and uid validators byte-identical to the collector's and the bind
+  helper's; its policies, with the reviewed message). `test_modules_come_last` keeps production
+  code out from behind a test module, where the guards would skip it, and a manifest check keeps
+  `cainary-sig` dependency-free and unpublishable.
 
   Every new guard has a `fires` test that feeds a violation in memory.
 
@@ -1028,7 +1099,12 @@ state.
 - **Collector tests** (`cainary-net`): unit tests for the HTTP parser, args, red-flag presets (hits
   and near-misses), the naming policy and the escaping; `tests/server.rs` runs the library server
   on port 0 and posts to it over `std::net::TcpStream` (limits, timeouts, Host/Origin refusal,
-  masking, log file, `--once`, stdin lifeline). `tests/redflag_timing.rs` is `#[ignore]`.
+  masking, log file, `--once`, stdin lifeline); `tests/tls.rs` covers the takeover (`tls`
+  feature). `tests/redflag_timing.rs` is `#[ignore]`.
+- **OTel drift** (`cainary-core/tests/otel_drift.rs`): the catalog against the captured payloads
+  in `tests/otel-payloads/`.
+- **Other crates:** `cainary-sig` checks its vectors (`tests/vectors.rs`, `tests/canon.rs`); each
+  helper's `tests/refuses.rs` runs the binary and checks what it refuses.
 - **App tests:** `make ui-test` decodes every Rust golden through the Swift model, runs the app's
   unit checks against stub helpers and the real binary, and renders snapshots (macos.md §5).
 - **Smoke:** `make scan` runs the real scan on the dev machine. It is not golden-checked.
@@ -1036,8 +1112,9 @@ state.
 ## 11. Build, CI and release
 
 - **Toolchain:** `mise.toml` pins rust (with both Apple and both Linux musl targets, rustfmt and
-  clippy), swift (macOS only), shellcheck, jactionlint, mr-boxington, and on Linux `cargo-deb` and
-  `cargo-generate-rpm`. Its tasks wrap the Makefile. Under mise, cargo runs through `mbx` (a shared
+  clippy), swift (macOS only), shellcheck, jactionlint, jq, git-cliff, mr-boxington, and on Linux
+  `cargo-deb` and `cargo-generate-rpm`. Most tasks wrap the Makefile; some call scripts in
+  `packaging/` directly. Under mise, cargo runs through `mbx` (a shared
   build cache) and `SWIFTC` points at mise's swiftc, or plain `swiftc` where swift isn't a mise
   tool. When `CARGO_HOME` isn't writable (a sandbox), the Makefile moves it to
   `$TMPDIR/cargo-home`. The Linux tray also needs the distro's Qt 6 development packages
@@ -1045,49 +1122,60 @@ state.
 - **Version:** `[workspace.package] version` in `Cargo.toml` is the single source.
   `bundle.sh` stamps it into the app's `Info.plist` and refuses a helper that reports a
   different version.
-- **Makefile targets:** `build`, `test`, `fmt`, `lint` (`cargo fmt --check`, clippy
-  `-D warnings`, `swift format lint --strict`, shellcheck), `lint-actions` (jactionlint, with
+- **Makefile targets:** `help`, `build`, `test` (also `cainary-net --features tls`), `test-tls`,
+  `fmt`, `lint` (`cargo fmt --check`, clippy `-D warnings`, also with `--features tls`,
+  `swift format lint --strict`, shellcheck), `lint-actions` (jactionlint, with
   shellcheck on `run:` scripts; CI's `actions-lint` job, and a dependency of `mise run check`),
-  `check-rust`, `check` (lint + test + ui-test), `core-universal` (release builds for both Apple targets, `lipo` →
+  `check-rust` (fmt, clippy and tests, with and without `tls`), `check` (lint + test + ui-test), `core-universal` (release builds for both Apple targets, `lipo` →
   `target/universal/cainary`), `app`, `bundle` (`RELEASE=1` for the universal release app),
-  `ui-test`, `scan`, `release` (release `cainary` and `cainary-otel-debug` in `target/release/`), `otel-debug` (runs that collector; `OTEL_DEBUG_ARGS=` for flags), `publish-check` (`cargo publish --workspace --dry-run`), `clean` (also
+  `ui-test`, `scan`, `release` (release `cainary`, `cainary-otel-debug` and `cainary-bind-helper` in `target/release/`, with `--features cainary-net/tls`), `otel-debug` (runs that collector; `OTEL_DEBUG_ARGS=` for flags), `publish-check` (`cargo publish --workspace --dry-run`), `clean` (also
   `linux/target`). The app and bundle steps are in macos.md §4. Checks for the other OS are skipped with a
   note, never failed: on Linux, `lint` skips `swift format` and `ui-test` is a no-op; on macOS, `linux-lint`,
   `linux-test`, `linux-check` and `linux-ui-test` are no-ops (`HOST_OS`, from `uname -s`). The Linux targets use the
-  `linux/` workspace through `--manifest-path`: `linux-cli` (static musl `cainary`),
-  `linux-build`, `linux-test` (under `dbus-run-session`, `QT_QPA_PLATFORM=offscreen`),
+  `linux/` workspace through `--manifest-path`: `linux-cli` (static musl `cainary`,
+  `cainary-otel-debug`, `cainary-bind-helper` and `cainary-hosts-helper`), `linux-helper` (builds
+  both root helpers and prints the admin install commands), `linux-build`, `linux-build-release`,
+  `linux-test` (under `dbus-run-session`, `QT_QPA_PLATFORM=offscreen`),
   `linux-fmt`, `linux-lint`, `linux-check` (lint, test, shellcheck, desktop-file and AppStream
-  validation), `linux-ui-test`, `linux-run`, and `linux` (CLI plus tray release build, then
+  validation), `linux-ui-test`, `linux-run`, `linux-run-release`, and `linux` (CLI plus tray release build, then
   `packaging/linux.sh` into `dist/`; `LINUX_FORMATS` defaults to `tar`). See
   [linux.md](linux.md) §8.
 - **Install:** copy `cAInary.app` to `/Applications`. For the CLI, optionally
   `ln -s /Applications/cAInary.app/Contents/Helpers/cainary ~/.local/bin/cainary`, or
   `cargo install cainary --locked`. The other methods are in [distribution.md](distribution.md).
-- **CI** (`.github/workflows/ci.yml`): Conventional Commit messages, action pins, `make check` on
-  macOS (uploading the UI snapshots), and `make check-rust` plus `make publish-check` on Linux.
-  CI doesn't use mise: it runs plain `make` with rustup's cargo (version read from `mise.toml`)
-  and Xcode's swiftc. The Linux tray has its own jobs, which run `packaging/ci/linux-ci.sh` in
-  distro containers (Debian trixie, Fedora, Arch; see [distribution.md](distribution.md)).
+- **CI** (`.github/workflows/ci.yml`): Conventional Commit messages, action pins, `zizmor` and
+  `actionlint` on the workflows, `make check` on macOS (uploading the UI snapshots), `make
+  check-rust` plus `make publish-check` on Linux, and a bundle smoke test of the macOS app. On the
+  runner jobs CI installs the pinned tools with `jdx/mise-action` (`MISE_ENV=ci` layers
+  `mise.ci.toml` over `mise.toml`: plain cargo instead of `mbx`, Xcode's swiftc) and runs plain
+  `make`. The Linux tray has its own jobs (`linux-app`, `linux-package`, `linux-install-smoke`),
+  which bootstrap rustup and run `packaging/ci/linux-ci.sh` in distro containers (Debian trixie,
+  Fedora, Arch; see [distribution.md](distribution.md)).
 - **Release** (`.github/workflows/release.yml`): an action-pin gate, `make check` and the Linux
   tray checks (`make linux-check` on Debian trixie), then `prepare` has git-cliff
   pick the version (`scripts/set-version.sh` updates `Cargo.toml`, `Cargo.lock`,
   `linux/Cargo.toml`, `linux/Cargo.lock` and the AppStream release list) without pushing, the
   builds apply it locally to the same commit for the universal macOS bundle and the Linux
   tarballs, .deb and .rpm, and one `checksums` job hashes and attests every asset. Only then does
-  `publish` commit the bump and `CHANGELOG.md`, tag, and create the release with all assets. The crates `cainary-core` and `cainary` (the CLI
-  package; its directory is `crates/cainary-cli`) are then published to crates.io. The macOS
+  `publish` commit the bump and `CHANGELOG.md`, tag, and create the release with all assets.
+  `sign-linux` signs the .rpm files and `verify-linux` installs the packages before that; after
+  it, `repo` and `pages` publish the APT and DNF repositories, the packslip jobs sign and verify
+  the manifest, `aur` updates the AUR package once its key is set up, and the crates
+  `cainary-core` and `cainary` (the CLI package; its directory is `crates/cainary-cli`) are
+  published to crates.io through Trusted Publishing. The macOS
   bundle is signed there with the project's pinned self-signed certificate (no notarization);
   local bundles are signed ad hoc. The jobs
   are in [distribution.md](distribution.md).
 
 ## 12. OTel debug collector (`cainary-otel-debug`)
 
-A separate, opt-in program (crate `cainary-net`, `publish = false`) that receives OTLP/JSON
-exports (JSON or protobuf) on loopback and prints what they carry, so a user can see what a tool's telemetry
+A separate, opt-in program (crate `cainary-net`, `publish = false`) that receives OTLP/HTTP
+exports (JSON or protobuf, gzip or plain; no gRPC) on loopback and prints what they carry, so a user can see what a tool's telemetry
 actually contains, as opposed to what the payload preview (§3.7) predicts from config. It is the
 one place in the repository that listens on a socket (§1). It is inbound-only: it never opens an
 outbound connection, never resolves a name, starts no process, and reads only the red-flags file
-the user names. `cainary` never starts or contacts it. It is not a daemon: it runs while the user
+the user names, on Linux three kernel files for the own-user check (§12.2), and in a `tls` build
+the certificate directory and the `--trust` files. `cainary` never starts or contacts it. It is not a daemon: it runs while the user
 runs it (a terminal, or a child of a GUI toggle), and leaves no pidfile, service or autostart.
 
 The collector is **unauthenticated**. Any local process can post to it, so the stream shows what
@@ -1097,7 +1185,7 @@ it does check the sender's user (§12.2): a connection from another local user i
 ### 12.1 Command line
 
 ```
-cainary-otel-debug [--port <n>] [--listen <ip>]... [--listen-fd <n>]... [--json] [--show-values] [--once]
+cainary-otel-debug [--port <n>] [--listen <ip>]... [--listen-fd <n>]... [--json] [--show-values] [--once] [--allow-root]
                    [--log-file <path> [--log-max-mib <n>] [--log-keep <n>]]
                    [--red-flag <name>=<text>]... [--red-flag-re <name>=<regex>]... [--match-case <name>]...
                    [--red-flags <file>] [--preset <name>]... [--no-default-red-flags] [--list-presets]
@@ -1114,7 +1202,7 @@ cainary-otel-debug --version | --help
 | --- | --- |
 | `--port` | 0–65535, default 4318; `0` picks a free port |
 | `--listen` | repeatable IP literal; each must satisfy `IpAddr::is_loopback()` (so `::ffff:127.0.0.1` is refused); replaces the default 127.0.0.1 then ::1 |
-| `--listen-fd` | repeatable (at most 2), each ≥ 3 and distinct: an inherited, already-bound listening socket from the parent (the tray's root helper, `cainary-bind-helper`). Needs `--port` (1–65535) and excludes `--listen`; works with `--tls`. Each descriptor must be a `SOCK_STREAM` socket with `SO_ACCEPTCONN`, bound to exactly `127.0.0.1` or `::1` (IPv6 also `IPV6_V6ONLY=1`) on OUR `--port`, at most one per family; it is marked `FD_CLOEXEC`. Any failure is a `listen-fd` error (exit 2) and the program never binds by itself instead (`listenfd.rs`); `hello.listen` reports the sockets' actual addresses |
+| `--listen-fd` | Linux only; repeatable (at most 2), each ≥ 3 and distinct: an inherited, already-bound listening socket from the parent (the tray's root helper, `cainary-bind-helper`). Needs `--port` (1–65535) and excludes `--listen`; works with `--tls`. Each descriptor must be a `SOCK_STREAM` socket with `SO_ACCEPTCONN`, bound to exactly `127.0.0.1` or `::1` (IPv6 also `IPV6_V6ONLY=1`) on OUR `--port`, at most one per family; it is marked `FD_CLOEXEC`. Any failure is a `listen-fd` error (exit 2) and the program never binds by itself instead (`listenfd.rs`); `hello.listen` reports the sockets' actual addresses |
 | `--json` | JSON lines on stdout (§12.6); without it, a text rendering |
 | `--allow-root` | run as UID 0 (refused otherwise: clearing capabilities does not limit root) |
 | `--show-values` | print and log values raw (§12.3) |
@@ -1127,19 +1215,22 @@ cainary-otel-debug --version | --help
 | `--exit-on-stdin-eof` | a thread reads stdin and exits 0 at EOF or a read error (§12.7) |
 | `--config-stdin` | the first stdin line is a JSON config (§12.7); implies `--exit-on-stdin-eof` |
 | `--trust <claude-code\|codex>`, `--dry-run`, `--undo`, `--trust-status` | let a client trust the takeover CA (§12.11); `--dry-run` is for `claude-code` only; all need the `tls` feature |
-| `--tls`, `--tls-host`, `--tls-public-port`, `--delete-ca` | the endpoint takeover (§12.10); needs a build with the `tls` cargo feature, else exit 2 "this build has no TLS support (cargo feature `tls`)". `--tls` defaults `--port` to 8443 |
+| `--tls`, `--tls-host`, `--tls-public-port`, `--delete-ca` | the endpoint takeover (§12.10); needs a build with the `tls` cargo feature, else exit 2 "this build has no TLS support (cargo feature `tls`)". `--tls` defaults `--port` to 8443. `--tls-host`: at least two labels, no wildcard or IP, ≤ 253 bytes, at most 32. `--tls-public-port`: 1–65535 |
+| `--help`/`-h`, `--version`/`-V` | usage, or `cainary-otel-debug <version>` |
 
-`--flag=value` works as in `cainary`. A pattern name matches `^[a-z0-9][a-z0-9_-]{0,63}$`. A
+`--flag=value` works as in `cainary`; a flag that takes no value refuses `=value`. A pattern name matches `^[a-z0-9][a-z0-9_-]{0,63}$`. A
 duplicate name, a name equal to a preset, or an unknown `--match-case` name is a usage error.
 `--help` and, in text mode, startup (on stderr) print the "point an agent at it" lines (§12.8).
 `--red-flag` values land in shell history; the GUIs use `--config-stdin` instead.
 
 **Exit codes:** `0` normal, `--once`, stdin EOF, or the reader of stdout went away (a broken
-pipe); `1` setup (port in use, log file or red-flags file unusable, a failed bind); `2` usage
-(including an invalid or oversized pattern, a non-loopback `--listen`, conflicting or invalid `--listen-fd` flags and a rejected inherited socket (`listen-fd`), a bad `--tls-host` and `--tls` in a build without the feature); `3` a panic. A second `--tls` run for the same certificate directory, and `--delete-ca` while one runs, exit `1`.
+pipe); `1` setup (port in use, log file or red-flags file unusable or over 1 MiB, a failed bind,
+root without `--allow-root`, a failed capability drop, a stdout write error other than a broken
+pipe); `2` usage (including an invalid or oversized pattern, a bad `--config-stdin` line, a
+non-loopback `--listen`, conflicting or invalid `--listen-fd` flags and a rejected inherited socket (`listen-fd`), a bad `--tls-host`, and `--tls`, `--trust`, `--trust-status` or `--delete-ca` in a build without the feature); `3` a panic. A second `--tls` run for the same certificate directory, and `--delete-ca` while one runs, exit `1`.
 
 **A refused privileged port.** `--port <n>` chooses the port in every mode. When `bind` fails with
-`EACCES` the program exits `1` with a short fixed error (`{"v":1,"type":"error","source":"listen","code":"port-privileged","message":"can't listen on <addr>: permission denied","port":<n>}` on stdout under `--json`, text on stderr otherwise) and a note on stderr (`setup::privileged_port_note`; one plain line on other systems than Linux). The note gives the ways to listen, concrete for the run and printed, never run: an unprivileged port (`n + 8000`, or 8443) to point the client at; the tray's "Open port N", which has the root helper `cainary-bind-helper` (packages: `/usr/libexec/cainary/`; development: `mise run linux:helper`) bind the loopback sockets and hand them over (`--listen-fd`); and, worded as administrator-only, a loopback-only both-families `nft` redirect with its removal and the `net.ipv4.ip_unprivileged_port_start` sysctl with its revert. No option installs a capability on a file (the earlier `setcap` copy recipe is gone). Commands are written for both fish and bash.
+`EACCES` the program exits `1` with a short fixed error (`{"v":1,"type":"error","source":"listen","code":"port-privileged","message":"can't listen on <addr>: permission denied","port":<n>}` on stdout under `--json`, text on stderr otherwise) and a note on stderr (`setup::privileged_port_note`; one plain line on other systems than Linux). The note gives the ways to listen, concrete for the run and printed, never run: an unprivileged port (`n + 8000`, or 8443) to point the client at; the tray's "Open port N", which has the root helper `cainary-bind-helper` (packages: `/usr/libexec/cainary/`; development: `mise run linux:helper`) bind the loopback sockets and hand them over (`--listen-fd`); and, worded as administrator-only, a loopback-only both-families `nft` redirect with its removal and the `net.ipv4.ip_unprivileged_port_start` sysctl with its revert. No option installs a capability on a file. Commands are written for both fish and bash.
 
 ### 12.2 Server
 
@@ -1148,6 +1239,9 @@ pipe); `1` setup (port in use, log file or red-flags file unusable, a failed bin
   IPv6 bind is not fatal and is noted in `hello.listen`. Sockets are bound from `SocketAddr`
   values, never strings, so there is no DNS; after `bind`, `local_addr().ip().is_loopback()` is
   asserted again. A port in use exits 1 (`port 4318 is in use (another collector?); try --port 4319`).
+- **Privileges.** Root is refused unless `--allow-root`. After bind and before any request is
+  read, the process clears its capability sets and sets `no_new_privs` on both threads, then
+  verifies it; a failure is `privilege-drop`, exit 1 (`privdrop.rs`, §12.10).
 - **Threads.** One acceptor per listener; at most **16** connection threads (over the limit the
   acceptor writes `503` and closes); one output thread that owns stdout and the log file; and the
   stdin thread. At most **2** requests are in their read-body/parse/classify/match stage at once
@@ -1254,7 +1348,8 @@ Applies to JSON lines, text, the log file, alerts and any GUI notification.
 
 ### 12.4 Log file (`logfile.rs`)
 
-`--log-file` is the only thing the collector writes. Without it the collector is stream-only.
+Outside `--tls` (the certificate file, §12.10) and `--trust` (§12.11), `--log-file` is the only
+thing the collector writes. Without it the collector is stream-only.
 
 - Missing parent directories are created `0700`; an existing parent must be owned by the user
   and not group- or other-writable, else exit 1.
@@ -1279,7 +1374,7 @@ depth ≤ 32), log bodies, resource attributes, scope names and versions, and re
 - **Kinds.** `text` (a literal, ASCII case folding only: non-ASCII letters match exactly) and
   `regex` (the `regex` crate, linear time, no look-around or backreferences). Text patterns are
   escaped into regexes, so there is one engine.
-- **Limits.** A pattern is ≤ 1024 bytes; at most **64** patterns; each regex compiles under a
+- **Limits.** A pattern is ≤ 1024 bytes; at most **64** patterns including the enabled presets; each regex compiles under a
   1 MiB size limit and 64 nesting levels, all of them under a 16 MiB budget. Per request at most
   **4 MiB** of text is matched and at most **256 KiB** of any single value; beyond that, or past
   1,024 alert groups, the batch is marked `"scanIncomplete": true` and an `error` line
@@ -1310,14 +1405,9 @@ prod-db  = { kind = "regex", pattern = '\bdb-[0-9]+\.prod\.example-corp\.com\b' 
 api-host = { pattern = "api.example-corp.com", case_sensitive = true }
 ```
 
-- **Text path decision.** The design started with Aho-Corasick for text patterns. A timing test
-  (`tests/redflag_timing.rs`, `#[ignore]`; `cargo test -p cainary-net --release -- --ignored
-  --nocapture`: 505,000 synthetic values, 20 literals) measured 307 ns per value for the
-  Aho-Corasick `Matcher` against 268 ns for one case-insensitive `RegexSet` of the escaped
-  literals, a ratio of 0.87× against a required 1.5×. The direct dependency and its path were
-  dropped; text goes through `regex::escape`. Adversarial single values at the 256 KiB cap
-  (repeated characters against 40 overlapping literals, presets plus literals, a mostly-matching
-  set) take 1.3–2.6 ms.
+- **Text path.** Text patterns are escaped into regexes and matched with the same `RegexSet`;
+  Aho-Corasick was no faster, so it was dropped. `tests/redflag_timing.rs` (`#[ignore]`) fails
+  above 5× a bare `RegexSet` and checks adversarial values at the 256 KiB cap scan in under 2 s.
 - `redflag` is `pub` in the library so goal 3 (below) can reuse it.
 
 ### 12.6 JSON lines (`--json`), version 1
@@ -1329,18 +1419,18 @@ line on stdout (and in the log file), with keys in this order: `v` (integer majo
 **Versioning.** `v` is an integer major. Within a major, changes are additive only: new optional
 keys, new `type`s and new values of open strings. Consumers ignore unknown `type`s and unknown
 keys, and refuse a `v` they don't know (the GUIs stop with "Update cAInary"). `error.source` is
-an **open string** (today `http`, `log-file`, `red-flags`, `startup`, `listen`); consumers tolerate others. A line is
+an **open string** (today `http`, `log-file`, `red-flags`, `startup`, `listen`, `tls`); consumers tolerate others. A line is
 at most **1 MiB**: when a batch would exceed it, `resources` is dropped and `resourcesOmitted:
 true` is set, and the `summary` always stays.
 
 | `type` | Keys after `v`, `type`, `ts` |
 | --- | --- |
-| `hello` (first line) | `generator` (`cainary-otel-debug <version>`), `mode` (`receiver`, or `tls-receiver` for the takeover), `listen` (bound addresses, plus a note for any that couldn't bind), `endpoint` (`http://127.0.0.1:4318`), `showValues`, `logFile` (path or `null`), `redFlags` (`[{name, kind, preset, caseSensitive}]`), `tls` (takeover only: `{hosts, ca: {path, sha256}}`, host names as the user configured them, not a sender identity), `setup` (`{claudeCode: [...], codex: [...], notes: [...], takeover?: [...]}`, the §12.8 lines with the real endpoint; in takeover mode `claudeCode` and `codex` hold the certificate-trust variables and `takeover` the instructions of §12.10) |
-| `batch` | `seq`, `signal` (`logs`, `metrics`, `traces`), `path` (`/v1/<signal>`, or the fixed marker `<custom path>` in takeover mode: request paths are never printed), `host` (takeover only: the validated host name), `bytes`, `vendor` (`claude-code`, `codex` or `null`), `service` (`{name, version}` or `null`), `catalog` (the catalog label or `null`), `records`, `notInCatalog`, `summary`, `resources` or `resourcesOmitted`, and `scanIncomplete` when set |
+| `hello` (first line) | `generator` (`cainary-otel-debug <version>`), `mode` (`receiver`, or `tls-receiver` for the takeover), `listen` (bound addresses, plus a note for any that couldn't bind), `endpoint` (the first bound address, `http://127.0.0.1:4318`; `https://` in takeover mode), `showValues`, `logFile` (path or `null`), `redFlags` (`[{name, kind, preset, caseSensitive}]`), `tls` (takeover only: `{hosts, ca: {path, sha256}}`, host names as the user configured them, not a sender identity), `setup` (`{claudeCode: [...], codex: [...], notes: [...], takeover?: [...]}`, the §12.8 lines with the real endpoint; in takeover mode `claudeCode` and `codex` hold the certificate-trust variables and `takeover` the instructions of §12.10) |
+| `batch` | `seq`, `signal` (`logs`, `metrics`, `traces`), `path` (`/v1/<signal>`, or the fixed marker `<custom path>` in takeover mode: request paths are never printed), `host` (takeover only: the validated host name), `bytes`, `format` (`"protobuf"`, only for a protobuf body), `encoding` (`"gzip"`, only for a gzip body), `vendor` (`claude-code`, `codex` or `null`), `service` (`{name, version}` or `null`), `catalog` (the catalog label or `null`), `records`, `notInCatalog`, `summary`, `resources` or `resourcesOmitted`, and `scanIncomplete` when set |
 | `alert` | `seq`, `pattern`, `preset`, `signal`, `event` (record name or `null`), `events` (up to 8 names), `attribute` (key label or `null`), `where` (`key`, `value`, `body`, `resource`, `scope` or `name`), `count`, `match` |
 | `trust` | one per `--trust` call: `target` (`claude-code`, `codex`), `action` (`preview`, `applied`, `already`, `undone`, `nothing-to-undo`, `refused`), `message` (fixed text), `settingsPath`, `backupPath`, `key` (`NODE_EXTRA_CA_CERTS` or `null`), `from`, `to`, `bundlePath`, `command` (`null` where not applicable) |
 | `trust-status` | `claudeCode` (`{state: applied\|absent\|other-value\|managed, settingsPath, value}`), `codex` (`{state: ready\|absent, bundlePath, command}`), `caPath`, `caExists` (the collector certificate file exists), `note` (a sentence when an interrupted change was just finished or cleared, or that the state file is newer than this build; else `null`), `owned` (additive: every file cAInary recorded as its own, `[{modes, target, kind: settings\|backup\|bundle, path, key, fingerprints, caFingerprints, foreign, sha256}]`, §12.11) |
-| `error` | `source`, then either `status`, `method`, `path`, `message` (for `http`) or `dropped`, `message`, or `message` alone; a fatal startup failure (`source` `startup` or `listen`) is `source`, `code`, `message`, then `port` when it concerns one |
+| `error` | `source`, then either `status`, `method`, `path`, `message` (for `http`), `message[, count]` (for `tls`), or `dropped`, `message`, or `message` alone; a fatal startup failure (`source` `startup` or `listen`) is `source`, `code`, `message`, then `port` when it concerns one |
 
 - `summary` is `{identity: [keys], resource: [keys], records: [{name, kind, count, known, what?,
   attrs: [{key, group, flag?, known}]}]}`: what a GUI draws. `identity` and `resource` list the
@@ -1360,8 +1450,9 @@ true` is set, and the `summary` always stays.
   after a complete red-flag scan (§12.3); a wildcard catalog entry such as `vcs.ref.head.*` still
   classifies its keys (`known`, `group`) but they take the name rule.
 - A rejected request emits no `batch`, only an `error` line.
-- **Startup errors.** Under `--json`, every fatal startup path prints exactly one `error` line on
-  stdout before the process exits (the text stays on stderr), including argument errors (`--json` is
+- **Startup errors.** Under `--json`, every fatal startup path of a receiver run (and argument
+  errors) prints exactly one `error` line on stdout before the process exits; the `--trust` and
+  `--delete-ca` failures print stderr text only (the text stays on stderr), including argument errors (`--json` is
   looked for in the raw arguments before they are parsed). Its `code` is a stable open string, and
   `port` (an integer) is added where one is involved: `port-privileged` (`EACCES` on bind; `port`;
   `source` `listen`), `port-in-use` (`EADDRINUSE`; `port`; `source` `listen`), `tls-no-host`
@@ -1372,7 +1463,7 @@ true` is set, and the `summary` always stays.
   Consumers tolerate codes they don't know.
 
 **Text mode** (no `--json`) prints per batch a header line (`── logs · claude-code 2.1.316 · 12
-records · 12:17:49Z`), a `resource` line, an `identity` line ("on every record"), then per record
+records · 12:17:49Z`, with ` · protobuf` and ` · gzip` when they apply), a `resource` line, an `identity` line ("on every record"), then per record
 name its count and the catalog's description, with `event`, `content` (each content attribute
 followed by its gating flag) and `NOT IN CATALOG` lines taken from the first record of that name,
 and one `⚠ red flag <name>: …` line per alert. Every payload-derived string is escaped (§12.3),
@@ -1381,8 +1472,9 @@ and retained text per batch is capped at 256 KiB. The setup lines go to stderr a
 ### 12.7 Running it from the apps, and `--config-stdin`
 
 The macOS app and the Linux tray start the collector as a child through an explicit "OTel debug
-collector" toggle, with `--json --exit-on-stdin-eof --config-stdin` (and `--port`, `--log-file`
-in argv).
+collector" toggle, with `--json --config-stdin` (which implies `--exit-on-stdin-eof`), plus `--port`
+and, as set, `--log-file`, and for the takeover `--tls --tls-host`. The Linux tray also passes
+`--listen-fd` for sockets its root helper bound.
 
 - **Lifeline.** The child's stdin is a pipe the app holds and never writes after the config. When
   the app dies for any reason, SIGKILL included, the kernel closes the write end, the stdin thread
@@ -1414,6 +1506,7 @@ endpoint:
   `OTEL_EXPORTER_OTLP_ENDPOINT`, `_PROTOCOL` or `_HEADERS` also removes your local endpoints, so
   Claude Code keeps sending to your organization's collector
   (<https://code.claude.com/docs/en/monitoring-usage#how-managed-settings-lock-the-otlp-destination>).
+  A per-signal `*_ENDPOINT` overrides the general one.
   Codex `requirements.toml` `[otel]` overrides `config.toml`. `cainary scan` shows which of these
   your organization sets. `http/protobuf` and gzip are accepted too; gRPC isn't. A process behind
   `HTTPS_PROXY` needs `127.0.0.1`, `::1` and `localhost` in its `NO_PROXY`. On Linux only your own
@@ -1425,7 +1518,7 @@ The collector stays inbound-only for good. A traffic watchdog would be a separat
 loopback-only `cainary-proxy` binary behind a non-default `mitm` feature, for traffic from a
 client the user points at it (never transparent capture or a system proxy change). It would be
 the only outbound code, and only to the host that client asked for, with its own package set;
-guard 4's closure rule is a table so a third set is one more row. The JSON-lines contract is open
+guard 4's closure rule is a table so one more set is one more row. The JSON-lines contract is open
 for a future `leak` type, and `redflag` is reusable.
 
 ### 12.10 Endpoint takeover (`--tls`)
@@ -1470,7 +1563,8 @@ users who can't change how the agent is launched. It is built only with the `tls
   `$XDG_STATE_HOME/cainary/otel-debug-ca.pem` (default `~/.local/state/…`; macOS
   `~/Library/Application Support/cAInary/`), a path that stays fixed so `NODE_EXTRA_CA_CERTS` is
   stable across runs. The directory is opened through a descriptor and must be ours with no
-  group/other write (a symlinked final component is refused); the temporary is made with
+  group/other write; the directory walk follows up to eight root-owned symlinks, including the
+  final component, and other symlinks are refused; the temporary is made with
   `openat(create_new | O_NOFOLLOW | O_CLOEXEC)`, set to 0644 through its descriptor and renamed
   in place; an exclusive `flock` on a lock file there is held for the whole run. It is never
   installed in any trust store.
@@ -1509,10 +1603,10 @@ the guards let use `std::fs` or `libc`), `state.rs` (the state file), `bundle.rs
 bundles), `claude.rs` and `codex.rs` (the two targets).
 
 - **Claude Code** (`--trust claude-code [--dry-run] [--undo]`). Sets `env.NODE_EXTRA_CA_CERTS` in
-  the user's `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR`) to the collector CA path, and
-  nothing else. If the key already holds another path, it is never overwritten with ours alone: a
-  combined bundle (that file's certificates plus the collector's, last and exactly once) is written
-  as `otel-debug-claude-bundle.pem` next to the CA, and the key points there. If your shell sets
+  the user's `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR`) to `otel-debug-claude-bundle.pem`,
+  a bundle written next to the CA, and nothing else. The bundle holds the takeover CA, plus the
+  certificates of the file the key pointed at before, if any (the collector's last and exactly
+  once), so another path is never overwritten with ours alone. If your shell sets
   `NODE_EXTRA_CA_CERTS` the message says so (the shell value wins). If managed settings set the
   key (resolved with the core's Claude Code configuration resolution, in-process and read-only),
   it refuses: they override this.
@@ -1556,9 +1650,9 @@ bundles), `claude.rs` and `codex.rs` (the two targets).
   result and any bundle are checked against the same cap before anything is recorded; file names
   that come from a record are validated (`settings.json.cainary-…bak` only) and a NUL in a name is
   an error, not a panic.
-- **Previews and status never write.** `--dry-run` (apply or undo) takes no lock, finishes or clears
-  nothing and deletes nothing: it only mentions a pending transaction. Recovery runs only in a call
-  that holds the lock.
+- **Previews.** `--dry-run` (apply or undo) takes no lock and changes nothing: it only mentions a
+  pending transaction. `--trust-status` waits up to 2 s for the trust lock and runs recovery if it
+  gets it; otherwise it only inspects. Recovery runs only in a call that holds the lock.
 - **State and undo.** The state file records the settings path, the original value, what was
   written, whether the file and the `env` object were created, and the hashes and backup that make
   an exact restore possible. `--undo` acts only on the **same settings location** it recorded (a
@@ -1570,13 +1664,15 @@ bundles), `claude.rs` and `codex.rs` (the two targets).
   the bundle is removed. Otherwise it answers `nothing-to-undo` (no record) or `refused` (the value
   changed since). `--undo --dry-run` changes nothing, not even a stale record.
 - **Codex** (`--trust codex [--undo]`). Writes `otel-debug-codex-bundle.pem` (0644): the system
-  roots (first existing of `/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem`,
+  roots (the first listed candidate that reads as a certificate-only bundle from
+  `/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem`,
   `/etc/ssl/certs/ca-certificates.crt`, `/etc/ssl/cert.pem`) plus the collector CA, and returns
   `env CODEX_CA_CERTIFICATE=<quoted path> codex`. Codex replaces the system roots with that one
   bundle, hence the combined file. No Codex configuration or shell file is touched; `--undo`
   deletes the bundle.
 - **State file v2 (`otel-debug-trust.json`).** Top-level `"v": 2`; a `modes` table keyed by mode
-  name (`takeover` is the only one; `proxy` is added later without a schema change) holding
+  name (`takeover` is the only mode a command enables today; `proxy` is reserved in
+  `trust::MODES` for the planned proxy, §12.9, and needs no schema change) holding
   `{caFile, fingerprint}` (SHA-256 of the certificate's DER, refreshed on every write); then
   `claudeCode` and `codex`, each with its enabled `modes` and the sha-256 hex of what cAInary last
   wrote: Claude Code's `newSha` (the settings file as left), `origSha` (the backup's bytes) and
@@ -1638,8 +1734,7 @@ bundles), `claude.rs` and `codex.rs` (the two targets).
   backup), `foreign` and `sha256` (the file now, `null` if missing). The text status adds one
   `owned: <modes, comma separated> <target> <kind> (<path>)` line per entry, with ` foreign` when
   it is. Every other field of the line is unchanged, so older readers ignore `owned` (the Linux
-  tray and the macOS app don't read it). Before T3 an entry was per file *and* mode with a single
-  `mode`; nothing consumed it.
+  tray and the macOS app don't read it).
 - **Mode registry and bundle composition.** `trust::MODES` lists every mode with the file its
   certificate lives in, in a fixed order that is also the bundle order: `takeover`
   (`otel-debug-ca.pem`), then `proxy` (`otel-debug-proxy-ca.pem`, its public certificate kept
@@ -1678,10 +1773,9 @@ bundles), `claude.rs` and `codex.rs` (the two targets).
   busy. **Lock order is always the run lock, then the trust lock** (a `--tls` start publishes, then
   refreshes); never the reverse. A target that also has `proxy` keeps its bundle, now holding the
   proxy certificate only.
-- **The proxy CA persists.** The proxy mode's public certificate must stay at
-  `otel-debug-proxy-ca.pem` between sessions (step 5 of the plan): a bundle that includes the
-  `proxy` mode is rebuilt from it, and a missing file blocks the rebuild rather than silently
-  dropping the CA.
+- **The proxy CA persists.** Once proxy mode exists, its public certificate stays at
+  `otel-debug-proxy-ca.pem` between sessions; a bundle that includes `proxy` is rebuilt from it,
+  and a missing file blocks the rebuild rather than silently dropping the CA.
 - **Each `--tls` start** regenerates the recorded bundles from their sources and the current
   mode certificates, so the paths never change; the client still has to be restarted. Nothing is
   refreshed, and a warning is printed, if a source file or an enabled mode's certificate has gone.
