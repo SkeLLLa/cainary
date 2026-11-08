@@ -190,7 +190,8 @@ jobs:
         id: prepare
         run: |
           set -euo pipefail
-          # cliff.toml: the first release is v0.1.0; afterwards feat bumps minor, others patch.
+          # cliff.toml: the first release is v0.1.0; afterwards a breaking change bumps major,
+          # feat minor, others patch.
           # A Cargo.toml [workspace.package] version that names an untagged version wins, so a
           # release can be set by hand (for example 1.0.0) by committing that version.
           TAG_NAME="$(git cliff --bumped-version)"
