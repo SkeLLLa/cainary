@@ -1023,6 +1023,10 @@ fn a_record_trickled_after_a_good_first_request_is_cut_off_at_the_idle_deadline(
     // within the 500 ms read timeout, so only an absolute deadline can end it.
     let bytes = wire_bytes(&mut s, &request("/v1/logs", Some(&h), "", &body));
     assert!(bytes.len() > 40, "{}", bytes.len());
+    // Set once while connected: macOS refuses socket options (EINVAL) once the peer has closed.
+    s.sock
+        .set_read_timeout(Some(Duration::from_millis(1)))
+        .unwrap();
     let t0 = Instant::now();
     let mut closed = false;
     for b in &bytes {
@@ -1031,9 +1035,6 @@ fn a_record_trickled_after_a_good_first_request_is_cut_off_at_the_idle_deadline(
             break;
         }
         std::thread::sleep(Duration::from_millis(150));
-        s.sock
-            .set_read_timeout(Some(Duration::from_millis(1)))
-            .unwrap();
         let mut one = [0u8; 1];
         if matches!((&s.sock).read(&mut one), Ok(0)) {
             closed = true;

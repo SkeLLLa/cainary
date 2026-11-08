@@ -927,6 +927,9 @@ fn a_stalled_client_is_dropped_and_the_next_is_served() {
     let mut slow = connect(a);
     slow.write_all(b"POST /v1/logs HTTP/1.1\r\nHost: 127.0.0.1")
         .unwrap();
+    // Set once while connected: macOS refuses socket options (EINVAL) once the peer has closed.
+    slow.set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
     let t0 = Instant::now();
     // Dribble a byte at a time: each read succeeds, only the request deadline can end this.
     let mut closed = false;
@@ -935,8 +938,6 @@ fn a_stalled_client_is_dropped_and_the_next_is_served() {
             closed = true;
             break;
         }
-        slow.set_read_timeout(Some(Duration::from_millis(100)))
-            .unwrap();
         let mut b = [0u8; 1];
         if matches!(slow.read(&mut b), Ok(0)) {
             closed = true;
