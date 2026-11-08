@@ -37,6 +37,12 @@ pub unsafe fn take_inherited(fd: std::os::fd::RawFd) -> Result<OwnedFd, Reject> 
     Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }
 
+/// Always refuses: inherited listening sockets are a Linux-only feature.
+///
+/// # Safety
+///
+/// Nothing is taken, so there is nothing to uphold; `unsafe` only keeps the signature the same
+/// as on Linux.
 #[cfg(not(target_os = "linux"))]
 pub unsafe fn take_inherited(_fd: i32) -> Result<OwnedFd, Reject> {
     Err("--listen-fd is not supported on this platform".into())
@@ -104,6 +110,7 @@ struct Local {
 
 /// The socket-level facts that make a descriptor a listening TCP socket: `SOCK_STREAM` alone
 /// also admits SCTP and others, so the protocol is checked too.
+#[cfg(target_os = "linux")]
 fn tcp_listening(ty: i32, proto: i32, listening: i32) -> Result<(), &'static str> {
     if ty != libc::SOCK_STREAM {
         return Err("not a stream socket");

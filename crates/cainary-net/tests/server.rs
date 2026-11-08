@@ -4,9 +4,12 @@ mod formats;
 
 use cainary_net::decode::{ENCODING_MESSAGE, TYPE_MESSAGE};
 use cainary_net::logfile::LogFile;
+#[cfg(target_os = "linux")]
 use cainary_net::peer::Lookup;
 use cainary_net::redflag::{Matcher, presets};
-use cainary_net::server::{self, Config, PEER_REFUSED, PEER_UNCONFIRMED, PeerUid, Server};
+use cainary_net::server::{self, Config, PeerUid, Server};
+#[cfg(target_os = "linux")]
+use cainary_net::server::{PEER_REFUSED, PEER_UNCONFIRMED};
 use serde_json::{Value, json};
 use std::io::{BufRead, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -1844,8 +1847,9 @@ fn commands_that_never_bind_still_work() {
     }
 }
 
-// ---- --listen-fd: sockets inherited from the parent ----
+// ---- --listen-fd: sockets inherited from the parent (Linux only) ----
 
+#[cfg(target_os = "linux")]
 mod listen_fd {
     use super::*;
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};

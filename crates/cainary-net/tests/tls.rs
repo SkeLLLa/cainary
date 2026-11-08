@@ -6,9 +6,12 @@
 mod formats;
 
 use cainary_net::decode::TYPE_MESSAGE;
+#[cfg(target_os = "linux")]
 use cainary_net::peer::Lookup;
 use cainary_net::redflag::{Matcher, presets};
-use cainary_net::server::{self, Config, PEER_REFUSED, PEER_UNCONFIRMED, PeerUid, Server, TlsRun};
+use cainary_net::server::{self, Config, PeerUid, Server, TlsRun};
+#[cfg(target_os = "linux")]
+use cainary_net::server::{PEER_REFUSED, PEER_UNCONFIRMED};
 use cainary_net::tls::Tls;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, ServerName};
