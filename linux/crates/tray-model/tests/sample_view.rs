@@ -99,6 +99,15 @@ fn sanitize_sample_paths(value: &mut Value) {
 
 #[test]
 fn sample_view_is_up_to_date() {
+    // The collector feed shows local clock times; fixed, the file doesn't depend on the host's zone.
+    // SAFETY: this binary has this one test, and nothing else reads the environment meanwhile.
+    unsafe extern "C" {
+        fn tzset();
+    }
+    unsafe {
+        std::env::set_var("TZ", "UTC");
+        tzset();
+    }
     let want = render();
     if std::env::var_os("UPDATE_SAMPLE_VIEW").is_some() {
         std::fs::write(FILE, &want).unwrap();

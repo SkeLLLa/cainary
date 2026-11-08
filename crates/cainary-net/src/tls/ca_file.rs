@@ -689,6 +689,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        target_os = "macos",
+        ignore = "APFS refuses names that aren't UTF-8 (EILSEQ)"
+    )]
     fn names_are_kept_as_raw_bytes() {
         use std::ffi::OsString;
         use std::os::unix::ffi::OsStringExt;

@@ -54288,7 +54288,7 @@ var collectors = {
       {
         "key": "batch:12",
         "timestamp": "2026-01-01T14:04:55Z",
-        "time": "15:04:55",
+        "time": "14:04:55",
         "size": "7 KB",
         "source": "claude-code 2.1.316",
         "signal": "metrics",
@@ -54304,7 +54304,7 @@ var collectors = {
       {
         "key": "alert:6",
         "timestamp": "2026-01-01T14:04:40Z",
-        "time": "15:04:40",
+        "time": "14:04:40",
         "size": "",
         "source": "claude_code.tool",
         "signal": "traces",
@@ -54349,7 +54349,7 @@ var collectors = {
       {
         "key": "batch:11",
         "timestamp": "2026-01-01T14:04:29Z",
-        "time": "15:04:29",
+        "time": "14:04:29",
         "size": "9 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -54383,7 +54383,7 @@ var collectors = {
       {
         "key": "batch:10",
         "timestamp": "2026-01-01T14:04:02Z",
-        "time": "15:04:02",
+        "time": "14:04:02",
         "size": "8 KB",
         "source": "codex 0.58.0",
         "signal": "traces",
@@ -54399,7 +54399,7 @@ var collectors = {
       {
         "key": "batch:9",
         "timestamp": "2026-01-01T14:03:36Z",
-        "time": "15:03:36",
+        "time": "14:03:36",
         "size": "22 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -54433,7 +54433,7 @@ var collectors = {
       {
         "key": "batch:8",
         "timestamp": "2026-01-01T14:03:10Z",
-        "time": "15:03:10",
+        "time": "14:03:10",
         "size": "16 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -54449,7 +54449,7 @@ var collectors = {
       {
         "key": "batch:7",
         "timestamp": "2026-01-01T14:02:47Z",
-        "time": "15:02:47",
+        "time": "14:02:47",
         "size": "4 KB",
         "source": "codex 0.58.0",
         "signal": "metrics",
@@ -54465,7 +54465,7 @@ var collectors = {
       {
         "key": "batch:6",
         "timestamp": "2026-01-01T14:02:20Z",
-        "time": "15:02:20",
+        "time": "14:02:20",
         "size": "11 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -54499,7 +54499,7 @@ var collectors = {
       {
         "key": "batch:5",
         "timestamp": "2026-01-01T14:01:58Z",
-        "time": "15:01:58",
+        "time": "14:01:58",
         "size": "7 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -54515,7 +54515,7 @@ var collectors = {
       {
         "key": "batch:4",
         "timestamp": "2026-01-01T14:01:30Z",
-        "time": "15:01:30",
+        "time": "14:01:30",
         "size": "10 KB",
         "source": "claude-code 2.1.316",
         "signal": "traces",
@@ -54531,7 +54531,7 @@ var collectors = {
       {
         "key": "batch:3",
         "timestamp": "2026-01-01T14:01:03Z",
-        "time": "15:01:03",
+        "time": "14:01:03",
         "size": "20 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -54581,7 +54581,7 @@ var collectors = {
       {
         "key": "batch:2",
         "timestamp": "2026-01-01T14:00:41Z",
-        "time": "15:00:41",
+        "time": "14:00:41",
         "size": "6 KB",
         "source": "claude-code 2.1.316",
         "signal": "metrics",
@@ -54597,7 +54597,7 @@ var collectors = {
       {
         "key": "batch:1",
         "timestamp": "2026-01-01T14:00:12Z",
-        "time": "15:00:12",
+        "time": "14:00:12",
         "size": "18 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -54618,7 +54618,7 @@ var collectors = {
         "hits": 2,
         "total": 2,
         "last": "2026-01-01T14:04:40Z",
-        "lastTime": "15:04:40",
+        "lastTime": "14:04:40",
         "events": [
           "claude_code.tool",
           "claude_code.tool_result"
@@ -54639,7 +54639,7 @@ var collectors = {
         "hits": 1,
         "total": 3,
         "last": "2026-01-01T14:04:29Z",
-        "lastTime": "15:04:29",
+        "lastTime": "14:04:29",
         "events": [
           "codex.user_prompt"
         ],
@@ -54657,7 +54657,7 @@ var collectors = {
         "hits": 2,
         "total": 3,
         "last": "2026-01-01T14:03:36Z",
-        "lastTime": "15:03:36",
+        "lastTime": "14:03:36",
         "events": [
           "claude_code.tool_result"
         ],
@@ -54675,7 +54675,7 @@ var collectors = {
         "hits": 1,
         "total": 1,
         "last": "2026-01-01T14:02:20Z",
-        "lastTime": "15:02:20",
+        "lastTime": "14:02:20",
         "events": [
           "codex.tool_result"
         ],
@@ -55480,7 +55480,7 @@ var collectors = {
       {
         "key": "batch:12",
         "timestamp": "2026-01-01T14:04:55Z",
-        "time": "15:04:55",
+        "time": "14:04:55",
         "size": "7 KB",
         "source": "claude-code 2.1.316",
         "signal": "metrics",
@@ -55496,7 +55496,7 @@ var collectors = {
       {
         "key": "alert:6",
         "timestamp": "2026-01-01T14:04:40Z",
-        "time": "15:04:40",
+        "time": "14:04:40",
         "size": "",
         "source": "claude_code.tool",
         "signal": "traces",
@@ -55541,7 +55541,7 @@ var collectors = {
       {
         "key": "batch:11",
         "timestamp": "2026-01-01T14:04:29Z",
-        "time": "15:04:29",
+        "time": "14:04:29",
         "size": "9 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -55575,7 +55575,7 @@ var collectors = {
       {
         "key": "batch:10",
         "timestamp": "2026-01-01T14:04:02Z",
-        "time": "15:04:02",
+        "time": "14:04:02",
         "size": "8 KB",
         "source": "codex 0.58.0",
         "signal": "traces",
@@ -55591,7 +55591,7 @@ var collectors = {
       {
         "key": "batch:9",
         "timestamp": "2026-01-01T14:03:36Z",
-        "time": "15:03:36",
+        "time": "14:03:36",
         "size": "22 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -55625,7 +55625,7 @@ var collectors = {
       {
         "key": "batch:8",
         "timestamp": "2026-01-01T14:03:10Z",
-        "time": "15:03:10",
+        "time": "14:03:10",
         "size": "16 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -55641,7 +55641,7 @@ var collectors = {
       {
         "key": "batch:7",
         "timestamp": "2026-01-01T14:02:47Z",
-        "time": "15:02:47",
+        "time": "14:02:47",
         "size": "4 KB",
         "source": "codex 0.58.0",
         "signal": "metrics",
@@ -55657,7 +55657,7 @@ var collectors = {
       {
         "key": "batch:6",
         "timestamp": "2026-01-01T14:02:20Z",
-        "time": "15:02:20",
+        "time": "14:02:20",
         "size": "11 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -55691,7 +55691,7 @@ var collectors = {
       {
         "key": "batch:5",
         "timestamp": "2026-01-01T14:01:58Z",
-        "time": "15:01:58",
+        "time": "14:01:58",
         "size": "7 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -55707,7 +55707,7 @@ var collectors = {
       {
         "key": "batch:4",
         "timestamp": "2026-01-01T14:01:30Z",
-        "time": "15:01:30",
+        "time": "14:01:30",
         "size": "10 KB",
         "source": "claude-code 2.1.316",
         "signal": "traces",
@@ -55723,7 +55723,7 @@ var collectors = {
       {
         "key": "batch:3",
         "timestamp": "2026-01-01T14:01:03Z",
-        "time": "15:01:03",
+        "time": "14:01:03",
         "size": "20 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -55773,7 +55773,7 @@ var collectors = {
       {
         "key": "batch:2",
         "timestamp": "2026-01-01T14:00:41Z",
-        "time": "15:00:41",
+        "time": "14:00:41",
         "size": "6 KB",
         "source": "claude-code 2.1.316",
         "signal": "metrics",
@@ -55789,7 +55789,7 @@ var collectors = {
       {
         "key": "batch:1",
         "timestamp": "2026-01-01T14:00:12Z",
-        "time": "15:00:12",
+        "time": "14:00:12",
         "size": "18 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -55810,7 +55810,7 @@ var collectors = {
         "hits": 2,
         "total": 2,
         "last": "2026-01-01T14:04:40Z",
-        "lastTime": "15:04:40",
+        "lastTime": "14:04:40",
         "events": [
           "claude_code.tool",
           "claude_code.tool_result"
@@ -55831,7 +55831,7 @@ var collectors = {
         "hits": 1,
         "total": 3,
         "last": "2026-01-01T14:04:29Z",
-        "lastTime": "15:04:29",
+        "lastTime": "14:04:29",
         "events": [
           "codex.user_prompt"
         ],
@@ -55849,7 +55849,7 @@ var collectors = {
         "hits": 2,
         "total": 3,
         "last": "2026-01-01T14:03:36Z",
-        "lastTime": "15:03:36",
+        "lastTime": "14:03:36",
         "events": [
           "claude_code.tool_result"
         ],
@@ -55867,7 +55867,7 @@ var collectors = {
         "hits": 1,
         "total": 1,
         "last": "2026-01-01T14:02:20Z",
-        "lastTime": "15:02:20",
+        "lastTime": "14:02:20",
         "events": [
           "codex.tool_result"
         ],
@@ -56539,7 +56539,7 @@ var collectors = {
       {
         "key": "batch:12",
         "timestamp": "2026-01-01T14:04:55Z",
-        "time": "15:04:55",
+        "time": "14:04:55",
         "size": "7 KB",
         "source": "claude-code 2.1.316",
         "signal": "metrics",
@@ -56555,7 +56555,7 @@ var collectors = {
       {
         "key": "alert:6",
         "timestamp": "2026-01-01T14:04:40Z",
-        "time": "15:04:40",
+        "time": "14:04:40",
         "size": "",
         "source": "claude_code.tool",
         "signal": "traces",
@@ -56600,7 +56600,7 @@ var collectors = {
       {
         "key": "batch:11",
         "timestamp": "2026-01-01T14:04:29Z",
-        "time": "15:04:29",
+        "time": "14:04:29",
         "size": "9 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -56634,7 +56634,7 @@ var collectors = {
       {
         "key": "batch:10",
         "timestamp": "2026-01-01T14:04:02Z",
-        "time": "15:04:02",
+        "time": "14:04:02",
         "size": "8 KB",
         "source": "codex 0.58.0",
         "signal": "traces",
@@ -56650,7 +56650,7 @@ var collectors = {
       {
         "key": "batch:9",
         "timestamp": "2026-01-01T14:03:36Z",
-        "time": "15:03:36",
+        "time": "14:03:36",
         "size": "22 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -56684,7 +56684,7 @@ var collectors = {
       {
         "key": "batch:8",
         "timestamp": "2026-01-01T14:03:10Z",
-        "time": "15:03:10",
+        "time": "14:03:10",
         "size": "16 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -56700,7 +56700,7 @@ var collectors = {
       {
         "key": "batch:7",
         "timestamp": "2026-01-01T14:02:47Z",
-        "time": "15:02:47",
+        "time": "14:02:47",
         "size": "4 KB",
         "source": "codex 0.58.0",
         "signal": "metrics",
@@ -56716,7 +56716,7 @@ var collectors = {
       {
         "key": "batch:6",
         "timestamp": "2026-01-01T14:02:20Z",
-        "time": "15:02:20",
+        "time": "14:02:20",
         "size": "11 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -56750,7 +56750,7 @@ var collectors = {
       {
         "key": "batch:5",
         "timestamp": "2026-01-01T14:01:58Z",
-        "time": "15:01:58",
+        "time": "14:01:58",
         "size": "7 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -56766,7 +56766,7 @@ var collectors = {
       {
         "key": "batch:4",
         "timestamp": "2026-01-01T14:01:30Z",
-        "time": "15:01:30",
+        "time": "14:01:30",
         "size": "10 KB",
         "source": "claude-code 2.1.316",
         "signal": "traces",
@@ -56782,7 +56782,7 @@ var collectors = {
       {
         "key": "batch:3",
         "timestamp": "2026-01-01T14:01:03Z",
-        "time": "15:01:03",
+        "time": "14:01:03",
         "size": "20 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -56832,7 +56832,7 @@ var collectors = {
       {
         "key": "batch:2",
         "timestamp": "2026-01-01T14:00:41Z",
-        "time": "15:00:41",
+        "time": "14:00:41",
         "size": "6 KB",
         "source": "claude-code 2.1.316",
         "signal": "metrics",
@@ -56848,7 +56848,7 @@ var collectors = {
       {
         "key": "batch:1",
         "timestamp": "2026-01-01T14:00:12Z",
-        "time": "15:00:12",
+        "time": "14:00:12",
         "size": "18 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -56869,7 +56869,7 @@ var collectors = {
         "hits": 2,
         "total": 2,
         "last": "2026-01-01T14:04:40Z",
-        "lastTime": "15:04:40",
+        "lastTime": "14:04:40",
         "events": [
           "claude_code.tool",
           "claude_code.tool_result"
@@ -56890,7 +56890,7 @@ var collectors = {
         "hits": 1,
         "total": 3,
         "last": "2026-01-01T14:04:29Z",
-        "lastTime": "15:04:29",
+        "lastTime": "14:04:29",
         "events": [
           "codex.user_prompt"
         ],
@@ -56908,7 +56908,7 @@ var collectors = {
         "hits": 2,
         "total": 3,
         "last": "2026-01-01T14:03:36Z",
-        "lastTime": "15:03:36",
+        "lastTime": "14:03:36",
         "events": [
           "claude_code.tool_result"
         ],
@@ -56926,7 +56926,7 @@ var collectors = {
         "hits": 1,
         "total": 1,
         "last": "2026-01-01T14:02:20Z",
-        "lastTime": "15:02:20",
+        "lastTime": "14:02:20",
         "events": [
           "codex.tool_result"
         ],
@@ -57598,7 +57598,7 @@ var collectors = {
       {
         "key": "batch:12",
         "timestamp": "2026-01-01T14:04:55Z",
-        "time": "15:04:55",
+        "time": "14:04:55",
         "size": "7 KB",
         "source": "claude-code 2.1.316",
         "signal": "metrics",
@@ -57614,7 +57614,7 @@ var collectors = {
       {
         "key": "alert:6",
         "timestamp": "2026-01-01T14:04:40Z",
-        "time": "15:04:40",
+        "time": "14:04:40",
         "size": "",
         "source": "claude_code.tool",
         "signal": "traces",
@@ -57659,7 +57659,7 @@ var collectors = {
       {
         "key": "batch:11",
         "timestamp": "2026-01-01T14:04:29Z",
-        "time": "15:04:29",
+        "time": "14:04:29",
         "size": "9 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -57693,7 +57693,7 @@ var collectors = {
       {
         "key": "batch:10",
         "timestamp": "2026-01-01T14:04:02Z",
-        "time": "15:04:02",
+        "time": "14:04:02",
         "size": "8 KB",
         "source": "codex 0.58.0",
         "signal": "traces",
@@ -57709,7 +57709,7 @@ var collectors = {
       {
         "key": "batch:9",
         "timestamp": "2026-01-01T14:03:36Z",
-        "time": "15:03:36",
+        "time": "14:03:36",
         "size": "22 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -57743,7 +57743,7 @@ var collectors = {
       {
         "key": "batch:8",
         "timestamp": "2026-01-01T14:03:10Z",
-        "time": "15:03:10",
+        "time": "14:03:10",
         "size": "16 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -57759,7 +57759,7 @@ var collectors = {
       {
         "key": "batch:7",
         "timestamp": "2026-01-01T14:02:47Z",
-        "time": "15:02:47",
+        "time": "14:02:47",
         "size": "4 KB",
         "source": "codex 0.58.0",
         "signal": "metrics",
@@ -57775,7 +57775,7 @@ var collectors = {
       {
         "key": "batch:6",
         "timestamp": "2026-01-01T14:02:20Z",
-        "time": "15:02:20",
+        "time": "14:02:20",
         "size": "11 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -57809,7 +57809,7 @@ var collectors = {
       {
         "key": "batch:5",
         "timestamp": "2026-01-01T14:01:58Z",
-        "time": "15:01:58",
+        "time": "14:01:58",
         "size": "7 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -57825,7 +57825,7 @@ var collectors = {
       {
         "key": "batch:4",
         "timestamp": "2026-01-01T14:01:30Z",
-        "time": "15:01:30",
+        "time": "14:01:30",
         "size": "10 KB",
         "source": "claude-code 2.1.316",
         "signal": "traces",
@@ -57841,7 +57841,7 @@ var collectors = {
       {
         "key": "batch:3",
         "timestamp": "2026-01-01T14:01:03Z",
-        "time": "15:01:03",
+        "time": "14:01:03",
         "size": "20 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -57891,7 +57891,7 @@ var collectors = {
       {
         "key": "batch:2",
         "timestamp": "2026-01-01T14:00:41Z",
-        "time": "15:00:41",
+        "time": "14:00:41",
         "size": "6 KB",
         "source": "claude-code 2.1.316",
         "signal": "metrics",
@@ -57907,7 +57907,7 @@ var collectors = {
       {
         "key": "batch:1",
         "timestamp": "2026-01-01T14:00:12Z",
-        "time": "15:00:12",
+        "time": "14:00:12",
         "size": "18 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -57928,7 +57928,7 @@ var collectors = {
         "hits": 2,
         "total": 2,
         "last": "2026-01-01T14:04:40Z",
-        "lastTime": "15:04:40",
+        "lastTime": "14:04:40",
         "events": [
           "claude_code.tool",
           "claude_code.tool_result"
@@ -57949,7 +57949,7 @@ var collectors = {
         "hits": 1,
         "total": 3,
         "last": "2026-01-01T14:04:29Z",
-        "lastTime": "15:04:29",
+        "lastTime": "14:04:29",
         "events": [
           "codex.user_prompt"
         ],
@@ -57967,7 +57967,7 @@ var collectors = {
         "hits": 2,
         "total": 3,
         "last": "2026-01-01T14:03:36Z",
-        "lastTime": "15:03:36",
+        "lastTime": "14:03:36",
         "events": [
           "claude_code.tool_result"
         ],
@@ -57985,7 +57985,7 @@ var collectors = {
         "hits": 1,
         "total": 1,
         "last": "2026-01-01T14:02:20Z",
-        "lastTime": "15:02:20",
+        "lastTime": "14:02:20",
         "events": [
           "codex.tool_result"
         ],
@@ -58657,7 +58657,7 @@ var collectors = {
       {
         "key": "batch:12",
         "timestamp": "2026-01-01T14:04:55Z",
-        "time": "15:04:55",
+        "time": "14:04:55",
         "size": "7 KB",
         "source": "claude-code 2.1.316",
         "signal": "metrics",
@@ -58673,7 +58673,7 @@ var collectors = {
       {
         "key": "alert:6",
         "timestamp": "2026-01-01T14:04:40Z",
-        "time": "15:04:40",
+        "time": "14:04:40",
         "size": "",
         "source": "claude_code.tool",
         "signal": "traces",
@@ -58718,7 +58718,7 @@ var collectors = {
       {
         "key": "batch:11",
         "timestamp": "2026-01-01T14:04:29Z",
-        "time": "15:04:29",
+        "time": "14:04:29",
         "size": "9 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -58752,7 +58752,7 @@ var collectors = {
       {
         "key": "batch:10",
         "timestamp": "2026-01-01T14:04:02Z",
-        "time": "15:04:02",
+        "time": "14:04:02",
         "size": "8 KB",
         "source": "codex 0.58.0",
         "signal": "traces",
@@ -58768,7 +58768,7 @@ var collectors = {
       {
         "key": "batch:9",
         "timestamp": "2026-01-01T14:03:36Z",
-        "time": "15:03:36",
+        "time": "14:03:36",
         "size": "22 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -58802,7 +58802,7 @@ var collectors = {
       {
         "key": "batch:8",
         "timestamp": "2026-01-01T14:03:10Z",
-        "time": "15:03:10",
+        "time": "14:03:10",
         "size": "16 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -58818,7 +58818,7 @@ var collectors = {
       {
         "key": "batch:7",
         "timestamp": "2026-01-01T14:02:47Z",
-        "time": "15:02:47",
+        "time": "14:02:47",
         "size": "4 KB",
         "source": "codex 0.58.0",
         "signal": "metrics",
@@ -58834,7 +58834,7 @@ var collectors = {
       {
         "key": "batch:6",
         "timestamp": "2026-01-01T14:02:20Z",
-        "time": "15:02:20",
+        "time": "14:02:20",
         "size": "11 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -58868,7 +58868,7 @@ var collectors = {
       {
         "key": "batch:5",
         "timestamp": "2026-01-01T14:01:58Z",
-        "time": "15:01:58",
+        "time": "14:01:58",
         "size": "7 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -58884,7 +58884,7 @@ var collectors = {
       {
         "key": "batch:4",
         "timestamp": "2026-01-01T14:01:30Z",
-        "time": "15:01:30",
+        "time": "14:01:30",
         "size": "10 KB",
         "source": "claude-code 2.1.316",
         "signal": "traces",
@@ -58900,7 +58900,7 @@ var collectors = {
       {
         "key": "batch:3",
         "timestamp": "2026-01-01T14:01:03Z",
-        "time": "15:01:03",
+        "time": "14:01:03",
         "size": "20 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -58950,7 +58950,7 @@ var collectors = {
       {
         "key": "batch:2",
         "timestamp": "2026-01-01T14:00:41Z",
-        "time": "15:00:41",
+        "time": "14:00:41",
         "size": "6 KB",
         "source": "claude-code 2.1.316",
         "signal": "metrics",
@@ -58966,7 +58966,7 @@ var collectors = {
       {
         "key": "batch:1",
         "timestamp": "2026-01-01T14:00:12Z",
-        "time": "15:00:12",
+        "time": "14:00:12",
         "size": "18 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -58987,7 +58987,7 @@ var collectors = {
         "hits": 2,
         "total": 2,
         "last": "2026-01-01T14:04:40Z",
-        "lastTime": "15:04:40",
+        "lastTime": "14:04:40",
         "events": [
           "claude_code.tool",
           "claude_code.tool_result"
@@ -59008,7 +59008,7 @@ var collectors = {
         "hits": 1,
         "total": 3,
         "last": "2026-01-01T14:04:29Z",
-        "lastTime": "15:04:29",
+        "lastTime": "14:04:29",
         "events": [
           "codex.user_prompt"
         ],
@@ -59026,7 +59026,7 @@ var collectors = {
         "hits": 2,
         "total": 3,
         "last": "2026-01-01T14:03:36Z",
-        "lastTime": "15:03:36",
+        "lastTime": "14:03:36",
         "events": [
           "claude_code.tool_result"
         ],
@@ -59044,7 +59044,7 @@ var collectors = {
         "hits": 1,
         "total": 1,
         "last": "2026-01-01T14:02:20Z",
-        "lastTime": "15:02:20",
+        "lastTime": "14:02:20",
         "events": [
           "codex.tool_result"
         ],
@@ -59716,7 +59716,7 @@ var collectors = {
       {
         "key": "batch:12",
         "timestamp": "2026-01-01T14:04:55Z",
-        "time": "15:04:55",
+        "time": "14:04:55",
         "size": "7 KB",
         "source": "claude-code 2.1.316",
         "signal": "metrics",
@@ -59732,7 +59732,7 @@ var collectors = {
       {
         "key": "alert:6",
         "timestamp": "2026-01-01T14:04:40Z",
-        "time": "15:04:40",
+        "time": "14:04:40",
         "size": "",
         "source": "claude_code.tool",
         "signal": "traces",
@@ -59777,7 +59777,7 @@ var collectors = {
       {
         "key": "batch:11",
         "timestamp": "2026-01-01T14:04:29Z",
-        "time": "15:04:29",
+        "time": "14:04:29",
         "size": "9 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -59811,7 +59811,7 @@ var collectors = {
       {
         "key": "batch:10",
         "timestamp": "2026-01-01T14:04:02Z",
-        "time": "15:04:02",
+        "time": "14:04:02",
         "size": "8 KB",
         "source": "codex 0.58.0",
         "signal": "traces",
@@ -59827,7 +59827,7 @@ var collectors = {
       {
         "key": "batch:9",
         "timestamp": "2026-01-01T14:03:36Z",
-        "time": "15:03:36",
+        "time": "14:03:36",
         "size": "22 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -59861,7 +59861,7 @@ var collectors = {
       {
         "key": "batch:8",
         "timestamp": "2026-01-01T14:03:10Z",
-        "time": "15:03:10",
+        "time": "14:03:10",
         "size": "16 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -59877,7 +59877,7 @@ var collectors = {
       {
         "key": "batch:7",
         "timestamp": "2026-01-01T14:02:47Z",
-        "time": "15:02:47",
+        "time": "14:02:47",
         "size": "4 KB",
         "source": "codex 0.58.0",
         "signal": "metrics",
@@ -59893,7 +59893,7 @@ var collectors = {
       {
         "key": "batch:6",
         "timestamp": "2026-01-01T14:02:20Z",
-        "time": "15:02:20",
+        "time": "14:02:20",
         "size": "11 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -59927,7 +59927,7 @@ var collectors = {
       {
         "key": "batch:5",
         "timestamp": "2026-01-01T14:01:58Z",
-        "time": "15:01:58",
+        "time": "14:01:58",
         "size": "7 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -59943,7 +59943,7 @@ var collectors = {
       {
         "key": "batch:4",
         "timestamp": "2026-01-01T14:01:30Z",
-        "time": "15:01:30",
+        "time": "14:01:30",
         "size": "10 KB",
         "source": "claude-code 2.1.316",
         "signal": "traces",
@@ -59959,7 +59959,7 @@ var collectors = {
       {
         "key": "batch:3",
         "timestamp": "2026-01-01T14:01:03Z",
-        "time": "15:01:03",
+        "time": "14:01:03",
         "size": "20 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -60009,7 +60009,7 @@ var collectors = {
       {
         "key": "batch:2",
         "timestamp": "2026-01-01T14:00:41Z",
-        "time": "15:00:41",
+        "time": "14:00:41",
         "size": "6 KB",
         "source": "claude-code 2.1.316",
         "signal": "metrics",
@@ -60025,7 +60025,7 @@ var collectors = {
       {
         "key": "batch:1",
         "timestamp": "2026-01-01T14:00:12Z",
-        "time": "15:00:12",
+        "time": "14:00:12",
         "size": "18 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -60046,7 +60046,7 @@ var collectors = {
         "hits": 2,
         "total": 2,
         "last": "2026-01-01T14:04:40Z",
-        "lastTime": "15:04:40",
+        "lastTime": "14:04:40",
         "events": [
           "claude_code.tool",
           "claude_code.tool_result"
@@ -60067,7 +60067,7 @@ var collectors = {
         "hits": 1,
         "total": 3,
         "last": "2026-01-01T14:04:29Z",
-        "lastTime": "15:04:29",
+        "lastTime": "14:04:29",
         "events": [
           "codex.user_prompt"
         ],
@@ -60085,7 +60085,7 @@ var collectors = {
         "hits": 2,
         "total": 3,
         "last": "2026-01-01T14:03:36Z",
-        "lastTime": "15:03:36",
+        "lastTime": "14:03:36",
         "events": [
           "claude_code.tool_result"
         ],
@@ -60103,7 +60103,7 @@ var collectors = {
         "hits": 1,
         "total": 1,
         "last": "2026-01-01T14:02:20Z",
-        "lastTime": "15:02:20",
+        "lastTime": "14:02:20",
         "events": [
           "codex.tool_result"
         ],
@@ -60593,7 +60593,7 @@ var collectors = {
       {
         "key": "batch:8",
         "timestamp": "2026-01-01T14:00:30Z",
-        "time": "15:00:30",
+        "time": "14:00:30",
         "size": "2 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -60609,7 +60609,7 @@ var collectors = {
       {
         "key": "batch:7",
         "timestamp": "2026-01-01T14:00:30Z",
-        "time": "15:00:30",
+        "time": "14:00:30",
         "size": "2 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -60625,7 +60625,7 @@ var collectors = {
       {
         "key": "batch:6",
         "timestamp": "2026-01-01T14:00:30Z",
-        "time": "15:00:30",
+        "time": "14:00:30",
         "size": "2 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -60641,7 +60641,7 @@ var collectors = {
       {
         "key": "batch:5",
         "timestamp": "2026-01-01T14:00:30Z",
-        "time": "15:00:30",
+        "time": "14:00:30",
         "size": "2 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -60657,7 +60657,7 @@ var collectors = {
       {
         "key": "batch:4",
         "timestamp": "2026-01-01T14:00:30Z",
-        "time": "15:00:30",
+        "time": "14:00:30",
         "size": "2 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -60673,7 +60673,7 @@ var collectors = {
       {
         "key": "batch:3",
         "timestamp": "2026-01-01T14:00:30Z",
-        "time": "15:00:30",
+        "time": "14:00:30",
         "size": "2 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -60689,7 +60689,7 @@ var collectors = {
       {
         "key": "batch:2",
         "timestamp": "2026-01-01T14:00:30Z",
-        "time": "15:00:30",
+        "time": "14:00:30",
         "size": "2 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -60705,7 +60705,7 @@ var collectors = {
       {
         "key": "batch:1",
         "timestamp": "2026-01-01T14:00:30Z",
-        "time": "15:00:30",
+        "time": "14:00:30",
         "size": "2 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -61479,7 +61479,7 @@ var collectors = {
       {
         "key": "batch:12",
         "timestamp": "2026-01-01T14:04:55Z",
-        "time": "15:04:55",
+        "time": "14:04:55",
         "size": "7 KB",
         "source": "claude-code 2.1.316",
         "signal": "metrics",
@@ -61495,7 +61495,7 @@ var collectors = {
       {
         "key": "alert:6",
         "timestamp": "2026-01-01T14:04:40Z",
-        "time": "15:04:40",
+        "time": "14:04:40",
         "size": "",
         "source": "claude_code.tool",
         "signal": "traces",
@@ -61540,7 +61540,7 @@ var collectors = {
       {
         "key": "batch:11",
         "timestamp": "2026-01-01T14:04:29Z",
-        "time": "15:04:29",
+        "time": "14:04:29",
         "size": "9 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -61574,7 +61574,7 @@ var collectors = {
       {
         "key": "batch:10",
         "timestamp": "2026-01-01T14:04:02Z",
-        "time": "15:04:02",
+        "time": "14:04:02",
         "size": "8 KB",
         "source": "codex 0.58.0",
         "signal": "traces",
@@ -61590,7 +61590,7 @@ var collectors = {
       {
         "key": "batch:9",
         "timestamp": "2026-01-01T14:03:36Z",
-        "time": "15:03:36",
+        "time": "14:03:36",
         "size": "22 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -61624,7 +61624,7 @@ var collectors = {
       {
         "key": "batch:8",
         "timestamp": "2026-01-01T14:03:10Z",
-        "time": "15:03:10",
+        "time": "14:03:10",
         "size": "16 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -61640,7 +61640,7 @@ var collectors = {
       {
         "key": "batch:7",
         "timestamp": "2026-01-01T14:02:47Z",
-        "time": "15:02:47",
+        "time": "14:02:47",
         "size": "4 KB",
         "source": "codex 0.58.0",
         "signal": "metrics",
@@ -61656,7 +61656,7 @@ var collectors = {
       {
         "key": "batch:6",
         "timestamp": "2026-01-01T14:02:20Z",
-        "time": "15:02:20",
+        "time": "14:02:20",
         "size": "11 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -61690,7 +61690,7 @@ var collectors = {
       {
         "key": "batch:5",
         "timestamp": "2026-01-01T14:01:58Z",
-        "time": "15:01:58",
+        "time": "14:01:58",
         "size": "7 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -61706,7 +61706,7 @@ var collectors = {
       {
         "key": "batch:4",
         "timestamp": "2026-01-01T14:01:30Z",
-        "time": "15:01:30",
+        "time": "14:01:30",
         "size": "10 KB",
         "source": "claude-code 2.1.316",
         "signal": "traces",
@@ -61722,7 +61722,7 @@ var collectors = {
       {
         "key": "batch:3",
         "timestamp": "2026-01-01T14:01:03Z",
-        "time": "15:01:03",
+        "time": "14:01:03",
         "size": "20 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -61772,7 +61772,7 @@ var collectors = {
       {
         "key": "batch:2",
         "timestamp": "2026-01-01T14:00:41Z",
-        "time": "15:00:41",
+        "time": "14:00:41",
         "size": "6 KB",
         "source": "claude-code 2.1.316",
         "signal": "metrics",
@@ -61788,7 +61788,7 @@ var collectors = {
       {
         "key": "batch:1",
         "timestamp": "2026-01-01T14:00:12Z",
-        "time": "15:00:12",
+        "time": "14:00:12",
         "size": "18 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -61809,7 +61809,7 @@ var collectors = {
         "hits": 2,
         "total": 2,
         "last": "2026-01-01T14:04:40Z",
-        "lastTime": "15:04:40",
+        "lastTime": "14:04:40",
         "events": [
           "claude_code.tool",
           "claude_code.tool_result"
@@ -61830,7 +61830,7 @@ var collectors = {
         "hits": 1,
         "total": 3,
         "last": "2026-01-01T14:04:29Z",
-        "lastTime": "15:04:29",
+        "lastTime": "14:04:29",
         "events": [
           "codex.user_prompt"
         ],
@@ -61848,7 +61848,7 @@ var collectors = {
         "hits": 2,
         "total": 3,
         "last": "2026-01-01T14:03:36Z",
-        "lastTime": "15:03:36",
+        "lastTime": "14:03:36",
         "events": [
           "claude_code.tool_result"
         ],
@@ -61866,7 +61866,7 @@ var collectors = {
         "hits": 1,
         "total": 1,
         "last": "2026-01-01T14:02:20Z",
-        "lastTime": "15:02:20",
+        "lastTime": "14:02:20",
         "events": [
           "codex.tool_result"
         ],
@@ -63093,7 +63093,7 @@ var collectors = {
       {
         "key": "batch:12",
         "timestamp": "2026-01-01T14:04:55Z",
-        "time": "15:04:55",
+        "time": "14:04:55",
         "size": "7 KB",
         "source": "claude-code 2.1.316",
         "signal": "metrics",
@@ -63109,7 +63109,7 @@ var collectors = {
       {
         "key": "alert:6",
         "timestamp": "2026-01-01T14:04:40Z",
-        "time": "15:04:40",
+        "time": "14:04:40",
         "size": "",
         "source": "claude_code.tool",
         "signal": "traces",
@@ -63154,7 +63154,7 @@ var collectors = {
       {
         "key": "batch:11",
         "timestamp": "2026-01-01T14:04:29Z",
-        "time": "15:04:29",
+        "time": "14:04:29",
         "size": "9 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -63188,7 +63188,7 @@ var collectors = {
       {
         "key": "batch:10",
         "timestamp": "2026-01-01T14:04:02Z",
-        "time": "15:04:02",
+        "time": "14:04:02",
         "size": "8 KB",
         "source": "codex 0.58.0",
         "signal": "traces",
@@ -63204,7 +63204,7 @@ var collectors = {
       {
         "key": "batch:9",
         "timestamp": "2026-01-01T14:03:36Z",
-        "time": "15:03:36",
+        "time": "14:03:36",
         "size": "22 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -63238,7 +63238,7 @@ var collectors = {
       {
         "key": "batch:8",
         "timestamp": "2026-01-01T14:03:10Z",
-        "time": "15:03:10",
+        "time": "14:03:10",
         "size": "16 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -63254,7 +63254,7 @@ var collectors = {
       {
         "key": "batch:7",
         "timestamp": "2026-01-01T14:02:47Z",
-        "time": "15:02:47",
+        "time": "14:02:47",
         "size": "4 KB",
         "source": "codex 0.58.0",
         "signal": "metrics",
@@ -63270,7 +63270,7 @@ var collectors = {
       {
         "key": "batch:6",
         "timestamp": "2026-01-01T14:02:20Z",
-        "time": "15:02:20",
+        "time": "14:02:20",
         "size": "11 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -63304,7 +63304,7 @@ var collectors = {
       {
         "key": "batch:5",
         "timestamp": "2026-01-01T14:01:58Z",
-        "time": "15:01:58",
+        "time": "14:01:58",
         "size": "7 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -63320,7 +63320,7 @@ var collectors = {
       {
         "key": "batch:4",
         "timestamp": "2026-01-01T14:01:30Z",
-        "time": "15:01:30",
+        "time": "14:01:30",
         "size": "10 KB",
         "source": "claude-code 2.1.316",
         "signal": "traces",
@@ -63336,7 +63336,7 @@ var collectors = {
       {
         "key": "batch:3",
         "timestamp": "2026-01-01T14:01:03Z",
-        "time": "15:01:03",
+        "time": "14:01:03",
         "size": "20 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -63386,7 +63386,7 @@ var collectors = {
       {
         "key": "batch:2",
         "timestamp": "2026-01-01T14:00:41Z",
-        "time": "15:00:41",
+        "time": "14:00:41",
         "size": "6 KB",
         "source": "claude-code 2.1.316",
         "signal": "metrics",
@@ -63402,7 +63402,7 @@ var collectors = {
       {
         "key": "batch:1",
         "timestamp": "2026-01-01T14:00:12Z",
-        "time": "15:00:12",
+        "time": "14:00:12",
         "size": "18 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -63423,7 +63423,7 @@ var collectors = {
         "hits": 2,
         "total": 2,
         "last": "2026-01-01T14:04:40Z",
-        "lastTime": "15:04:40",
+        "lastTime": "14:04:40",
         "events": [
           "claude_code.tool",
           "claude_code.tool_result"
@@ -63444,7 +63444,7 @@ var collectors = {
         "hits": 1,
         "total": 3,
         "last": "2026-01-01T14:04:29Z",
-        "lastTime": "15:04:29",
+        "lastTime": "14:04:29",
         "events": [
           "codex.user_prompt"
         ],
@@ -63462,7 +63462,7 @@ var collectors = {
         "hits": 2,
         "total": 3,
         "last": "2026-01-01T14:03:36Z",
-        "lastTime": "15:03:36",
+        "lastTime": "14:03:36",
         "events": [
           "claude_code.tool_result"
         ],
@@ -63480,7 +63480,7 @@ var collectors = {
         "hits": 1,
         "total": 1,
         "last": "2026-01-01T14:02:20Z",
-        "lastTime": "15:02:20",
+        "lastTime": "14:02:20",
         "events": [
           "codex.tool_result"
         ],
@@ -64152,7 +64152,7 @@ var collectors = {
       {
         "key": "batch:12",
         "timestamp": "2026-01-01T14:04:55Z",
-        "time": "15:04:55",
+        "time": "14:04:55",
         "size": "7 KB",
         "source": "claude-code 2.1.316",
         "signal": "metrics",
@@ -64168,7 +64168,7 @@ var collectors = {
       {
         "key": "alert:6",
         "timestamp": "2026-01-01T14:04:40Z",
-        "time": "15:04:40",
+        "time": "14:04:40",
         "size": "",
         "source": "claude_code.tool",
         "signal": "traces",
@@ -64213,7 +64213,7 @@ var collectors = {
       {
         "key": "batch:11",
         "timestamp": "2026-01-01T14:04:29Z",
-        "time": "15:04:29",
+        "time": "14:04:29",
         "size": "9 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -64247,7 +64247,7 @@ var collectors = {
       {
         "key": "batch:10",
         "timestamp": "2026-01-01T14:04:02Z",
-        "time": "15:04:02",
+        "time": "14:04:02",
         "size": "8 KB",
         "source": "codex 0.58.0",
         "signal": "traces",
@@ -64263,7 +64263,7 @@ var collectors = {
       {
         "key": "batch:9",
         "timestamp": "2026-01-01T14:03:36Z",
-        "time": "15:03:36",
+        "time": "14:03:36",
         "size": "22 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -64297,7 +64297,7 @@ var collectors = {
       {
         "key": "batch:8",
         "timestamp": "2026-01-01T14:03:10Z",
-        "time": "15:03:10",
+        "time": "14:03:10",
         "size": "16 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -64313,7 +64313,7 @@ var collectors = {
       {
         "key": "batch:7",
         "timestamp": "2026-01-01T14:02:47Z",
-        "time": "15:02:47",
+        "time": "14:02:47",
         "size": "4 KB",
         "source": "codex 0.58.0",
         "signal": "metrics",
@@ -64329,7 +64329,7 @@ var collectors = {
       {
         "key": "batch:6",
         "timestamp": "2026-01-01T14:02:20Z",
-        "time": "15:02:20",
+        "time": "14:02:20",
         "size": "11 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -64363,7 +64363,7 @@ var collectors = {
       {
         "key": "batch:5",
         "timestamp": "2026-01-01T14:01:58Z",
-        "time": "15:01:58",
+        "time": "14:01:58",
         "size": "7 KB",
         "source": "codex 0.58.0",
         "signal": "logs",
@@ -64379,7 +64379,7 @@ var collectors = {
       {
         "key": "batch:4",
         "timestamp": "2026-01-01T14:01:30Z",
-        "time": "15:01:30",
+        "time": "14:01:30",
         "size": "10 KB",
         "source": "claude-code 2.1.316",
         "signal": "traces",
@@ -64395,7 +64395,7 @@ var collectors = {
       {
         "key": "batch:3",
         "timestamp": "2026-01-01T14:01:03Z",
-        "time": "15:01:03",
+        "time": "14:01:03",
         "size": "20 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -64445,7 +64445,7 @@ var collectors = {
       {
         "key": "batch:2",
         "timestamp": "2026-01-01T14:00:41Z",
-        "time": "15:00:41",
+        "time": "14:00:41",
         "size": "6 KB",
         "source": "claude-code 2.1.316",
         "signal": "metrics",
@@ -64461,7 +64461,7 @@ var collectors = {
       {
         "key": "batch:1",
         "timestamp": "2026-01-01T14:00:12Z",
-        "time": "15:00:12",
+        "time": "14:00:12",
         "size": "18 KB",
         "source": "claude-code 2.1.316",
         "signal": "logs",
@@ -64482,7 +64482,7 @@ var collectors = {
         "hits": 2,
         "total": 2,
         "last": "2026-01-01T14:04:40Z",
-        "lastTime": "15:04:40",
+        "lastTime": "14:04:40",
         "events": [
           "claude_code.tool",
           "claude_code.tool_result"
@@ -64503,7 +64503,7 @@ var collectors = {
         "hits": 1,
         "total": 3,
         "last": "2026-01-01T14:04:29Z",
-        "lastTime": "15:04:29",
+        "lastTime": "14:04:29",
         "events": [
           "codex.user_prompt"
         ],
@@ -64521,7 +64521,7 @@ var collectors = {
         "hits": 2,
         "total": 3,
         "last": "2026-01-01T14:03:36Z",
-        "lastTime": "15:03:36",
+        "lastTime": "14:03:36",
         "events": [
           "claude_code.tool_result"
         ],
@@ -64539,7 +64539,7 @@ var collectors = {
         "hits": 1,
         "total": 1,
         "last": "2026-01-01T14:02:20Z",
-        "lastTime": "15:02:20",
+        "lastTime": "14:02:20",
         "events": [
           "codex.tool_result"
         ],

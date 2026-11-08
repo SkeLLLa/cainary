@@ -218,9 +218,9 @@ inspect() {
         expect_files "$list" "usr/"
         if grep -q 'etc/xdg/autostart' "$list"; then die "the deb installs system-wide autostart"; fi
         if grep -q 'polkit-1/actions/.*local' "$list"; then die "the deb ships the .local policy"; fi
-        dpkg-deb -c "$deb" | grep -q '^-rwxr-xr-x root/root .* ./usr/libexec/cainary/cainary-bind-helper$' ||
+        dpkg-deb -c "$deb" | grep -Eq '^-rwxr-xr-x (root/root|0/0) .* \./usr/libexec/cainary/cainary-bind-helper$' ||
             die "deb cainary-bind-helper is not 0755 root:root"
-        dpkg-deb -c "$deb" | grep -q '^-rwxr-xr-x root/root .* ./usr/libexec/cainary/cainary-hosts-helper$' ||
+        dpkg-deb -c "$deb" | grep -Eq '^-rwxr-xr-x (root/root|0/0) .* \./usr/libexec/cainary/cainary-hosts-helper$' ||
             die "deb cainary-hosts-helper is not 0755 root:root"
         dpkg-deb -f "$deb" Recommends | grep -q 'pkexec | policykit-1' || die "deb Recommends has no pkexec | policykit-1"
     fi
