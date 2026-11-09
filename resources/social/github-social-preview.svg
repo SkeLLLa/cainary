@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
   <title id="title">cAInary GitHub social preview</title>
-  <desc id="desc">A social preview banner for cAInary, featuring the robot canary icon with a red eye and the project description.</desc>
+  <desc id="desc">A social preview banner for cAInary, featuring the robot canary icon with a red eye and the project description: the AI tools it covers, the OTel debugger, and that it stays local.</desc>
   <defs>
     <linearGradient id="background" x1="0" y1="0" x2="1280" y2="640" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#25333a"/>
@@ -117,15 +117,16 @@
   </svg>
   <path d="M143 516h280" stroke="url(#accent)" stroke-width="7" stroke-linecap="round" opacity=".75"/>
 
-  <text x="520" y="283" font-family="HelveticaNeue-Bold, SF Pro Display, Inter, Helvetica Neue, Arial, sans-serif" font-size="82" font-weight="800" fill="#fff8e1">cAInary</text>
-  <text x="524" y="352" font-family="HelveticaNeue-Bold, SF Pro Display, Inter, Helvetica Neue, Arial, sans-serif" font-size="34" font-weight="650" fill="#ffd84d">What your AI tools track and send</text>
-  <text x="524" y="411" font-family="Menlo-Bold, SF Mono, Menlo, JetBrains Mono, monospace" font-size="26" font-weight="700" fill="#ffe9a8">&gt; Claude, ChatGPT, Codex, Cursor, Copilot</text>
-  <text x="524" y="455" font-family="Menlo-Bold, SF Mono, Menlo, JetBrains Mono, monospace" font-size="26" font-weight="700" fill="#ffcdd2">&gt; local only, never uses the network</text>
+  <text x="520" y="268" font-family="HelveticaNeue-Bold, SF Pro Display, Inter, Helvetica Neue, Arial, sans-serif" font-size="82" font-weight="800" fill="#fff8e1">cAInary</text>
+  <text x="524" y="330" font-family="HelveticaNeue-Bold, SF Pro Display, Inter, Helvetica Neue, Arial, sans-serif" font-size="34" font-weight="650" fill="#ffd84d">What your AI tools track and send</text>
+  <text x="524" y="384" font-family="Menlo-Bold, SF Mono, Menlo, JetBrains Mono, monospace" font-size="26" font-weight="700" fill="#ffe9a8">&gt; Claude, ChatGPT, Codex, Cursor, Copilot</text>
+  <text x="524" y="424" font-family="Menlo-Bold, SF Mono, Menlo, JetBrains Mono, monospace" font-size="26" font-weight="700" fill="#b3e5fc">&gt; OTel debugger: every export, masked</text>
+  <text x="524" y="464" font-family="Menlo-Bold, SF Mono, Menlo, JetBrains Mono, monospace" font-size="26" font-weight="700" fill="#ffcdd2">&gt; local only, sends nothing anywhere</text>
   <g font-family="Menlo-Bold, SF Mono, Menlo, JetBrains Mono, monospace" font-size="20" font-weight="700" fill="#11181c">
-    <rect x="524" y="480" width="86" height="32" rx="16" fill="#ff5252"/><text x="542" y="503">HIGH</text>
-    <rect x="622" y="480" width="110" height="32" rx="16" fill="#ff9800"/><text x="640" y="503">MEDIUM</text>
-    <rect x="744" y="480" width="74" height="32" rx="16" fill="#ffd600"/><text x="762" y="503">LOW</text>
-    <rect x="830" y="480" width="64" height="32" rx="16" fill="#66bb6a"/><text x="848" y="503">OK</text>
+    <rect x="524" y="490" width="86" height="32" rx="16" fill="#ff5252"/><text x="542" y="513">HIGH</text>
+    <rect x="622" y="490" width="110" height="32" rx="16" fill="#ff9800"/><text x="640" y="513">MEDIUM</text>
+    <rect x="744" y="490" width="74" height="32" rx="16" fill="#ffd600"/><text x="762" y="513">LOW</text>
+    <rect x="830" y="490" width="64" height="32" rx="16" fill="#66bb6a"/><text x="848" y="513">OK</text>
   </g>
 
   <path d="M88 82h1104v476H88z" fill="none" stroke="#f5c518" stroke-width="2" stroke-opacity=".3"/>

@@ -77,7 +77,7 @@ help:
 	@echo "  linux-run-release    run the release tray against the release cainary and collector (--dev)"
 	@echo "  ui-test         decode the Rust goldens through the Swift model"
 	@echo "  screenshots     run the macOS snapshots only, copy the curated PNGs -> docs/screenshots/macos/"
-	@echo "  screenshots-linux  render the Linux QML snapshots, copy the curated PNGs -> docs/screenshots/linux/"
+	@echo "  screenshots-linux  render the tray's snapshots in Plasma's Breeze style, copy the curated PNGs -> docs/screenshots/linux/"
 	@echo "  scan            scan this machine (smoke test, not golden-checked)"
 	@echo "  publish-check   cargo publish --dry-run for the published crates (needs crates.io)"
 	@echo "  clean           remove target, linux/target and dist"
@@ -316,16 +316,35 @@ screenshots:
 	$(call skipped,macOS)
 endif
 
-# The Linux counterparts, side by side with the macOS set in the README. QML-only harness
-# (fixtures only, needs Qt 6); same rule: look at each PNG before adding it here.
+# The Linux counterparts, side by side with the macOS set in the README: the real tray's
+# self-test (fixtures only) painted the way an installed app looks on Plasma: Breeze controls,
+# the KDE platform theme with the stock Breeze Dark colours, at 2x. Needs Plasma 6
+# (plasma-integration, qqc2-desktop-style). The icon theme is YAMIS when installed (it has
+# the agents' brand icons), else whatever SCREENSHOTS_LINUX_ICONS names. Same rule: look at
+# each PNG before adding it here.
 SCREENSHOTS_LINUX = details popup-live details-collector-feed details-collector-flags \
-	details-collector-takeover-ready details-collector-logs \
+	details-collector-rules details-collector-takeover-ready details-collector-logs \
 	details-collector-fail-port-in-use
+SCREENSHOTS_LINUX_ICONS ?= YAMIS
+SCREENSHOTS_LINUX_DIR := $(CURDIR)/target/ui-snapshots/linux-native
 ifeq ($(HOST_OS),Linux)
 screenshots-linux:
-	linux/crates/cainary-tray/qml/dev/harness.sh -o target/ui-preview/linux $(SCREENSHOTS_LINUX)
-	mkdir -p docs/screenshots/linux
-	for n in $(SCREENSHOTS_LINUX); do cp target/ui-preview/linux/$$n.png docs/screenshots/linux/ || exit 1; done
+	$(CARGO_CMD) build $(LINUX_MANIFEST) -p cainary-tray
+	rm -rf "$(SCREENSHOTS_LINUX_DIR)"
+	mkdir -p "$(SCREENSHOTS_LINUX_DIR)/config" docs/screenshots/linux
+	{ cat /usr/share/color-schemes/BreezeDark.colors; \
+	  printf '\n[Icons]\nTheme=%s\n\n[KDE]\nwidgetStyle=Breeze\n' "$(SCREENSHOTS_LINUX_ICONS)"; \
+	} > "$(SCREENSHOTS_LINUX_DIR)/config/kdeglobals"
+	printf '{"screens": [{"name": "native", "x": 0, "y": 0, "width": 3840, "height": 2160, "logicalDpi": 96}]}\n' \
+		> "$(SCREENSHOTS_LINUX_DIR)/config/offscreen.json"
+	dbus-run-session -- env XDG_CONFIG_HOME="$(SCREENSHOTS_LINUX_DIR)/config" \
+		XDG_CONFIG_DIRS=/etc/xdg XDG_STATE_HOME=/home/user/.local/state \
+		XDG_CURRENT_DESKTOP=KDE KDE_FULL_SESSION=true KDE_SESSION_VERSION=6 \
+		QT_QPA_PLATFORM="offscreen:configfile=$(SCREENSHOTS_LINUX_DIR)/config/offscreen.json" \
+		QT_SCALE_FACTOR=2 CAINARY_UI_SNAPSHOTS_NATIVE=1 CAINARY_UI_SNAPSHOTS_SIZE=1200x760 \
+		CAINARY_UI_SNAPSHOTS="$(SCREENSHOTS_LINUX_DIR)" \
+		linux/target/debug/cainary-tray --self-test
+	for n in $(SCREENSHOTS_LINUX); do cp "$(SCREENSHOTS_LINUX_DIR)/$$n.png" docs/screenshots/linux/ || exit 1; done
 else
 screenshots-linux:
 	$(call skipped,Linux)

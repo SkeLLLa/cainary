@@ -19,6 +19,7 @@ QString cainary_qt_version();
 QString cainary_format_time(const QString &timestamp);
 void cainary_copy_text(const QString &text);
 bool cainary_grab_window(const QString &name, const QString &path);
+void cainary_resize_window(const QString &name, int width, int height);
 void cainary_set_dark_palette(bool dark);
 // The screen holding (x, y), else the primary one; (0, 0) means the primary screen.
 QScreen *screen_for_point(int x, int y);

@@ -26,6 +26,7 @@ pub mod ffi {
         fn cainary_format_time(timestamp: &QString) -> QString;
         fn cainary_copy_text(text: &QString);
         fn cainary_grab_window(name: &QString, path: &QString) -> bool;
+        fn cainary_resize_window(name: &QString, width: i32, height: i32);
         fn cainary_set_dark_palette(dark: bool);
         fn cainary_available_area(x: i32, y: i32) -> QRect;
     }
