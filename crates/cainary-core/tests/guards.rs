@@ -39,6 +39,12 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// A `mod` item line: `mod x`, `pub mod x` or `pub(crate) mod x` (a test module whose fixtures
+/// another file's tests reuse).
+fn is_mod_line(l: &str) -> bool {
+    l.starts_with("mod ") || l.starts_with("pub mod ") || l.starts_with("pub(crate) mod ")
+}
+
 /// Text before the first `#[cfg(test)] mod …`, without whole-line `//` comments. A
 /// `#[cfg(test)]` on a single item (a test-only counter, say) doesn't end the production code.
 fn production_code(text: &str) -> String {
@@ -50,7 +56,7 @@ fn production_code(text: &str) -> String {
                 .iter()
                 .map(|l| l.trim())
                 .find(|l| !l.is_empty() && !l.starts_with("#["));
-            if next.is_some_and(|l| l.starts_with("mod ") || l.starts_with("pub mod ")) {
+            if next.is_some_and(is_mod_line) {
                 break;
             }
         }
@@ -94,7 +100,7 @@ fn check_tests_last(srcs: &[Src]) -> Vec<String> {
                     .iter()
                     .map(|l| l.trim())
                     .find(|l| !l.is_empty() && !l.starts_with("#["))
-                    .is_some_and(|l| l.starts_with("mod ") || l.starts_with("pub mod "))
+                    .is_some_and(is_mod_line)
         }) else {
             continue;
         };
@@ -108,10 +114,8 @@ fn check_tests_last(srcs: &[Src]) -> Vec<String> {
                 continue;
             }
             let top_level = !line.is_empty() && !line.starts_with([' ', '\t', '}', ')', ']']);
-            let is_item = top_level
-                && (ITEM.iter().any(|p| line.starts_with(p))
-                    || line.starts_with("mod ")
-                    || line.starts_with("pub mod "));
+            let is_item =
+                top_level && (ITEM.iter().any(|p| line.starts_with(p)) || is_mod_line(line));
             if is_item && !pending_test {
                 bad.push(format!(
                     "{}:{}: production item after a test module: `{}`",
@@ -1082,6 +1086,8 @@ const HOSTS_SEAM_RS: &str = "cainary-hosts-helper/src/seam.rs";
 const HOSTS_EDIT_RS: &str = "cainary-hosts-helper/src/edit.rs";
 const HOSTS_MAIN_RS: &str = "cainary-hosts-helper/src/main.rs";
 const HOSTS_HELPER_RS: &str = "cainary-hosts-helper/src/helper.rs";
+const HOSTS_OS_LINUX_RS: &str = "cainary-hosts-helper/src/os_linux.rs";
+const HOSTS_OS_MACOS_RS: &str = "cainary-hosts-helper/src/os_macos.rs";
 
 /// Identifiers no file of the hosts helper may use: no process creation, no std file types, no
 /// path-based or working-directory-relative file call (every file call is descriptor-relative),
@@ -1111,8 +1117,8 @@ const HOSTS_BANNED_IDENTS: &[&str] = &[
     "SO_REUSEPORT",
 ];
 
-/// The `libc` items the file procedure (`file.rs`) may name; everything else is a violation.
-/// Path-based calls (`open`, `creat`, `unlink`, `rename`, `mkdir`, `stat`, `chmod`, `chown`,
+/// The `libc` items the file procedure (`file.rs`) and its Linux layer (`os_linux.rs`) may name;
+/// everything else is a violation. Path-based calls (`open`, `creat`, `unlink`, `rename`, `mkdir`, `stat`, `chmod`, `chown`,
 /// `truncate`, `link`, `symlink`, `access`, …) are deliberately missing: only the `*at` forms and
 /// descriptor calls are here.
 const HOSTS_FILE_LIBC: &[&str] = &[
@@ -1164,6 +1170,7 @@ const HOSTS_FILE_LIBC: &[&str] = &[
     "fremovexattr",
     "fsetxattr",
     "fsync",
+    "mode_t",
     "openat",
     "read",
     "renameat",
@@ -1172,17 +1179,62 @@ const HOSTS_FILE_LIBC: &[&str] = &[
     "write",
 ];
 
+/// The `libc` items the macOS layer (`os_macos.rs`) may name: the same descriptor-relative rule.
+/// `stat` is the struct only; the path-based call `libc::stat(` is refused on its own.
+const HOSTS_MACOS_LIBC: &[&str] = &[
+    "AT_SYMLINK_NOFOLLOW",
+    "EINVAL",
+    "ENOENT",
+    "ENOTSUP",
+    "ENOTTY",
+    "EOPNOTSUPP",
+    "F_FULLFSYNC",
+    "O_CLOEXEC",
+    "O_DIRECTORY",
+    "O_NONBLOCK",
+    "O_RDONLY",
+    "O_SYMLINK",
+    "S_IFDIR",
+    "S_IFLNK",
+    "S_IFMT",
+    "S_IFREG",
+    "c_int",
+    "c_uint",
+    "c_void",
+    "fcntl",
+    "fstat",
+    "fstatat",
+    "fsync",
+    "mode_t",
+    "openat",
+    "stat",
+];
+
+/// The one foreign block in the hosts helper (`os_macos.rs`): the descriptor-based ACL reads libc
+/// doesn't bind, as reviewed.
+const HOSTS_MACOS_EXTERN: &str = "unsafe extern \"C\" { fn acl_get_fd_np(fd: c_int, acl_type: c_uint) -> *mut c_void; fn acl_get_entry(acl: *mut c_void, entry_id: c_int, entry: *mut *mut c_void) -> c_int; fn acl_free(obj: *mut c_void) -> c_int; }";
+
+/// The `cfg(` forms main.rs may use: the per-OS module wiring and the stub `main` elsewhere.
+const HOSTS_MAIN_CFGS: &[&str] = &[
+    "cfg(target_os = \"linux\")",
+    "cfg(target_os = \"macos\")",
+    "cfg(any(target_os = \"linux\", target_os = \"macos\"))",
+    "cfg(not(any(target_os = \"linux\", target_os = \"macos\")))",
+];
+
 /// The `libc` items the other files may name (`helper.rs`): the privilege checks, SIGPIPE and the
 /// node name. `edit.rs` and `seam.rs` name none.
 const HOSTS_OTHER_LIBC: &[&str] = &[
     "SIGPIPE", "SIG_IGN", "getegid", "geteuid", "signal", "uname", "utsname",
 ];
 
-/// The only `c"…"` literals production code may contain: the names the procedure touches.
+/// The only `c"…"` literals production code may contain (in file.rs and the OS layers): the
+/// names the procedure touches.
 const HOSTS_C_LITERALS: &[&str] = &[
     "",
     "/",
     "etc",
+    "private",
     "hosts",
     "hosts.cainary-backup",
     ".cainary-hosts.lock",
@@ -1192,12 +1244,18 @@ const HOSTS_C_LITERALS: &[&str] = &[
     "system.posix_acl_access",
 ];
 
-/// Every `libc::name` in `code`, by name.
+/// Every `libc::name` in `code`, by name; a group import `libc::{a, b}` yields each name.
 fn libc_names(code: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut rest = code;
     while let Some(i) = rest.find("libc::") {
         let after = &rest[i + "libc::".len()..];
+        if let Some(group) = after.strip_prefix('{') {
+            let end = group.find('}').unwrap_or(group.len());
+            out.extend(group[..end].split(',').map(|n| n.trim().to_string()));
+            rest = &group[end..];
+            continue;
+        }
         let n = after
             .find(|c: char| !(c.is_alphanumeric() || c == '_'))
             .unwrap_or(after.len());
@@ -1284,8 +1342,11 @@ fn check_hosts_helper_source(srcs: &[Src]) -> Vec<String> {
             }
         }
         // Descriptor-relative or nothing: every `libc` item is on the list for its file.
-        let allowed = if s.rel == HOSTS_FILE_RS {
+        let os_layer = s.rel == HOSTS_OS_LINUX_RS || s.rel == HOSTS_OS_MACOS_RS;
+        let allowed = if s.rel == HOSTS_FILE_RS || s.rel == HOSTS_OS_LINUX_RS {
             HOSTS_FILE_LIBC
+        } else if s.rel == HOSTS_OS_MACOS_RS {
+            HOSTS_MACOS_LIBC
         } else if s.rel == HOSTS_HELPER_RS || s.rel == HOSTS_SEAM_RS {
             HOSTS_OTHER_LIBC
         } else {
@@ -1296,11 +1357,17 @@ fn check_hosts_helper_source(srcs: &[Src]) -> Vec<String> {
                 bad.push(format!("{}: `libc::{name}` is not allowed here", s.rel));
             }
         }
-        if code.contains("extern \"C\"") || code.contains("libc::syscall") {
+        if code.contains("libc::stat(") {
+            bad.push(format!("{}: path-based `libc::stat(`", s.rel));
+        }
+        let reviewed_extern = s.rel == HOSTS_OS_MACOS_RS
+            && code.matches("extern \"C\"").count() == 1
+            && code.contains(HOSTS_MACOS_EXTERN);
+        if (code.contains("extern \"C\"") && !reviewed_extern) || code.contains("libc::syscall") {
             bad.push(format!("{}: `extern \"C\"` or `libc::syscall`", s.rel));
         }
         for lit in c_literals(&code) {
-            if s.rel != HOSTS_FILE_RS || !HOSTS_C_LITERALS.contains(&lit.as_str()) {
+            if !(s.rel == HOSTS_FILE_RS || os_layer) || !HOSTS_C_LITERALS.contains(&lit.as_str()) {
                 bad.push(format!("{}: c\"{lit}\" literal is not allowed here", s.rel));
             }
         }
@@ -1308,8 +1375,7 @@ fn check_hosts_helper_source(srcs: &[Src]) -> Vec<String> {
         for (i, _) in code.match_indices("cfg(") {
             let tail = &code[i..];
             let ok = s.rel == HOSTS_SEAM_RS
-                || (s.rel == HOSTS_MAIN_RS && tail.starts_with("cfg(target_os = \"linux\")"))
-                || (s.rel == HOSTS_MAIN_RS && tail.starts_with("cfg(not(target_os = \"linux\"))"));
+                || (s.rel == HOSTS_MAIN_RS && HOSTS_MAIN_CFGS.iter().any(|c| tail.starts_with(c)));
             if !ok {
                 bad.push(format!(
                     "{}: `cfg(` outside seam.rs (and main.rs target_os)",
@@ -1326,10 +1392,16 @@ fn check_hosts_helper_source(srcs: &[Src]) -> Vec<String> {
                 bad.push(format!("{}: std::env outside helper.rs", s.rel));
             }
         }
-        env_vars +=
-            code.matches("env::var").count() - code.matches("env::var(\"PKEXEC_UID\")").count();
-        if code.matches("env::var(\"PKEXEC_UID\")").count() > 1 {
-            bad.push(format!("{}: PKEXEC_UID read more than once", s.rel));
+        // The invoker's uid: `PKEXEC_UID`, or on macOS `CAINARY_HOSTS_UID` (set by the app's root
+        // script), and only in os_macos.rs.
+        let uid_var = if s.rel == HOSTS_OS_MACOS_RS {
+            "env::var(\"CAINARY_HOSTS_UID\")"
+        } else {
+            "env::var(\"PKEXEC_UID\")"
+        };
+        env_vars += code.matches("env::var").count() - code.matches(uid_var).count();
+        if code.matches(uid_var).count() > 1 {
+            bad.push(format!("{}: the invoker uid read more than once", s.rel));
         }
         if s.rel != HOSTS_SEAM_RS && code.contains("Knobs {") {
             bad.push(format!("{}: `Knobs` is built only in seam.rs", s.rel));
@@ -1345,7 +1417,7 @@ fn check_hosts_helper_source(srcs: &[Src]) -> Vec<String> {
     }
     if env_vars > 0 {
         bad.push(format!(
-            "the hosts helper may read only PKEXEC_UID (`env::var` x{env_vars} other)"
+            "the hosts helper may read only the invoker uid (`env::var` x{env_vars} other)"
         ));
     }
     // The definition and the single call in `apply`; the descriptor-taking entry point takes a
@@ -1678,7 +1750,31 @@ mod hosts_helper_fires {
             (HOSTS_EDIT_RS, "use std::net::TcpStream;"),
             (HOSTS_SEAM_RS, "libc::openat(a, b, 0);"),
             (HOSTS_MAIN_RS, "#[cfg(unix)] fn main() {}"),
+            (
+                HOSTS_MAIN_RS,
+                "#[cfg(not(target_os = \"linux\"))] fn main() {}",
+            ),
             (HOSTS_MAIN_RS, "let _ = Knobs { uid: 1 };"),
+            (HOSTS_OS_LINUX_RS, "libc::open(p, 0);"),
+            (HOSTS_OS_LINUX_RS, "libc::fstatat(d, n, s, 0);"),
+            (
+                HOSTS_OS_LINUX_RS,
+                "let u = std::env::var(\"CAINARY_HOSTS_UID\");",
+            ),
+            (HOSTS_OS_LINUX_RS, "let x = c\"passwd\";"),
+            (HOSTS_OS_LINUX_RS, "#[cfg(test)] fn a() {}"),
+            (HOSTS_OS_MACOS_RS, "libc::statx(d, n, 0, 0, s);"),
+            (HOSTS_OS_MACOS_RS, "libc::stat(p, &mut st);"),
+            (HOSTS_OS_MACOS_RS, "use libc::{c_int, open};"),
+            (
+                HOSTS_OS_MACOS_RS,
+                "unsafe extern \"C\" { fn open(p: *const u8) -> c_int; }",
+            ),
+            (HOSTS_OS_MACOS_RS, "let u = std::env::var(\"HOME\");"),
+            (
+                HOSTS_OS_MACOS_RS,
+                "let a = std::env::var(\"CAINARY_HOSTS_UID\"); let b = std::env::var(\"CAINARY_HOSTS_UID\");",
+            ),
         ] {
             let mut s = at(rel, code);
             // `apply_in` must appear twice in file.rs: give the other cases their pair.
@@ -1701,7 +1797,22 @@ mod hosts_helper_fires {
         ));
         ok.extend(at(
             HOSTS_MAIN_RS,
-            "#[cfg(target_os = \"linux\")]\nmod file;\n#[cfg(not(target_os = \"linux\"))]\nfn main() { std::process::exit(2); }",
+            "#[cfg(any(target_os = \"linux\", target_os = \"macos\"))]\nmod file;\n#[cfg(target_os = \"linux\")]\nuse os_linux as os;\n#[cfg(target_os = \"macos\")]\nuse os_macos as os;\n#[cfg(not(any(target_os = \"linux\", target_os = \"macos\")))]\nfn main() { std::process::exit(2); }",
+        ));
+        ok.extend(at(
+            HOSTS_OS_LINUX_RS,
+            "let r = libc::statx(d, c\"\", libc::AT_EMPTY_PATH, libc::STATX_TYPE, s);\nlibc::fgetxattr(fd, c\"security.selinux\".as_ptr(), b, n);\nlet u = std::env::var(\"PKEXEC_UID\");",
+        ));
+        ok.extend(at(
+            HOSTS_OS_MACOS_RS,
+            &format!(
+                "use libc::{{c_int, c_uint, c_void}};\nconst P: &[&CStr] = &[c\"private\", c\"etc\"];\n{HOSTS_MACOS_EXTERN}\nlet mut st: libc::stat = mem::zeroed();\nlibc::fstatat(d, n, &mut st, libc::AT_SYMLINK_NOFOLLOW);\nlibc::fcntl(fd, libc::F_FULLFSYNC);\nlet u = std::env::var(\"CAINARY_HOSTS_UID\");"
+            ),
+        ));
+        // A `pub(crate)` test module (its fixtures reused by an OS layer's tests) is cut too.
+        ok.extend(at(
+            HOSTS_OS_LINUX_RS,
+            "fn a() {}\n#[cfg(test)]\npub(crate) mod tests { use std::fs; fn t() { libc::mkfifo(p, 0); } }",
         ));
         assert_eq!(check_hosts_helper_source(&ok), Vec::<String>::new());
         // The bind helper and every other crate are none of this guard's business.
