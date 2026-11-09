@@ -362,6 +362,7 @@ jobs:
         env:
           CORE: target/universal/cainary
           OTEL_DEBUG: target/universal/cainary-otel-debug
+          HOSTS_HELPER: target/universal/cainary-hosts-helper
         run: packaging/bundle.sh
 
       - name: Remove signing keychain and certificate

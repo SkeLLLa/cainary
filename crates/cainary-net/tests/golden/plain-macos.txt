@@ -1,0 +1,22 @@
+Point an agent at it.
+
+Claude Code (start it from this shell):
+  CLAUDE_CODE_ENABLE_TELEMETRY=1
+  OTEL_LOGS_EXPORTER=otlp
+  OTEL_METRICS_EXPORTER=otlp
+  OTEL_EXPORTER_OTLP_PROTOCOL=http/json
+  OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+  OTEL_LOGS_EXPORT_INTERVAL=1000
+  OTEL_METRIC_EXPORT_INTERVAL=10000
+Codex (~/.codex/config.toml [otel], or one -c per line: codex -c '<line>' …):
+  otel.exporter={otlp-http={endpoint="http://127.0.0.1:4318/v1/logs",protocol="json"}}
+  otel.metrics_exporter={otlp-http={endpoint="http://127.0.0.1:4318/v1/metrics",protocol="json"}}
+  otel.trace_exporter={otlp-http={endpoint="http://127.0.0.1:4318/v1/traces",protocol="json"}}
+
+Notes:
+- Claude Code: an env block in ~/.claude/settings.json overwrites the same shell variable, and managed settings override both. A managed OTEL_EXPORTER_OTLP_ENDPOINT, _PROTOCOL or _HEADERS also removes your local endpoints, so Claude Code keeps sending to your organization's collector. A per-signal *_ENDPOINT overrides the general one. https://code.claude.com/docs/en/monitoring-usage#how-managed-settings-lock-the-otlp-destination
+- Codex: requirements.toml [otel] overrides config.toml.
+- `cainary scan` shows which of these your organization sets.
+- The collector is unauthenticated: any local process can post to it, so the stream shows what was received, and the vendor is inferred from the payload.
+- http/protobuf and gzip are accepted too; gRPC isn't.
+- If the exporting process uses HTTPS_PROXY, add 127.0.0.1, ::1 and localhost to its NO_PROXY, or the proxy gets the request instead of this collector.

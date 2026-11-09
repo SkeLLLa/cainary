@@ -2,7 +2,7 @@
 
 .DEFAULT_GOAL := help
 PHONY_RELEASE := release otel-debug linux-build-release linux-run-release
-.PHONY: help build test test-tls fmt lint lint-actions check-rust check core-universal app bundle ui-test scan publish-check clean \
+.PHONY: help build test test-tls fmt lint lint-actions check-rust check core-universal app bundle bundle-debug-helpers ui-test screenshots screenshots-linux scan publish-check clean \
 	linux linux-cli linux-helper linux-build linux-test linux-fmt linux-lint linux-check linux-ui-test linux-run $(PHONY_RELEASE)
 
 # cargo needs a writable CARGO_HOME. Normally that is the existing CARGO_HOME or ~/.cargo and
@@ -51,7 +51,7 @@ export CAINARY_GIT_SHA CAINARY_BUILD_DATE SOURCE_DATE_EPOCH
 help:
 	@echo "Targets:"
 	@echo "  build           debug build of the Rust workspace"
-	@echo "  release         release cainary and cainary-otel-debug -> target/release/"
+	@echo "  release         release cainary, cainary-otel-debug and cainary-hosts-helper -> target/release/"
 	@echo "  otel-debug      run the release cainary-otel-debug (OTEL_DEBUG_ARGS=... for flags)"
 	@echo "  test            cargo test"
 	@echo "  fmt             cargo fmt (in place)"
@@ -60,7 +60,7 @@ help:
 	@echo "  check-rust      fmt --check, clippy -D warnings, cargo test (also with --features tls for cainary-net)"
 	@echo "  test-tls        cargo test -p cainary-net --features tls"
 	@echo "  check           lint + test + ui-test (CI)"
-	@echo "  core-universal  release cainary and cainary-otel-debug for both Apple targets, lipo -> target/universal/"
+	@echo "  core-universal  release cainary, cainary-otel-debug and cainary-hosts-helper for both Apple targets, lipo -> target/universal/"
 	@echo "  app             build the SwiftUI app (macos/Sources)"
 	@echo "  bundle          assemble dist/cAInary.app and zip it"
 	@echo "  linux           Linux release artifacts in dist/ (LINUX_FORMATS=tar,deb,rpm; default tar)"
@@ -76,6 +76,8 @@ help:
 	@echo "  linux-build-release  release build of the Qt tray app -> linux/target/release/"
 	@echo "  linux-run-release    run the release tray against the release cainary and collector (--dev)"
 	@echo "  ui-test         decode the Rust goldens through the Swift model"
+	@echo "  screenshots     run the macOS snapshots only, copy the curated PNGs -> docs/screenshots/macos/"
+	@echo "  screenshots-linux  render the Linux QML snapshots, copy the curated PNGs -> docs/screenshots/linux/"
 	@echo "  scan            scan this machine (smoke test, not golden-checked)"
 	@echo "  publish-check   cargo publish --dry-run for the published crates (needs crates.io)"
 	@echo "  clean           remove target, linux/target and dist"
@@ -121,9 +123,9 @@ lint-actions:
 	jactionlint
 
 core-universal:
-	@for t in $(APPLE_TARGETS); do $(CARGO_CMD) build $(MANIFEST) --release --target $$t -p cainary -p cainary-net --features cainary-net/tls || exit 1; done
+	@for t in $(APPLE_TARGETS); do $(CARGO_CMD) build $(MANIFEST) --release --target $$t -p cainary -p cainary-net -p cainary-hosts-helper --features cainary-net/tls || exit 1; done
 	mkdir -p target/universal
-	@for b in cainary cainary-otel-debug; do \
+	@for b in cainary cainary-otel-debug cainary-hosts-helper; do \
 		lipo -create -output target/universal/$$b \
 			$(foreach t,$(APPLE_TARGETS),target/$(t)/release/$$b) || exit 1; \
 	done
@@ -158,19 +160,25 @@ app: $(SWIFT_SOURCES)
 
 
 # Assembles dist/cAInary.app. Debug helper by default; RELEASE=1 bundles the universal one.
-# CORE=... and OTEL_DEBUG=... change only the helper paths that are bundled.
+# CORE=..., OTEL_DEBUG=... and HOSTS_HELPER=... change only the helper paths that are bundled.
 ifdef RELEASE
 CORE ?= target/universal/cainary
 OTEL_DEBUG ?= target/universal/cainary-otel-debug
+HOSTS_HELPER ?= target/universal/cainary-hosts-helper
 BUNDLE_DEPS := app core-universal
 else
 CORE ?= target/debug/cainary
 OTEL_DEBUG ?= target/debug/cainary-otel-debug
-BUNDLE_DEPS := app build
+HOSTS_HELPER ?= target/debug/cainary-hosts-helper
+BUNDLE_DEPS := app bundle-debug-helpers
 endif
 
+# The debug helpers with the collector's `tls` feature, so HTTPS takeover works in a dev bundle.
+bundle-debug-helpers:
+	$(CARGO_CMD) build $(MANIFEST) --workspace --features cainary-net/tls
+
 bundle: $(BUNDLE_DEPS)
-	CORE="$(CORE)" OTEL_DEBUG="$(OTEL_DEBUG)" packaging/bundle.sh
+	CORE="$(CORE)" OTEL_DEBUG="$(OTEL_DEBUG)" HOSTS_HELPER="$(HOSTS_HELPER)" packaging/bundle.sh
 
 # --- Linux -----------------------------------------------------------------------------------
 # The CLI and the debug collector are static musl from the root workspace; it runs on any distro. The tray app links the
@@ -294,9 +302,38 @@ ui-test:
 	$(call skipped,macOS)
 endif
 
+# README screenshots: the snapshot step alone, then a hand-picked set (no 🚫 AppKit placeholders,
+# fixture names only). Look at each PNG before adding it here.
+SCREENSHOTS = collector-window-feed collector-window-flags collector-setup-takeover collector-window-failure \
+	sidebar-live collector-rules collector-logs detail-monitor
+ifeq ($(HOST_OS),Darwin)
+screenshots: build
+	CAINARY_SNAPSHOTS_ONLY=1 sh macos/Tests/run.sh
+	mkdir -p docs/screenshots/macos
+	for n in $(SCREENSHOTS); do cp target/ui-snapshots/$$n.png docs/screenshots/macos/ || exit 1; done
+else
+screenshots:
+	$(call skipped,macOS)
+endif
+
+# The Linux counterparts, side by side with the macOS set in the README. QML-only harness
+# (fixtures only, needs Qt 6); same rule: look at each PNG before adding it here.
+SCREENSHOTS_LINUX = details popup-live details-collector-feed details-collector-flags \
+	details-collector-takeover-ready details-collector-logs \
+	details-collector-fail-port-in-use
+ifeq ($(HOST_OS),Linux)
+screenshots-linux:
+	linux/crates/cainary-tray/qml/dev/harness.sh -o target/ui-preview/linux $(SCREENSHOTS_LINUX)
+	mkdir -p docs/screenshots/linux
+	for n in $(SCREENSHOTS_LINUX); do cp target/ui-preview/linux/$$n.png docs/screenshots/linux/ || exit 1; done
+else
+screenshots-linux:
+	$(call skipped,Linux)
+endif
+
 # Release binaries from this checkout, for trying a build without installing it.
 release:
-	$(CARGO_CMD) build $(MANIFEST) --release --locked -p cainary -p cainary-net -p cainary-bind-helper --features cainary-net/tls
+	$(CARGO_CMD) build $(MANIFEST) --release --locked -p cainary -p cainary-net -p cainary-bind-helper -p cainary-hosts-helper --features cainary-net/tls
 
 OTEL_DEBUG_ARGS ?=
 # Only the collector writes to stdout, so `--json` output can be piped.

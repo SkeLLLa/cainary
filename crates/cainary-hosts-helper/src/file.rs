@@ -5,12 +5,12 @@
 //! descriptor, so a test can run the same procedure on a temp directory (see seam.rs).
 
 use std::ffi::CStr;
-use std::mem;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::time::{Duration, Instant};
 
 use crate::edit::{self, Op};
 use crate::helper::Fail;
+use crate::os::{self, errno, fstatx, statx};
 use crate::seam::{self, Knobs, Step, Sys};
 
 #[derive(Debug, PartialEq)]
@@ -36,12 +36,6 @@ const NEW: &CStr = c".hosts.cainary-new";
 const BAK_NEW: &CStr = c".hosts.cainary-bak-new";
 const HOSTS: &CStr = c"hosts";
 const BACKUP: &CStr = c"hosts.cainary-backup";
-const SELINUX: &CStr = c"security.selinux";
-const ACL: &CStr = c"system.posix_acl_access";
-
-fn errno() -> i32 {
-    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
-}
 
 fn openat(dir: RawFd, name: &CStr, flags: i32, mode: u32) -> Result<OwnedFd, i32> {
     // SAFETY: `name` is NUL-terminated and outlives the call.
@@ -64,76 +58,33 @@ fn io_fail(e: i32) -> Fail {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Meta {
-    dev: (u32, u32),
-    ino: u64,
-    uid: u32,
-    gid: u32,
-    mode: u32,
-    nlink: u32,
-    size: u64,
-    mtime: (i64, u32),
-    ctime: (i64, u32),
+pub(crate) struct Meta {
+    pub(crate) dev: (u32, u32),
+    pub(crate) ino: u64,
+    pub(crate) uid: u32,
+    pub(crate) gid: u32,
+    pub(crate) mode: u32,
+    pub(crate) nlink: u32,
+    pub(crate) size: u64,
+    pub(crate) mtime: (i64, u32),
+    pub(crate) ctime: (i64, u32),
     /// `None` when the kernel doesn't report it (Linux before 5.8).
-    mnt_id: Option<u64>,
+    pub(crate) mnt_id: Option<u64>,
 }
 
 impl Meta {
     fn kind(&self) -> u32 {
-        self.mode & libc::S_IFMT
+        self.mode & os::S_IFMT
     }
-}
-
-const NEEDED: u32 = libc::STATX_TYPE
-    | libc::STATX_MODE
-    | libc::STATX_NLINK
-    | libc::STATX_UID
-    | libc::STATX_GID
-    | libc::STATX_MTIME
-    | libc::STATX_CTIME
-    | libc::STATX_INO
-    | libc::STATX_SIZE;
-
-fn statx(dir: RawFd, path: &CStr, flags: i32) -> Result<Meta, i32> {
-    // SAFETY: an all-zero statx is valid; the kernel fills it.
-    let mut sx: libc::statx = unsafe { mem::zeroed() };
-    // SAFETY: `path` is NUL-terminated and `sx` is valid for the call.
-    let rc = unsafe {
-        libc::statx(
-            dir,
-            path.as_ptr(),
-            flags,
-            NEEDED | libc::STATX_MNT_ID,
-            &mut sx,
-        )
-    };
-    if rc != 0 {
-        return Err(errno());
-    }
-    if sx.stx_mask & NEEDED != NEEDED {
-        return Err(libc::EIO);
-    }
-    Ok(Meta {
-        dev: (sx.stx_dev_major, sx.stx_dev_minor),
-        ino: sx.stx_ino,
-        uid: sx.stx_uid,
-        gid: sx.stx_gid,
-        mode: u32::from(sx.stx_mode),
-        nlink: sx.stx_nlink,
-        size: sx.stx_size,
-        mtime: (sx.stx_mtime.tv_sec, sx.stx_mtime.tv_nsec),
-        ctime: (sx.stx_ctime.tv_sec, sx.stx_ctime.tv_nsec),
-        mnt_id: (sx.stx_mask & libc::STATX_MNT_ID != 0).then_some(sx.stx_mnt_id),
-    })
-}
-
-fn fstatx(fd: RawFd) -> Result<Meta, i32> {
-    statx(fd, c"", libc::AT_EMPTY_PATH)
 }
 
 fn fsync(fd: RawFd, call: Sys) -> Result<(), i32> {
     if let Some(e) = seam::sys(call) {
         return Err(e);
+    }
+    // Files get the OS layer's strongest flush; directories a plain fsync.
+    if matches!(call, Sys::FsyncBak | Sys::FsyncNew) {
+        return os::fsync_file(fd);
     }
     // SAFETY: fsync(2) on a descriptor this process owns.
     if unsafe { libc::fsync(fd) } == 0 {
@@ -178,61 +129,13 @@ fn io_fail_write(_errno: i32) -> Fail {
     Fail::WriteFailed
 }
 
-fn absent(e: i32) -> bool {
-    e == libc::ENODATA || e == libc::ENOTSUP || e == libc::EOPNOTSUPP
-}
-
-/// The value of an extended attribute; `None` when it is absent (or the file system has none).
-fn get_xattr(fd: RawFd, name: &CStr) -> Result<Option<Vec<u8>>, i32> {
-    for _ in 0..4 {
-        // SAFETY: a null buffer with size 0 asks for the length.
-        let size = unsafe { libc::fgetxattr(fd, name.as_ptr(), std::ptr::null_mut(), 0) };
-        if size < 0 {
-            return if absent(errno()) {
-                Ok(None)
-            } else {
-                Err(errno())
-            };
-        }
-        let mut buf = vec![0u8; size as usize];
-        // SAFETY: `buf` is valid for `buf.len()` bytes.
-        let n = unsafe { libc::fgetxattr(fd, name.as_ptr(), buf.as_mut_ptr().cast(), buf.len()) };
-        if n < 0 {
-            match errno() {
-                libc::ERANGE => continue,
-                e if absent(e) => return Ok(None),
-                e => return Err(e),
-            }
-        }
-        buf.truncate(n as usize);
-        return Ok(Some(buf));
-    }
-    Err(libc::ERANGE)
-}
-
-fn set_xattr(fd: RawFd, name: &CStr, value: &[u8]) -> Result<(), i32> {
-    // SAFETY: `value` is valid for `value.len()` bytes.
-    let rc = unsafe { libc::fsetxattr(fd, name.as_ptr(), value.as_ptr().cast(), value.len(), 0) };
-    if rc == 0 { Ok(()) } else { Err(errno()) }
-}
-
-/// Removes an attribute; already absent is fine.
-fn remove_xattr(fd: RawFd, name: &CStr) -> Result<(), i32> {
-    // SAFETY: fremovexattr(2) with a NUL-terminated name.
-    if unsafe { libc::fremovexattr(fd, name.as_ptr()) } == 0 || absent(errno()) {
-        Ok(())
-    } else {
-        Err(errno())
-    }
-}
-
 fn is_protected(m: &Meta, uid: u32) -> bool {
     m.uid == uid && m.mode & 0o022 == 0
 }
 
 /// `/` and `/etc`: real directories owned by the trusted user, not writable by group or others.
 fn check_dir(m: &Meta, uid: u32) -> Result<(), Fail> {
-    if m.kind() == libc::S_IFDIR && is_protected(m, uid) {
+    if m.kind() == os::S_IFDIR && is_protected(m, uid) {
         Ok(())
     } else {
         Err(Fail::Unprotected)
@@ -242,8 +145,8 @@ fn check_dir(m: &Meta, uid: u32) -> Result<(), Fail> {
 /// Step 4: whether `hosts` may be edited at all.
 fn admit(hosts: &Meta, etc: &Meta, uid: u32) -> Result<(), Fail> {
     match hosts.kind() {
-        libc::S_IFLNK => return Err(Fail::Symlink),
-        libc::S_IFREG => {}
+        os::S_IFLNK => return Err(Fail::Symlink),
+        os::S_IFREG => {}
         _ => return Err(Fail::NotRegular),
     }
     if !is_protected(hosts, uid) {
@@ -252,47 +155,45 @@ fn admit(hosts: &Meta, etc: &Meta, uid: u32) -> Result<(), Fail> {
     if hosts.nlink != 1 {
         return Err(Fail::Hardlinked);
     }
-    match (hosts.mnt_id, etc.mnt_id) {
-        (Some(h), Some(e)) if h == e => Ok(()),
-        (Some(_), Some(_)) => Err(Fail::MountPoint),
-        _ => Err(Fail::NoMountId),
-    }
+    os::same_mount(hosts, etc)
 }
 
-/// Step 1: from `root` (`/` in production) to `etc`, without following a link.
-fn walk_from(root: RawFd, k: &Knobs) -> Result<OwnedFd, Fail> {
+/// Step 1: from `root` (`/` in production) through `os::TRUSTED_PATH` to `etc`, without following
+/// a link. Every directory on the way is checked.
+pub(crate) fn walk_from(root: RawFd, k: &Knobs) -> Result<OwnedFd, Fail> {
     let flags = libc::O_DIRECTORY | libc::O_NOFOLLOW;
     let rm = fstatx(root).map_err(|_| Fail::WriteFailed)?;
     check_dir(&rm, k.uid)?;
-    // No O_DIRECTORY here: with O_NOFOLLOW it would turn a symlink into ENOTDIR.
-    let path = openat(root, c"etc", libc::O_PATH | libc::O_NOFOLLOW, 0).map_err(|e| match e {
-        libc::ENOENT => Fail::NotRegular,
-        _ => Fail::WriteFailed,
-    })?;
-    let pm = fstatx(path.as_raw_fd()).map_err(|_| Fail::WriteFailed)?;
-    match pm.mode & libc::S_IFMT {
-        libc::S_IFLNK => return Err(Fail::Symlink),
-        libc::S_IFDIR => {}
-        _ => return Err(Fail::NotRegular),
+    os::trusted_dir_extra(root)?;
+    let mut current: Option<OwnedFd> = None;
+    for name in os::TRUSTED_PATH {
+        let parent = current.as_ref().map_or(root, |fd| fd.as_raw_fd());
+        // No O_DIRECTORY here: with O_NOFOLLOW it would turn a symlink into ENOTDIR.
+        let path = os::open_path(parent, name).map_err(|e| match e {
+            libc::ENOENT => Fail::NotRegular,
+            _ => Fail::WriteFailed,
+        })?;
+        let pm = fstatx(path.as_raw_fd()).map_err(|_| Fail::WriteFailed)?;
+        match pm.mode & os::S_IFMT {
+            os::S_IFLNK => return Err(Fail::Symlink),
+            os::S_IFDIR => {}
+            _ => return Err(Fail::NotRegular),
+        }
+        check_dir(&pm, k.uid)?;
+        os::trusted_dir_extra(path.as_raw_fd())?;
+        let dir = openat(parent, name, libc::O_RDONLY | flags, 0).map_err(|_| Fail::WriteFailed)?;
+        let dm = fstatx(dir.as_raw_fd()).map_err(|_| Fail::WriteFailed)?;
+        if (dm.dev, dm.ino) != (pm.dev, pm.ino) {
+            return Err(Fail::Changed);
+        }
+        current = Some(dir);
     }
-    check_dir(&pm, k.uid)?;
-    let dir = openat(root, c"etc", libc::O_RDONLY | flags, 0).map_err(|_| Fail::WriteFailed)?;
-    let dm = fstatx(dir.as_raw_fd()).map_err(|_| Fail::WriteFailed)?;
-    if (dm.dev, dm.ino) != (pm.dev, pm.ino) {
-        return Err(Fail::Changed);
-    }
-    Ok(dir)
+    current.ok_or(Fail::WriteFailed)
 }
 
 pub fn apply(op: &Op, node: &str) -> Result<Done, Fail> {
     // Absolute path: the descriptor argument is ignored by the kernel.
-    let root = openat(
-        -1,
-        c"/",
-        libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW,
-        0,
-    )
-    .map_err(|_| Fail::WriteFailed)?;
+    let root = os::open_root().map_err(|_| Fail::WriteFailed)?;
     let etc = walk_from(root.as_raw_fd(), &seam::knobs())?;
     apply_in(&etc, op, node)
 }
@@ -302,6 +203,7 @@ pub fn apply_in(etc: &OwnedFd, op: &Op, node: &str) -> Result<Done, Fail> {
     let k = seam::knobs();
     let dir = etc.as_raw_fd();
     check_dir(&fstatx(dir).map_err(|_| Fail::WriteFailed)?, k.uid)?;
+    os::trusted_dir_extra(dir)?;
     let _lock = take_lock(dir, &k)?;
     let result = locked(dir, op, node, &k);
     // Cleanup is for failures. After a (simulated) kill nothing runs, as after SIGKILL.
@@ -327,7 +229,7 @@ fn take_lock(dir: RawFd, k: &Knobs) -> Result<OwnedFd, Fail> {
         }
     })?;
     let m = fstatx(fd.as_raw_fd()).map_err(|_| Fail::WriteFailed)?;
-    if m.kind() != libc::S_IFREG || m.uid != k.uid || m.mode & 0o077 != 0 || m.nlink != 1 {
+    if m.kind() != os::S_IFREG || m.uid != k.uid || m.mode & 0o077 != 0 || m.nlink != 1 {
         return Err(Fail::BadLock);
     }
     seam::hook(Step::LockCreate, dir)?;
@@ -447,24 +349,20 @@ fn make_temp(dir: RawFd, name: &CStr, data: &[u8], spec: &Spec, steps: &Steps) -
     if seam::sys(Sys::Acl).is_some() {
         return Err(Fail::Label);
     }
-    match spec.acl {
-        Some(acl) => set_xattr(raw, ACL, acl),
-        None => remove_xattr(raw, ACL),
-    }
-    .map_err(|_| Fail::Label)?;
+    os::set_acl(raw, spec.acl.as_deref()).map_err(|_| Fail::Label)?;
     seam::hook(steps.acl, dir)?;
     if let Some(label) = spec.label
-        && get_xattr(raw, SELINUX).map_err(|_| Fail::Label)?.as_ref() != Some(label)
+        && os::get_label(raw).map_err(|_| Fail::Label)?.as_ref() != Some(label)
     {
         if seam::sys(Sys::Label).is_some() {
             return Err(Fail::Label);
         }
-        set_xattr(raw, SELINUX, label).map_err(|_| Fail::Label)?;
+        os::set_label(raw, label).map_err(|_| Fail::Label)?;
     }
     seam::hook(steps.label, dir)?;
     // After the ACL: with an access ACL present, the group bits are its mask.
     // SAFETY: fchmod(2) on a descriptor this process owns.
-    if seam::sys(Sys::Chmod).is_some() || unsafe { libc::fchmod(raw, spec.mode) } != 0 {
+    if seam::sys(Sys::Chmod).is_some() || unsafe { libc::fchmod(raw, os::mode_t(spec.mode)) } != 0 {
         return Err(Fail::Label);
     }
     seam::hook(steps.mode, dir)?;
@@ -473,8 +371,8 @@ fn make_temp(dir: RawFd, name: &CStr, data: &[u8], spec: &Spec, steps: &Steps) -
     let same = m.uid == spec.uid
         && m.gid == spec.gid
         && m.mode & 0o7777 == spec.mode
-        && get_xattr(raw, ACL).map_err(|_| Fail::Label)? == *spec.acl
-        && get_xattr(raw, SELINUX).map_err(|_| Fail::Label)? == *spec.label;
+        && os::get_acl(raw).map_err(|_| Fail::Label)? == *spec.acl
+        && os::get_label(raw).map_err(|_| Fail::Label)? == *spec.label;
     if !same {
         return Err(Fail::Label);
     }
@@ -491,13 +389,14 @@ fn locked(dir: RawFd, op: &Op, node: &str, k: &Knobs) -> Result<Done, Fail> {
     seam::hook(Step::UnlinkBakNew, dir)?;
 
     // 4. Admit `hosts` without opening it.
-    let path = openat(dir, HOSTS, libc::O_PATH | libc::O_NOFOLLOW, 0).map_err(|e| match e {
+    let path = os::open_path(dir, HOSTS).map_err(|e| match e {
         libc::ENOENT => Fail::NotRegular,
         _ => Fail::WriteFailed,
     })?;
     let pm = fstatx(path.as_raw_fd()).map_err(|_| Fail::WriteFailed)?;
     let em = fstatx(dir).map_err(|_| Fail::WriteFailed)?;
     admit(&pm, &em, k.uid)?;
+    os::hosts_extra(path.as_raw_fd())?;
 
     // 5. Reopen for reading; same file, then the snapshot.
     let read = openat(
@@ -548,8 +447,8 @@ fn locked(dir: RawFd, op: &Op, node: &str, k: &Knobs) -> Result<Done, Fail> {
     }
 
     // 8. What the source carries; an unreadable attribute is a refusal.
-    let label = get_xattr(rfd, SELINUX).map_err(|_| Fail::Label)?;
-    let acl = get_xattr(rfd, ACL).map_err(|_| Fail::Label)?;
+    let label = os::get_label(rfd).map_err(|_| Fail::Label)?;
+    let acl = os::get_acl(rfd).map_err(|_| Fail::Label)?;
 
     // 9. Backup from the snapshot bytes, in its own temp, root-only, never removed by us.
     let none = None;
@@ -588,8 +487,9 @@ fn locked(dir: RawFd, op: &Op, node: &str, k: &Knobs) -> Result<Done, Fail> {
 
     // 11. Still the same file, by descriptor and by path (best effort against other editors).
     seam::hook(Step::PreCommit, dir)?;
+    os::temp_extra(dir, NEW)?;
     let by_fd = fstatx(rfd).map_err(|_| Fail::Changed)?;
-    let by_path = statx(dir, HOSTS, libc::AT_SYMLINK_NOFOLLOW).map_err(|_| Fail::Changed)?;
+    let by_path = statx(dir, HOSTS, os::AT_NOFOLLOW).map_err(|_| Fail::Changed)?;
     if by_fd != s || by_path != s {
         return Err(Fail::Changed);
     }
@@ -608,25 +508,29 @@ fn locked(dir: RawFd, op: &Op, node: &str, k: &Knobs) -> Result<Done, Fail> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
+    use crate::os_linux::{ACL, SELINUX, absent, get_xattr, remove_xattr, set_xattr};
     use crate::seam::Action;
     use std::fs;
     use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
-    use std::path::{Path, PathBuf};
+    #[cfg(target_os = "linux")]
+    use std::path::Path;
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    const ORIGINAL: &[u8] = b"127.0.0.1 localhost\n::1 localhost\n";
-    const HOST: &str = "otel.example.com";
+    pub(crate) const ORIGINAL: &[u8] = b"127.0.0.1 localhost\n::1 localhost\n";
+    pub(crate) const HOST: &str = "otel.example.com";
 
     /// A temp directory standing in for `/etc`, with an `hosts` file in it.
-    struct Etc {
-        path: PathBuf,
-        fd: OwnedFd,
+    pub(crate) struct Etc {
+        pub(crate) path: PathBuf,
+        pub(crate) fd: OwnedFd,
     }
 
     impl Etc {
-        fn new() -> Etc {
+        pub(crate) fn new() -> Etc {
             static N: AtomicUsize = AtomicUsize::new(0);
             seam::reset();
             let path = std::env::temp_dir().join(format!(
@@ -648,28 +552,28 @@ mod tests {
             etc
         }
 
-        fn p(&self, name: &str) -> PathBuf {
+        pub(crate) fn p(&self, name: &str) -> PathBuf {
             self.path.join(name)
         }
 
-        fn put(&self, name: &str, data: &[u8], mode: u32) {
+        pub(crate) fn put(&self, name: &str, data: &[u8], mode: u32) {
             fs::write(self.p(name), data).unwrap();
             fs::set_permissions(self.p(name), fs::Permissions::from_mode(mode)).unwrap();
         }
 
-        fn read(&self, name: &str) -> Vec<u8> {
+        pub(crate) fn read(&self, name: &str) -> Vec<u8> {
             fs::read(self.p(name)).unwrap()
         }
 
-        fn exists(&self, name: &str) -> bool {
+        pub(crate) fn exists(&self, name: &str) -> bool {
             fs::symlink_metadata(self.p(name)).is_ok()
         }
 
-        fn run(&self, op: &Op) -> Result<Done, Fail> {
+        pub(crate) fn run(&self, op: &Op) -> Result<Done, Fail> {
             apply_in(&self.fd, op, "myhost")
         }
 
-        fn set(&self) -> Result<Done, Fail> {
+        pub(crate) fn set(&self) -> Result<Done, Fail> {
             self.run(&Op::Set(vec![HOST.to_string()]))
         }
     }
@@ -681,11 +585,11 @@ mod tests {
         }
     }
 
-    fn expected() -> Vec<u8> {
+    pub(crate) fn expected() -> Vec<u8> {
         edit::edit(ORIGINAL, &Op::Set(vec![HOST.to_string()])).unwrap()
     }
 
-    fn no_temps(etc: &Etc) {
+    pub(crate) fn no_temps(etc: &Etc) {
         assert!(!etc.exists(".hosts.cainary-new"), "new temp left");
         assert!(!etc.exists(".hosts.cainary-bak-new"), "backup temp left");
     }
@@ -736,6 +640,7 @@ mod tests {
         assert_eq!(after.nlink(), 1);
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn absent_attributes_stay_absent() {
         let etc = Etc::new();
@@ -783,6 +688,7 @@ mod tests {
         no_temps(&etc);
     }
 
+    #[cfg(target_os = "linux")]
     fn meta(uid: u32, mode: u32, nlink: u32, mnt: Option<u64>) -> Meta {
         Meta {
             dev: (0, 1),
@@ -798,6 +704,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn admission_rules() {
         let reg = libc::S_IFREG | 0o644;
@@ -859,6 +766,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn real_mount_id_is_reported_for_both() {
         let etc = Etc::new();
@@ -1230,6 +1138,7 @@ mod tests {
         no_temps(&etc);
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn the_backup_label_and_acl_plumbing_on_a_synthetic_attribute() {
         let etc = Etc::new();
@@ -1245,6 +1154,7 @@ mod tests {
         remove_xattr(fd.as_raw_fd(), name).unwrap();
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_state_that_cannot_be_reproduced_is_a_label_refusal() {
         let etc = Etc::new();
@@ -1284,6 +1194,7 @@ mod tests {
         assert_eq!(r, Err(Fail::Label));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn walk_refuses_links_and_unprotected_directories() {
         let root = Etc::new();

@@ -24,6 +24,10 @@ enum Snapshots {
         await detailFailedSnapshots(root: root, out: out)
         menuBarSnapshot(out: out)
         collectorSnapshot(out: out)
+        collectorFeedSnapshots(out: out)
+        collectorPanelsSnapshots(out: out)
+        collectorSetupSnapshots(out: out)
+        settingsSnapshots(out: out)
 
         exit(finishChecks())
     }

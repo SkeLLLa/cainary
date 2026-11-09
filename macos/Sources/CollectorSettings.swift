@@ -63,6 +63,23 @@ struct CollectorPattern: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
+/// Why the collector can't start: a stable code for the UI and a message fit to show.
+struct SettingsProblem: Equatable, Sendable {
+    enum Code: String, Sendable {
+        case portRange = "port-range"
+        case tlsBadHost = "tls-bad-host"
+        case tlsNoHost = "tls-no-host"
+        case tlsTooManyHosts = "tls-too-many-hosts"
+        case patterns
+    }
+    var code: Code
+    var message: String
+    init(_ code: Code, _ message: String) {
+        self.code = code
+        self.message = message
+    }
+}
+
 struct CollectorSettings: Equatable, Sendable {
     static let defaultPort = 4318
     static let portRange = 1024...65535
@@ -70,6 +87,8 @@ struct CollectorSettings: Equatable, Sendable {
     static let maxConfigBytes = 1 << 20
 
     var enabled = false
+    /// Keep `enabled` across launches; off starts every launch with the collector off.
+    var startAtLaunch = false
     var port = defaultPort
     var logToFile = false
     var logPath = ""
@@ -83,7 +102,7 @@ struct CollectorSettings: Equatable, Sendable {
     var takeoverPort = defaultTakeoverPort
 
     static let defaultTakeoverPort = 8443
-    static let takeoverPortRange = 1...65535
+    static let takeoverPortRange = 1024...65535
     static let maxHosts = 32
 
     /// A DNS name the collector accepts for `--tls-host`: two or more labels, no wildcard, no IP.
@@ -109,10 +128,60 @@ struct CollectorSettings: Equatable, Sendable {
         return out
     }
 
-    /// Why the takeover can't start, or nil.
-    var takeoverProblem: String? {
-        takeover && validHosts.isEmpty
-            ? "Add at least one host name for the HTTPS takeover." : nil
+    /// The most host names the hosts helper writes (HostsFile/HostsEditor enforce the same).
+    static let maxEditHosts = HostsFile.maxEditHosts
+
+    /// The first reason the collector can't start, or nil. Mirrors Linux `CollectorSettings::problem`.
+    var problem: SettingsProblem? {
+        if !Self.portRange.contains(port) {
+            return SettingsProblem(.portRange, "The collector port must be 1024–65535.")
+        }
+        if takeover {
+            if !Self.takeoverPortRange.contains(takeoverPort) {
+                return SettingsProblem(.portRange, "The HTTPS port must be 1024–65535.")
+            }
+            if let bad = badHostProblem { return bad }
+            if validHosts.isEmpty {
+                return SettingsProblem(
+                    .tlsNoHost, "Add at least one host name for the HTTPS takeover.")
+            }
+        }
+        if overLimit {
+            return SettingsProblem(
+                .patterns,
+                "Too many red-flag patterns: presets and custom patterns share a limit of \(CollectorPattern.maxTotal)."
+            )
+        }
+        return nil
+    }
+
+    /// Why "Add/Update" in the hosts block must stay disabled: more than 8 names. Not a start
+    /// problem; the collector itself takes 32.
+    var hostsEditProblem: SettingsProblem? {
+        validHosts.count > Self.maxEditHosts
+            ? SettingsProblem(
+                .tlsTooManyHosts,
+                "More than \(Self.maxEditHosts) host names; cAInary can add at most \(Self.maxEditHosts)."
+            )
+            : nil
+    }
+
+    private var badHostProblem: SettingsProblem? {
+        var seen: Set<String> = []
+        for raw in takeoverHosts {
+            let h = raw.trimmingCharacters(in: .whitespaces).lowercased()
+            if h.isEmpty { continue }
+            if !Self.validHost(h) {
+                return SettingsProblem(
+                    .tlsBadHost,
+                    "Host name “\(h)”: use a DNS name with at least two labels; wildcards and IP addresses aren't supported."
+                )
+            }
+            if !seen.insert(h).inserted {
+                return SettingsProblem(.tlsBadHost, "Host name “\(h)” is already listed.")
+            }
+        }
+        return nil
     }
 
     /// Where "Also save to" starts: `~/Library/Logs/cAInary/otel-debug.jsonl`.
@@ -207,6 +276,10 @@ extension KeyValueStore {
         get {
             var s = CollectorSettings()
             s.enabled = bool(forKey: PrefKey.otelCollectorEnabled)
+            // Migration: a store without the key keeps whatever `enabled` was.
+            s.startAtLaunch =
+                object(forKey: PrefKey.otelCollectorStartAtLaunch) == nil
+                ? s.enabled : bool(forKey: PrefKey.otelCollectorStartAtLaunch)
             let port = integer(forKey: PrefKey.otelCollectorPort)
             if port != 0 {
                 let range = CollectorSettings.portRange
@@ -236,6 +309,7 @@ extension KeyValueStore {
         }
         set {
             set(newValue.enabled, forKey: PrefKey.otelCollectorEnabled)
+            set(newValue.startAtLaunch, forKey: PrefKey.otelCollectorStartAtLaunch)
             set(newValue.port, forKey: PrefKey.otelCollectorPort)
             set(newValue.logToFile, forKey: PrefKey.otelCollectorLogToFile)
             set(newValue.logPath, forKey: PrefKey.otelCollectorLogPath)

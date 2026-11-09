@@ -27,8 +27,12 @@ enum PrefKey {
     static let menuBarIconStyle = "menuBarIconStyle"
     static let refreshMinutes = "refreshMinutes"
     static let notInstalledExpanded = "notInstalledExpanded"
+    static let scanCollapsed = "scanCollapsed"
+    static let liveCollapsed = "liveCollapsed"
     // The opt-in OTel debug collector.
     static let otelCollectorEnabled = "otelCollectorEnabled"
+    /// Absent means "copy `otelCollectorEnabled`" (migration).
+    static let otelCollectorStartAtLaunch = "otelCollectorStartAtLaunch"
     static let otelCollectorPort = "otelCollectorPort"
     static let otelCollectorLogToFile = "otelCollectorLogToFile"
     static let otelCollectorLogPath = "otelCollectorLogPath"
@@ -41,6 +45,9 @@ enum PrefKey {
     static let otelCollectorTls = "otelCollectorTls"
     static let otelCollectorTlsHosts = "otelCollectorTlsHosts"
     static let otelCollectorTlsPort = "otelCollectorTlsPort"
+    /// The port the last enabled pf redirect points at; absent when it was disabled. The app can't
+    /// read pf without root, so this is how Undo knows the redirect may still be on.
+    static let takeoverRedirectPort = "takeoverRedirectPort"
 }
 
 enum Prefs {

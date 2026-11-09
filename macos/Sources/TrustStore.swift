@@ -42,8 +42,16 @@ final class TrustStore: ObservableObject {
         }
     }
 
+    private var refreshSerial = 0
+
+    /// Reads the status. A result that was asked for before a later `refresh` is dropped, so a slow
+    /// answer from before a collector restart can not replace a newer one.
     func refresh() async {
-        if case .status(let s) = await client.status() { status = s }
+        refreshSerial += 1
+        let mine = refreshSerial
+        let result = await client.status()
+        guard mine == refreshSerial, case .status(let s) = result else { return }
+        status = s
     }
 
     /// Previews the change; the sheet shows when there is something to confirm.

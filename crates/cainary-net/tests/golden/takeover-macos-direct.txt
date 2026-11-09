@@ -1,0 +1,22 @@
+TLS takeover: read this first.
+Nothing is forwarded. While this runs, your organization's collector receives nothing from this machine, and every other request to the listed host names fails.
+Other programs that talk to these host names will fail their TLS handshake here; that is expected.
+The host names below are what you configured here, not an authenticated sender identity.
+If the exporting process uses HTTPS_PROXY, add these host names to its NO_PROXY; otherwise the proxy resolves them itself and nothing arrives here.
+Your organization's settings choose the format: OTLP over HTTP as JSON or protobuf, gzip or uncompressed, is read; gRPC is not.
+
+1. Point the host names at loopback (add these lines to /etc/hosts as root):
+  127.0.0.1 otel.example-corp.test
+  ::1 otel.example-corp.test
+2. Flush the DNS cache, so the host names resolve to loopback now:
+  sudo dscacheutil -flushcache
+  sudo killall -HUP mDNSResponder
+3. Trust the certificate, for the exporting process only (never disable certificate verification):
+  Claude Code: env NODE_EXTRA_CA_CERTS=/home/u/.local/state/cainary/otel-debug-ca.pem claude
+  Codex: set SSL_CERT_FILE=/home/u/.local/state/cainary/otel-debug-ca.pem or CODEX_CA_CERTIFICATE=/home/u/.local/state/cainary/otel-debug-ca.pem for the codex process (see its documentation for which it honors)
+  Certificate SHA-256: ab
+4. Start the exporting process after this certificate is published, and restart it after every run of this program: each run creates a new CA. Deleting the file does not revoke trust a process already loaded; `cainary-otel-debug --delete-ca` removes the file.
+Undo: remove the /etc/hosts lines, stop this program, and flush the DNS cache:
+  sudo dscacheutil -flushcache
+  sudo killall -HUP mDNSResponder
+The restriction to these names is enforced by this program: it issues certificates only for them and completes a handshake only for them. The certificate also carries name constraints, but those cover subdomains and depend on the client enforcing them. Its key exists only in this process's memory, and it is never installed in a system trust store.

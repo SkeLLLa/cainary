@@ -56,8 +56,16 @@ const VENDOR_SKIP: [&str; 14] = [
     "Homebrew", "opt", "local", "homebrew",
 ];
 
-/// Split on whitespace honoring simple quotes; stop at the first `;`, `&` or `|`.
-fn split_shell(s: &str) -> Vec<String> {
+/// Shell keywords that open or close a compound command around the one that runs.
+const SHELL_KEYWORDS: [&str; 13] = [
+    "if", "then", "elif", "else", "fi", "while", "until", "do", "done", "!", "{", "}", "time",
+];
+/// Commands that run nothing: no-ops and tests guarding the real command.
+const NO_OPS: [&str; 6] = [":", "true", "false", "[", "[[", "test"];
+
+/// Split on whitespace honoring simple quotes into simple commands at each `;`, `&`, `|` or newline.
+fn split_segments(s: &str) -> Vec<Vec<String>> {
+    let mut segs = Vec::new();
     let mut words = Vec::new();
     let mut cur = String::new();
     let mut have = false;
@@ -71,7 +79,15 @@ fn split_shell(s: &str) -> Vec<String> {
                     quote = Some(c);
                     have = true;
                 }
-                ';' | '&' | '|' => break,
+                ';' | '&' | '|' | '\n' => {
+                    if have {
+                        words.push(std::mem::take(&mut cur));
+                        have = false;
+                    }
+                    if !words.is_empty() {
+                        segs.push(std::mem::take(&mut words));
+                    }
+                }
                 c if c.is_whitespace() => {
                     if have {
                         words.push(std::mem::take(&mut cur));
@@ -88,7 +104,27 @@ fn split_shell(s: &str) -> Vec<String> {
     if have {
         words.push(cur);
     }
-    words
+    if !words.is_empty() {
+        segs.push(words);
+    }
+    segs
+}
+
+/// The words of the first simple command that runs something, past no-ops, tests and keywords.
+fn split_shell(s: &str) -> Vec<String> {
+    let mut segs = split_segments(s);
+    let first = segs.first().cloned().unwrap_or_default();
+    for seg in &mut segs {
+        let skip = seg
+            .iter()
+            .take_while(|w| SHELL_KEYWORDS.contains(&w.as_str()))
+            .count();
+        let ws = seg.split_off(skip);
+        if ws.first().is_some_and(|w| !NO_OPS.contains(&w.as_str())) {
+            return ws;
+        }
+    }
+    first
 }
 
 fn words(cmd: &Cmd) -> Vec<String> {
@@ -638,6 +674,16 @@ mod tests {
         assert_eq!(file(&t(&sh("curl x | sh"))), "/usr/bin/curl");
         assert_eq!(file(&t(&sh("curl x && nosuch"))), "/usr/bin/curl");
         assert_eq!(file(&t(&sh("curl x; nosuch"))), "/usr/bin/curl");
+        // no-ops, tests and keywords before the command that runs
+        assert_eq!(file(&t(&sh(": tag=1; curl x"))), "/usr/bin/curl");
+        assert_eq!(file(&t(&sh("[ -n \"$A\" ] && curl x"))), "/usr/bin/curl");
+        assert_eq!(
+            t(&sh(
+                ": orca-agent-hook-form=1; if [ -n \"${K-}\" ] && [ -f \"${R-}/codex-hook.sh\" ]; then /bin/sh \"${R-}/codex-hook.sh\" || :; else { cat; } >/dev/null; fi"
+            )),
+            Target::Unresolved("${R-}/codex-hook.sh".into())
+        );
+        assert_eq!(t(&sh(":")), Target::Unresolved(":".into()));
         // interpreters
         let inline = |i: &str| Target::Inline {
             interpreter: i.into(),

@@ -75,6 +75,12 @@ struct CollectorBatch: Codable, Equatable, Sendable {
     var summary: Summary?
     var resourcesOmitted: Bool?
     var scanIncomplete: Bool?
+    /// The destination host, in TLS mode.
+    var host: String?
+    /// `protobuf` or `json`.
+    var format: String?
+    /// `gzip` when the body was compressed.
+    var encoding: String?
 }
 
 struct CollectorAlert: Codable, Equatable, Sendable {
@@ -105,6 +111,11 @@ struct CollectorError: Codable, Equatable, Sendable {
     var path: String?
     var message: String?
     var dropped: Int?
+    /// A stable startup code such as `port-in-use` or `tls-no-host`.
+    var code: String?
+    var port: Int?
+    /// How many identical errors this line stands for.
+    var count: Int?
 }
 
 /// What one line of the stream means to the app.
@@ -160,6 +171,28 @@ extension CollectorBatch {
 }
 
 extension String {
+    /// Port of the Linux tray's `safe_line`: escapes C0/C1 controls (newline and tab too), bidi
+    /// overrides and isolates, directional marks and invisible format characters as `\u{XXXX}`
+    /// (uppercase hex, at least four digits).
+    var safeLine: String {
+        var out = ""
+        for scalar in unicodeScalars {
+            let v = scalar.value
+            let bad =
+                v <= 0x1F || (0x7F...0x9F).contains(v) || (0x200B...0x200F).contains(v)
+                || (0x2028...0x202E).contains(v) || (0x2060...0x2064).contains(v)
+                || (0x2066...0x2069).contains(v) || v == 0x00AD || v == 0x061C || v == 0x180E
+                || v == 0xFEFF
+            if bad {
+                let hex = String(v, radix: 16, uppercase: true)
+                out += "\\u{" + String(repeating: "0", count: max(0, 4 - hex.count)) + hex + "}"
+            } else {
+                out.unicodeScalars.append(scalar)
+            }
+        }
+        return out
+    }
+
     /// Like `plainText`, but keeps line breaks and tabs: for a multi-line note such as stderr.
     var plainMultilineText: String {
         split(separator: "\n", omittingEmptySubsequences: false)

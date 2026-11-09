@@ -219,8 +219,9 @@ A grouped `Form`, 480 pt wide:
   value is kept in the list.
 - **Startup:** Launch at login (`LoginItem.swift`: `SMAppService.mainApp`, the approval hint, the
   error line).
-- **OTel debug collector** and **HTTPS takeover:** the opt-in toggle and its options, each its own
-  section (§2.8).
+- **OTel debug collector:** "Run the collector", "Start when cAInary starts", the port, "Notify
+  about red flags" and a "Collector setup…" button. The rules, the HTTPS takeover and the logs
+  moved to the collector window (§2.8).
 - **Support Ukraine; Privacy tools** (a Proton link); **version, Source code, About…**
 
 There is no `--alert` picker: levels, the icon and notifications all ignore it. The legacy
@@ -284,6 +285,7 @@ the app never talks to it over the network: it reads the child's stdout.
   | key | default |
   | --- | --- |
   | `otelCollectorEnabled` (Bool) | `false` |
+  | `otelCollectorStartAtLaunch` (Bool) | absent: the value of `otelCollectorEnabled` |
   | `otelCollectorPort` (Int, 1024–65535) | `4318` |
   | `otelCollectorLogToFile` (Bool) | `false` |
   | `otelCollectorLogPath` (String) | empty: `~/Library/Logs/cAInary/otel-debug.jsonl` |
@@ -294,12 +296,14 @@ the app never talks to it over the network: it reads the child's stdout.
   | `otelCollectorTlsHosts` ([String]) | none |
   | `otelCollectorTlsPort` (Int, 1–65535) | `8443` |
 
-  The toggle is intent: when it is on, the collector starts at launch. Changing any option that
+  "Start when cAInary starts" decides whether the collector starts at launch; "Run the collector"
+  starts or stops it now. Changing any option that
   reaches the child (port, log file, presets, patterns) restarts a running one after a short pause;
   "Notify about red flags" doesn't. `--show-values` is not offered.
-- **Settings section:** the toggle; the port; "Show in UI only" or "Also save to:" a path with
-  **Choose…** (`NSSavePanel`); a checkbox per preset; a table of your own patterns (name, pattern,
-  **Regex** and **Match case** checkboxes, add and remove); "Notify about red flags".
+- **Settings section:** "Run the collector", "Start when cAInary starts"
+  (`otelCollectorStartAtLaunch`, copied from the toggle when unset), the port, "Notify about red
+  flags", and **Collector setup…**, which opens the collector window. The rules, the takeover and
+  the logs are no longer in Settings.
 - **Process** (`CollectorClient.swift`): Foundation `Process` with three `Pipe`s. argv is only
   `--json --config-stdin --port <n> [--log-file <path>]`. The red-flag patterns and presets go over
   stdin as one JSON line, so the pattern text never appears in `ps`. The app then keeps the write
@@ -315,11 +319,21 @@ the app never talks to it over the network: it reads the child's stdout.
   200 `alert` lines and 16 MiB of lines in memory, never on disk. It reads JSON-lines v1
   (`CollectorLines.swift`) and tolerates unknown types, keys and `error.source` values; another `v`
   stops the collector with "Update cAInary".
-- **Pane** (`CollectorView.swift`): a status line ("Listening on http://127.0.0.1:4318 · 12 batches
-  · 3 red flags", or Stopped or Failed); the `hello.setup` lines in two monospaced blocks with
-  **Copy**; the red flags; and the batches, newest first, each a `DisclosureGroup` drawn from
-  `summary` (group chips, an orange "not in catalog" tag) with a "Raw records" group for the masked
-  `resources`.
+- **Collector window** (`CollectorView.swift`, the sidebar's **Live → OTel collector** row in the
+  Details window, with the red-flag count and a status dot). A header shows the state ("Listening
+  http://127.0.0.1:4318", batch count, Start or Stop), and a failure banner with Retry, Open
+  Settings, "Try port N" and Show logs (`CollectorFailureView.swift`). Five tabs, as on Linux:
+  - **Feed** (`CollectorFeedView.swift`): batches, newest first, with a filter, signal and flag
+    chips, Pause and Clear. Each row expands to its source, path, size, records, identity and
+    resource attributes, and its flags.
+  - **Red flags** (`CollectorFlagsView.swift`): grouped by rule, with hits, last seen and **Show
+    in feed**.
+  - **Rules** (`CollectorRulesView.swift`): the presets and your own patterns (name, pattern,
+    **Regex**, **Match case**), with validation and "Notify about red flags". Moved from Settings.
+  - **Logs** (`CollectorLogsView.swift`): the collector's own messages and the listen error, each
+    with **Copy**.
+  - **Setup** (`CollectorSetupView.swift`): the takeover guide, below.
+  The popover also has a collector line (state and red-flag count) that opens the window.
 - **Notifications:** a red flag posts a plain-text notification titled `Red flag: <pattern>` with
   the body `<event> · <attribute> (<match>)`, at most one per pattern per 60 s. Control and bidi
   characters are escaped first. A click opens the pane.
@@ -332,14 +346,34 @@ the app never talks to it over the network: it reads the child's stdout.
     Host suggestions are the `http(s)` hosts in the evidence of findings that carry a `payload`
     in the last scan. Patterns still go over `--config-stdin`. With the switch on and no valid
     host, the collector doesn't start and says why.
-  - **Pane:** in takeover mode (`hello.mode == "tls-receiver"`) it lists the names, the CA path
-    and SHA-256, and the `setup.takeover` steps with **Copy**. Pointing the host names at this Mac
-    (for example `/etc/hosts`) stays your step; the app never does it. The collector prints the
-    443 redirect and its undo as Linux `nft` commands; on macOS that step needs a `pf` rule
-    instead, which the app doesn't offer yet ([roadmap](roadmap.md)).
+  - **Setup tab** (`TakeoverGuide.swift`, `TakeoverGuideView.swift`, `TakeoverController.swift`):
+    the host names, the port and a step guide, each step with its status and its own undo. The
+    takeover settings moved here from Settings.
+    1. **Point the host names at this Mac:** `127.0.0.1` and `::1` lines in `/etc/hosts`, with a
+       lookup that shows what each name resolves to now.
+    2. **Redirect port 443 to the collector port:** macOS doesn't let an unprivileged process bind
+       a loopback address below 1024, so the collector stays on 8443 and `pf` redirects 443 to it
+       with `rdr pass` rules on `lo0`, loaded from stdin into the anchor `com.apple/cainary`
+       (`pfctl -a com.apple/cainary -f -`, then `pfctl -E`). Undo is
+       `pfctl -a com.apple/cainary -F all`.
+    3. **Flush the DNS cache:** `dscacheutil -flushcache` and `killall -HUP mDNSResponder`.
+    4. **Let the agents trust the certificate:** the trust buttons below.
+    5. **Restart Claude Code and Codex:** the agents, not the collector. A collector restart
+       rotates the CA, which would undo step 4.
+  - **One-click admin editing:** "Add to /etc/hosts" and "Enable redirect" (and their undo) run
+    through the standard administrator prompt. The hosts edit uses the signed
+    `cainary-hosts-helper` from `Contents/Helpers`: the app copies it, then checks it against its
+    own signing leaf certificate before the prompt and again inside the root shell, so root never
+    runs an unverified binary. The `pf` step runs only fixed absolute commands (`/sbin/pfctl`) with
+    a validated port (1024–65535). An ad-hoc or unsigned build has no leaf to check against, so it
+    shows the manual commands instead. Hosts edits are refused for a damaged file, reserved names
+    or more than 8 names; the lookup is re-run after each edit.
+  - **Limits:** the prompt is `osascript`'s, so any process of the same user could show a fake
+    admin dialog; the guarantee is only that root never runs an unverified helper. `pfctl -E`
+    leaves `pf` enabled until reboot; Disable removes only cAInary's anchor. The redirect doesn't
+    survive a reboot, while the `/etc/hosts` lines do, so remove them (step 1's undo) when done.
   - **Listen errors:** after an `error` line with `source: "listen"` and an exit, the child's whole
-    stderr (the privileged-port note) shows in a selectable box under the section. On macOS low
-    ports are normally allowed, so this is rare.
+    stderr shows in the Logs tab, and the failure banner offers a nearby port.
   - **Trust buttons**, each a one-shot `cainary-otel-debug` call (stdin `/dev/null`, pipes
     close-on-exec, 1 MiB stdout cap, 15 s timeout then SIGKILL; `OneShot` in `TrustClient.swift`):
     - **Let Claude Code trust the collector…** runs `--trust claude-code --dry-run --json` and
@@ -383,7 +417,9 @@ the app never talks to it over the network: it reads the child's stdout.
 | `Sources/Notifier.swift` | `plan()`, `UNNotifier` |
 | `Sources/Navigation.swift` | `ObservableObject`: `selection`, `expanded` |
 | `Sources/PayloadView.swift` | "What it sends" (§2.3), `CopyBlock`, `SentChip` |
-| `Sources/CollectorClient.swift`, `CollectorLines.swift`, `CollectorSettings.swift`, `CollectorStore.swift`, `CollectorView.swift` | the OTel debug collector (§2.8) |
+| `Sources/CollectorClient.swift`, `CollectorLines.swift`, `CollectorSettings.swift`, `CollectorStore.swift`, `CollectorModel.swift` | the OTel debug collector: process, lines, settings, state (§2.8) |
+| `Sources/CollectorView.swift`, `CollectorFeedView.swift`, `CollectorFlagsView.swift`, `CollectorRulesView.swift`, `CollectorLogsView.swift`, `CollectorSetupView.swift`, `CollectorFailureView.swift` | the collector window and its tabs (§2.8) |
+| `Sources/TakeoverGuide.swift`, `TakeoverGuideView.swift`, `TakeoverController.swift`, `HostsEditor.swift`, `HostsFile.swift`, `HostLookup.swift` | the takeover guide, the admin edits and the host lookup (§2.8) |
 | `Sources/TrustClient.swift`, `TrustStore.swift` | the takeover's one-shot trust calls and their state (§2.8) |
 | `Sources/Style.swift` | level style, `LevelChip`, display names (signal, origin, surface), `WindowAccessor` |
 | `Sources/MenuBarIcon.swift` | `image(MenuState, IconStyle) -> NSImage`, the label view |

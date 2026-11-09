@@ -32,13 +32,17 @@ private func settingsChecks() {
     )
     check("takeover: off argv has no tls", !s.arguments.contains("--tls"))
     s.takeover = true
-    check("takeover: needs a host", s.takeoverProblem != nil)
+    check("takeover: needs a host", s.problem?.code == .tlsNoHost)
     s.takeoverHosts = [
         "Otel.Example-Corp.com", "bad host", "otel.example-corp.com", "1.2.3.4", "*.x.com",
         "localhost", "",
     ]
     check("takeover: valid hosts only, lowercased, once", s.validHosts == ["otel.example-corp.com"])
-    check("takeover: no problem with a host", s.takeoverProblem == nil)
+    check("takeover: bad names are reported, argv skips them", s.problem?.code == .tlsBadHost)
+    let mixed = s.takeoverHosts
+    s.takeoverHosts = ["Otel.Example-Corp.com"]
+    check("takeover: no problem with a host", s.problem == nil)
+    s.takeoverHosts = mixed
     check(
         "takeover: argv",
         s.arguments == [
@@ -63,6 +67,8 @@ private func settingsChecks() {
         back.takeover && back.takeoverHosts == s.takeoverHosts && back.takeoverPort == 8443)
     mem.set(70000, forKey: PrefKey.otelCollectorTlsPort)
     check("takeover: port clamped", mem.collectorSettings.takeoverPort == 65535)
+    mem.set(80, forKey: PrefKey.otelCollectorTlsPort)
+    check("takeover: low port clamped", mem.collectorSettings.takeoverPort == 1024)
     check("takeover: prefs keys", PrefKey.otelCollectorTls == "otelCollectorTls")
 
     // A takeover without a usable host doesn't start.

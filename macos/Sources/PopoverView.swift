@@ -8,6 +8,8 @@ struct PopoverActions {
     /// Open Details at an entry.
     var openEntry: (String) -> Void = { _ in }
     var openDetails: () -> Void = {}
+    /// Open Details on a tab of the collector page.
+    var openCollector: (CollectorTab) -> Void = { _ in }
     /// Open Details on the Changes pane.
     var openChanges: () -> Void = {}
     /// Make the current report the baseline.
@@ -19,6 +21,12 @@ struct PopoverActions {
     var quit: () -> Void = {}
 }
 
+/// What the popover's collector line shows: the collector's state and its unseen red flags.
+struct CollectorPillState: Equatable {
+    var state: CollectorStore.State
+    var unseenFlags = 0
+}
+
 /// The menu bar popover, 360 pt wide. It has no `ScrollView` so it can be snapshot-rendered;
 /// `App.swift` wraps it in one.
 struct PopoverView: View {
@@ -27,11 +35,14 @@ struct PopoverView: View {
     @Binding var legendExpanded: Bool
     /// The baseline couldn't be replaced, so changes aren't tracked.
     var trackingUnavailable = false
+    /// The collector line above the footer; nil hides it.
+    var collector: CollectorPillState?
     var actions = PopoverActions()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             content
+            if let collector { collectorLine(collector) }
             Divider()
             footer
         }
@@ -277,6 +288,40 @@ struct PopoverView: View {
         .disabled(!entry.installed)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(entry.name): \(entry.status.label). \(entry.status.summary)")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    // MARK: Collector
+
+    /// A status dot, "OTel collector" and the unseen red flags; opens the collector page, on the
+    /// Flags tab when there are unseen flags.
+    private func collectorLine(_ pill: CollectorPillState) -> some View {
+        Button {
+            actions.openCollector(pill.unseenFlags > 0 ? .flags : .feed)
+        } label: {
+            HStack(spacing: 6) {
+                CollectorStatusDot(state: pill.state)
+                Text("OTel collector").font(.caption.weight(.medium))
+                Text(pill.state.label.lowercased())
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                if pill.unseenFlags > 0 { CountBadge(count: pill.unseenFlags, color: .red) }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 6)
+            .frame(minHeight: 22)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 5))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            "OTel collector, \(pill.state.label.lowercased())"
+                + (pill.unseenFlags > 0 ? ", \(pill.unseenFlags) unseen red flags" : "")
+        )
         .accessibilityAddTraits(.isButton)
     }
 

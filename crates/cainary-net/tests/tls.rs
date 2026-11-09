@@ -955,7 +955,15 @@ fn the_hello_line_golden() {
         )
         .replace(&ca_dir, "<ca-dir>")
         .replace(&port, "<port>");
-    let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/tls-hello.jsonl");
+    // The takeover text differs by system (pf on macOS, nft on Linux): one golden each.
+    let name = if cfg!(target_os = "macos") {
+        "tls-hello-macos.jsonl"
+    } else {
+        "tls-hello.jsonl"
+    };
+    let file = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/golden")
+        .join(name);
     let got = format!("{masked}\n");
     if std::env::var_os("CAINARY_BLESS").is_some() {
         std::fs::write(&file, &got).unwrap();

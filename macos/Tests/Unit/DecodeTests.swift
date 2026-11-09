@@ -199,5 +199,59 @@ func decodeTests() {
 
     checkThrows("fail: not JSON") { _ = try Report.decode(Data("not json".utf8)) }
 
+    // Collector lines: the extra optional fields.
+    if case .error(let e) = CollectorEvent.decode(
+        CollectorSamples.data(CollectorSamples.errorPortInUse))
+    {
+        check(
+            "collector fields: port-in-use",
+            e.code == "port-in-use" && e.port == 4318 && e.source == "listen" && e.count == nil)
+    } else {
+        check("collector fields: port-in-use decodes", false)
+    }
+    if case .error(let e) = CollectorEvent.decode(
+        CollectorSamples.data(CollectorSamples.errorTLSNoHost))
+    {
+        check("collector fields: tls-no-host", e.code == "tls-no-host" && e.port == nil)
+    } else {
+        check("collector fields: tls-no-host decodes", false)
+    }
+    if case .error(let e) = CollectorEvent.decode(
+        CollectorSamples.data(CollectorSamples.errorTLSCount))
+    {
+        check("collector fields: error count", e.count == 3 && e.code == nil)
+    } else {
+        check("collector fields: error count decodes", false)
+    }
+    if case .batch(let b) = CollectorEvent.decode(
+        CollectorSamples.data(CollectorSamples.batchProtobufGzip))
+    {
+        check(
+            "collector fields: protobuf+gzip batch with host",
+            b.host == "otel.example-corp.test" && b.format == "protobuf" && b.encoding == "gzip")
+    } else {
+        check("collector fields: batch decodes", false)
+    }
+    if case .batch(let b) = CollectorEvent.decode(CollectorSamples.data(CollectorSamples.batch)) {
+        check(
+            "collector fields: plain batch has none",
+            b.host == nil && b.format == nil && b.encoding == nil)
+    }
+    if case .alert(let a) = CollectorEvent.decode(CollectorSamples.data(CollectorSamples.alert)) {
+        check("collector fields: alert count", a.count == 2)
+    }
+
+    // safeLine, after the Rust `safe_line`.
+    check("safeLine: plain text unchanged", "hello, wörld ✓".safeLine == "hello, wörld ✓")
+    check("safeLine: newline and tab", "a\nb\tc".safeLine == "a\\u{000A}b\\u{0009}c")
+    check("safeLine: escape and DEL", "\u{1B}[2J\u{7F}".safeLine == "\\u{001B}[2J\\u{007F}")
+    check("safeLine: C1", "\u{85}\u{9F}".safeLine == "\\u{0085}\\u{009F}")
+    check("safeLine: bidi", "a\u{202E}b\u{2066}".safeLine == "a\\u{202E}b\\u{2066}")
+    check("safeLine: marks", "\u{200E}\u{200F}\u{061C}".safeLine == "\\u{200E}\\u{200F}\\u{061C}")
+    check(
+        "safeLine: zero-width and separators",
+        "\u{200B}\u{2028}\u{2060}\u{FEFF}\u{00AD}\u{180E}".safeLine
+            == "\\u{200B}\\u{2028}\\u{2060}\\u{FEFF}\\u{00AD}\\u{180E}")
+
     try? FileManager.default.removeItem(at: scratchDirectory("decode"))
 }

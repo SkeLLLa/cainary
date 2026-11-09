@@ -13,6 +13,57 @@ It comes in two parts:
 - **The `cainary` CLI:** the same scan in a terminal, as text or JSON. Every app install includes
   it, and you can also install it on its own.
 
+<details>
+<summary><b>Screenshots</b>: the macOS and Linux apps side by side, rendered from fixture data</summary>
+
+<table>
+<tr><th>macOS</th><th>Linux</th></tr>
+<tr><td colspan="2"><b>Details window: an app and its findings</b></td></tr>
+<tr>
+<td width="50%"><img src="docs/screenshots/macos/detail-monitor.png" alt="macOS: the Details window with an app's findings"></td>
+<td width="50%"><img src="docs/screenshots/linux/details.png" alt="Linux: the Details window with an app's findings"></td>
+</tr>
+<tr><td colspan="2"><b>Live status of the OTel debug collector, with the red-flag count</b></td></tr>
+<tr>
+<td width="50%"><img src="docs/screenshots/macos/sidebar-live.png" alt="macOS: the collector's live status and red-flag count"></td>
+<td width="50%"><img src="docs/screenshots/linux/popup-live.png" alt="Linux: the collector's live status and red-flag count"></td>
+</tr>
+<tr><td colspan="2"><b>Collector Feed: what each export carries, masked, with red flags</b></td></tr>
+<tr>
+<td width="50%"><img src="docs/screenshots/macos/collector-window-feed.png" alt="macOS: the collector Feed tab"></td>
+<td width="50%"><img src="docs/screenshots/linux/details-collector-feed.png" alt="Linux: the collector Feed tab"></td>
+</tr>
+<tr><td colspan="2"><b>Red flags, grouped by rule, with "Show in feed"</b></td></tr>
+<tr>
+<td width="50%"><img src="docs/screenshots/macos/collector-window-flags.png" alt="macOS: the Red flags tab"></td>
+<td width="50%"><img src="docs/screenshots/linux/details-collector-flags.png" alt="Linux: the Red flags tab"></td>
+</tr>
+<tr><td colspan="2"><b>Rules: presets and your own patterns</b></td></tr>
+<tr>
+<td width="50%"><img src="docs/screenshots/macos/collector-rules.png" alt="macOS: the Rules tab"></td>
+<td width="50%"><i>Linux: in the Red flags tab</i></td>
+</tr>
+<tr><td colspan="2"><b>Setup: the HTTPS takeover guide</b></td></tr>
+<tr>
+<td width="50%"><img src="docs/screenshots/macos/collector-setup-takeover.png" alt="macOS: the HTTPS takeover guide"></td>
+<td width="50%"><img src="docs/screenshots/linux/details-collector-takeover-ready.png" alt="Linux: the HTTPS takeover guide"></td>
+</tr>
+<tr><td colspan="2"><b>Logs: the collector's own messages</b></td></tr>
+<tr>
+<td width="50%"><img src="docs/screenshots/macos/collector-logs.png" alt="macOS: the Logs tab"></td>
+<td width="50%"><img src="docs/screenshots/linux/details-collector-logs.png" alt="Linux: the Logs tab"></td>
+</tr>
+<tr><td colspan="2"><b>A failed start: port in use, with Retry and a nearby port</b></td></tr>
+<tr>
+<td width="50%"><img src="docs/screenshots/macos/collector-window-failure.png" alt="macOS: a failed start, port in use"></td>
+<td width="50%"><img src="docs/screenshots/linux/details-collector-fail-port-in-use.png" alt="Linux: a failed start, port in use"></td>
+</tr>
+</table>
+
+Regenerate with `make screenshots` on macOS and `make screenshots-linux` on Linux.
+
+</details>
+
 **Contents:** [Install](#install) · [Usage](#usage) · [Reading the report](#reading-the-report) ·
 [The apps](#the-apps) · [OTel debug collector](#otel-debug-collector) · [Development](#development) · [Documentation](#documentation) ·
 [Roadmap](docs/roadmap.md) · [Support Ukraine](#support-ukraine)
@@ -306,7 +357,10 @@ defaults read ua.SkeLLLa.cAInary     # show them
 defaults delete ua.SkeLLLa.cAInary   # reset (including the baseline)
 ```
 
-For the design and the manual test checklist, see [docs/macos.md](docs/macos.md).
+The app also runs the OTel debug collector in its own window (Feed, Red flags, Rules, Logs and
+Setup tabs). Setup guides you through the HTTPS takeover and can edit `/etc/hosts` and the `pf`
+443 redirect after an administrator prompt, in a signed build. For the design and the manual test
+checklist, see [docs/macos.md](docs/macos.md).
 
 ### Linux tray app
 

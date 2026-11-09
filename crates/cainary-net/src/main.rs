@@ -12,7 +12,21 @@ use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::Duration;
 
-const USAGE: &str = "\
+/// The program that makes the 443 redirect: nft on Linux, pf on macOS.
+#[cfg(target_os = "macos")]
+macro_rules! redirect_tool {
+    () => {
+        "pfctl"
+    };
+}
+#[cfg(not(target_os = "macos"))]
+macro_rules! redirect_tool {
+    () => {
+        "nft"
+    };
+}
+
+const USAGE: &str = concat!("\
 usage:
   cainary-otel-debug [--port <n>] [--listen <ip>]... [--listen-fd <n>]... [--json] [--show-values] [--once] [--allow-root]
                      [--log-file <path> [--log-max-mib <n>] [--log-keep <n>]]
@@ -37,7 +51,7 @@ and this serves it with a certificate from a throwaway CA limited to the names y
 FORWARDS NOTHING: while it runs, your organization's collector receives nothing from this
 machine, and every other request to those names fails. It listens on 8443 by default and prints
 the 443 redirect, the /etc/hosts lines and how to trust the certificate; it never runs sudo,
-or nft, and it needs a build with the `tls` cargo feature. `--delete-ca` removes the
+or ", redirect_tool!(), ", and it needs a build with the `tls` cargo feature. `--delete-ca` removes the
 certificate file it writes.
 
 --trust claude-code sets one key, env.NODE_EXTRA_CA_CERTS, in ~/.claude/settings.json (after a
@@ -45,7 +59,7 @@ backup; --dry-run shows the change, --undo reverses it) so Claude Code trusts th
 --trust codex writes a combined certificate bundle and prints the command that uses it. Neither
 edits shell profiles or any system trust store, and --trust-status shows where things stand.
 
-";
+");
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -104,10 +118,10 @@ fn run(args: &[String]) -> u8 {
         Ok(Action::Help) => {
             print!(
                 "{USAGE}{}",
-                setup::text(&setup::setup(&format!(
-                    "http://127.0.0.1:{}",
-                    args::DEFAULT_PORT
-                )))
+                setup::text(&setup::setup_for(
+                    setup::Platform::current(),
+                    &format!("http://127.0.0.1:{}", args::DEFAULT_PORT),
+                ))
             );
             0
         }

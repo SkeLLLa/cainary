@@ -11,7 +11,12 @@ struct DetailView: View {
     let state: ScanState
     @ObservedObject var navigation: Navigation
     @ObservedObject var collector: CollectorStore
+    @ObservedObject var trust: TrustStore
     let onRetry: () -> Void
+
+    /// Held here, not in the collector page, so they outlive a switch to another sidebar row.
+    @StateObject private var takeover = TakeoverController()
+    @StateObject private var page = CollectorPageState()
 
     var body: some View {
         Group {
@@ -47,10 +52,22 @@ struct DetailView: View {
                     DetailStaleBanner(at: staleAt, onRetry: onRetry)
                     Divider()
                 }
-                ScrollView {
-                    pane(report)
+                if current(report) == .collector {
+                    // The collector page scrolls its own tabs.
+                    pane(report).staleLook(staleAt != nil)
+                } else {
+                    ScrollView {
+                        pane(report)
+                    }
+                    .staleLook(staleAt != nil)
                 }
-                .staleLook(staleAt != nil)
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                CollectorPill(state: collector.state, unseenFlags: collector.unseenFlagCount) {
+                    navigation.openCollector(collector.unseenFlagCount > 0 ? .flags : .feed)
+                }
             }
         }
     }
@@ -78,22 +95,35 @@ struct DetailView: View {
                         .tag(DetailSelection.changes)
                 }
             }
-            Section("AI apps") {
+            Section("Scan", isExpanded: expandedBinding(\.scanCollapsed)) {
+                subheading("AI apps")
                 ForEach(report.apps, id: \.id) { sidebarRow($0) }
-            }
-            if !report.others.isEmpty {
-                Section("Other monitoring") {
+                if !report.others.isEmpty {
+                    subheading("Other monitoring")
                     ForEach(report.others, id: \.id) { sidebarRow($0) }
                 }
-            }
-            Section {
                 Label("Checked locations", systemImage: "doc.text.magnifyingglass")
                     .tag(DetailSelection.sources)
-                Label("OTel debug collector", systemImage: "antenna.radiowaves.left.and.right")
+            }
+            Section("Live", isExpanded: expandedBinding(\.liveCollapsed)) {
+                CollectorSidebarRow(state: collector.state, unseenFlags: collector.unseenFlagCount)
                     .tag(DetailSelection.collector)
             }
         }
         .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)
+    }
+
+    /// A section's open state; `Navigation` stores it inverted, as "collapsed", and persists it.
+    private func expandedBinding(_ key: ReferenceWritableKeyPath<Navigation, Bool>) -> Binding<
+        Bool
+    > {
+        Binding(
+            get: { !navigation[keyPath: key] },
+            set: { navigation[keyPath: key] = !$0 })
+    }
+
+    private func subheading(_ title: String) -> some View {
+        Text(title).font(.caption).foregroundStyle(.secondary).selectionDisabled()
     }
 
     private func sidebarRow(_ entry: Entry) -> some View {
@@ -117,7 +147,10 @@ struct DetailView: View {
             case .changes:
                 ChangesPaneView(report: report)
             case .collector:
-                CollectorView(store: collector)
+                CollectorView(
+                    store: collector, navigation: navigation, trust: trust, takeover: takeover,
+                    filter: $page.filter, selected: $page.selected,
+                    hostSuggestions: TelemetryHosts.suggestions(in: report))
             default:
                 CheckedLocationsView(sources: report.sources)
             }

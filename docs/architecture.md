@@ -47,7 +47,7 @@ Design rules, in priority order:
    no file gets one. The tray never asks at startup, autostart or retry; it closes its copy of
    the sockets when the collector is switched off, the port changes, the collector fails to
    start, or the tray quits (§12.6, [linux.md](linux.md#privileged-ports-root-helper)).
-   The second is the root helper `cainary-hosts-helper` (Linux only; no setuid, no file
+   The second is the root helper `cainary-hosts-helper` (Linux and macOS; no setuid, no file
    capabilities, runs nothing, takes no path from its caller). It runs only after an explicit
    "Add to /etc/hosts…" or "Remove from /etc/hosts…" click in the tray, through `pkexec` and the
    system's authentication dialog each time. It replaces or removes one marked block in
@@ -56,6 +56,14 @@ Design rules, in priority order:
    edit saves `/etc/hosts.cainary-backup`. It refuses a symlinked, non-regular, hard-linked or
    other-writable `/etc/hosts`, reserved names such as `localhost`, and more than 8 names
    ([linux.md](linux.md#adding-host-names-to-etchosts-root-helper)).
+   On macOS the same helper is built for the app (`os_macos.rs`) and runs only from the collector
+   window's "Add to /etc/hosts" and "Remove" buttons. The app copies it and checks it against its
+   own signing leaf certificate before the administrator prompt and again inside the root shell;
+   an ad-hoc build shows the manual commands instead. The collector stays on an unprivileged port
+   (8443), and the app's one-click "Enable redirect" loads a `pf` redirect from 443 into the
+   anchor `com.apple/cainary` with fixed `/sbin/pfctl` commands (it lasts until reboot, and
+   `pfctl -E` leaves `pf` on). A same-user process can fake the `osascript` password dialog
+   ([macos.md](macos.md) §2.8).
    `cainary` itself still writes nothing outside its prefs. Guards (§10) keep network code out of
    `cainary-core` and `cainary-cli`.
 2. **Truthful.** Every rule cites an official vendor doc. A rule that isn't confirmed by one is

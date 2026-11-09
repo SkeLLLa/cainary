@@ -11,9 +11,36 @@ pub struct Setup {
 }
 
 /// `endpoint` is the base URL of the first bound address (`http://[::1]:4318` under
-/// `--listen ::1`), the same string as `hello.endpoint`.
+/// `--listen ::1`), the same string as `hello.endpoint`. The Linux text.
 pub fn setup(endpoint: &str) -> Setup {
-    plain(endpoint)
+    setup_for(Platform::Linux, endpoint)
+}
+
+/// The system the instructions are written for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Platform {
+    Linux,
+    Macos,
+}
+
+impl Platform {
+    /// macOS on macOS, Linux everywhere else.
+    pub fn current() -> Self {
+        if cfg!(target_os = "macos") {
+            Platform::Macos
+        } else {
+            Platform::Linux
+        }
+    }
+}
+
+/// [`setup`] for `p`: the text differs only where a sentence is true on one system alone.
+pub fn setup_for(p: Platform, endpoint: &str) -> Setup {
+    let mut s = plain(endpoint);
+    if p == Platform::Macos {
+        s.notes.retain(|n| !n.starts_with("On Linux only programs"));
+    }
+    s
 }
 
 fn plain(endpoint: &str) -> Setup {
@@ -67,6 +94,16 @@ pub fn text(s: &Setup) -> String {
     t
 }
 
+/// The pf anchor the macOS redirect lives in: under `com.apple/` because the system
+/// `pf.conf` evaluates `com.apple/*`, so no file under /etc is edited.
+const PF_ANCHOR: &str = "com.apple/cainary";
+
+/// What makes macOS notice a changed /etc/hosts.
+const MAC_FLUSH: [&str; 2] = [
+    "sudo dscacheutil -flushcache",
+    "sudo killall -HUP mDNSResponder",
+];
+
 /// What the takeover instructions are about.
 pub struct Takeover<'a> {
     pub hosts: &'a [String],
@@ -81,8 +118,17 @@ pub struct Takeover<'a> {
 
 /// The takeover instructions, as lines. Printed, never run:
 /// the program calls neither sudo, nft nor anything that edits `/etc/hosts`. Commands
-/// are valid in fish and in sh.
+/// are valid in fish and in sh. The Linux text.
 pub fn takeover(t: &Takeover<'_>) -> Vec<String> {
+    takeover_for(Platform::Linux, t)
+}
+
+/// [`takeover`] for `p`. macOS: the redirect is a pf anchor loaded from stdin (no file is
+/// edited, and it lasts until reboot), and the DNS cache is flushed after the hosts edit.
+/// The line grammar (`N. title`, two-space command lines, `Undo:`) is the same on both;
+/// the tray parses it (linux/crates/tray-model/src/takeover_guide.rs, macos TakeoverGuide.swift).
+pub fn takeover_for(p: Platform, t: &Takeover<'_>) -> Vec<String> {
+    let mac = p == Platform::Macos;
     let mut l: Vec<String> = Vec::new();
     let p = t.port;
     let redirect = p != t.public_port;
@@ -119,14 +165,39 @@ pub fn takeover(t: &Takeover<'_>) -> Vec<String> {
             next(),
             t.public_port
         ));
-        l.push("  sudo nft add table inet cainary_otel_debug".into());
-        l.push("  sudo nft 'add chain inet cainary_otel_debug out { type nat hook output priority -100 ; }'".into());
-        if t.v4 {
-            l.push(format!("  sudo nft add rule inet cainary_otel_debug out oifname lo ip daddr 127.0.0.1 tcp dport {} redirect to :{p}", t.public_port));
+        if mac {
+            let mut rules = Vec::new();
+            if t.v4 {
+                rules.push(format!("'rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port {} -> 127.0.0.1 port {p}'", t.public_port));
+            }
+            if t.v6 {
+                rules.push(format!(
+                    "'rdr pass on lo0 inet6 proto tcp from any to ::1 port {} -> ::1 port {p}'",
+                    t.public_port
+                ));
+            }
+            l.push(format!(
+                "  printf '%s\\n' {} | sudo pfctl -a {PF_ANCHOR} -f -",
+                rules.join(" ")
+            ));
+            l.push("  sudo pfctl -E".into());
+        } else {
+            l.push("  sudo nft add table inet cainary_otel_debug".into());
+            l.push("  sudo nft 'add chain inet cainary_otel_debug out { type nat hook output priority -100 ; }'".into());
+            if t.v4 {
+                l.push(format!("  sudo nft add rule inet cainary_otel_debug out oifname lo ip daddr 127.0.0.1 tcp dport {} redirect to :{p}", t.public_port));
+            }
+            if t.v6 {
+                l.push(format!("  sudo nft add rule inet cainary_otel_debug out oifname lo ip6 daddr ::1 tcp dport {} redirect to :{p}", t.public_port));
+            }
         }
-        if t.v6 {
-            l.push(format!("  sudo nft add rule inet cainary_otel_debug out oifname lo ip6 daddr ::1 tcp dport {} redirect to :{p}", t.public_port));
-        }
+    }
+    if mac {
+        l.push(format!(
+            "{}. Flush the DNS cache, so the host names resolve to loopback now:",
+            next()
+        ));
+        l.extend(MAC_FLUSH.iter().map(|c| format!("  {c}")));
     }
     l.push(format!("{}. Trust the certificate, for the exporting process only (never disable certificate verification):", next()));
     l.push(format!(
@@ -136,7 +207,20 @@ pub fn takeover(t: &Takeover<'_>) -> Vec<String> {
     l.push(format!("  Codex: set SSL_CERT_FILE={} or CODEX_CA_CERTIFICATE={} for the codex process (see its documentation for which it honors)", quote(t.ca_path), quote(t.ca_path)));
     l.push(format!("  Certificate SHA-256: {}", t.fingerprint));
     l.push(format!("{}. Start the exporting process after this certificate is published, and restart it after every run of this program: each run creates a new CA. Deleting the file does not revoke trust a process already loaded; `cainary-otel-debug --delete-ca` removes the file.", next()));
-    if redirect {
+    if mac {
+        l.push(format!(
+            "Undo: remove the /etc/hosts lines, stop this program, {}and flush the DNS cache:",
+            if redirect {
+                "remove the redirect, "
+            } else {
+                ""
+            }
+        ));
+        if redirect {
+            l.push(format!("  sudo pfctl -a {PF_ANCHOR} -F all"));
+        }
+        l.extend(MAC_FLUSH.iter().map(|c| format!("  {c}")));
+    } else if redirect {
         l.push(
             "Undo: remove the /etc/hosts lines, stop this program, and remove the redirect:".into(),
         );
@@ -649,5 +733,111 @@ mod port_note_tests {
         assert_eq!(n.len(), 1);
         assert!(!n[0].contains("setcap") && !n[0].contains("nft"));
         assert!(n[0].contains("--port 8443"));
+    }
+}
+
+#[cfg(test)]
+mod golden_tests {
+    use super::*;
+    use std::path::Path;
+
+    /// Compare with `tests/golden/<name>`; `CAINARY_BLESS=1` rewrites it.
+    fn golden(name: &str, got: &str) {
+        let file = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/golden")
+            .join(name);
+        if std::env::var_os("CAINARY_BLESS").is_some() {
+            std::fs::write(&file, got).unwrap();
+        } else {
+            let want = std::fs::read_to_string(&file)
+                .unwrap_or_else(|e| panic!("{name}: {e} (CAINARY_BLESS=1)"));
+            assert!(
+                got == want,
+                "{name} differs; re-bless with CAINARY_BLESS=1\n{got}"
+            );
+        }
+    }
+
+    fn render(p: Platform, port: u16) -> String {
+        let hosts = vec!["otel.example-corp.test".to_string()];
+        let lines = takeover_for(
+            p,
+            &Takeover {
+                hosts: &hosts,
+                ca_path: "/home/u/.local/state/cainary/otel-debug-ca.pem",
+                fingerprint: "ab",
+                port,
+                public_port: 443,
+                v4: true,
+                v6: true,
+            },
+        );
+        lines.iter().map(|l| format!("{l}\n")).collect()
+    }
+
+    #[test]
+    fn linux_text_is_pinned() {
+        golden(
+            "takeover-linux-redirect.txt",
+            &render(Platform::Linux, 8443),
+        );
+        golden("takeover-linux-direct.txt", &render(Platform::Linux, 443));
+        golden(
+            "plain-linux.txt",
+            &text(&setup_for(Platform::Linux, "http://127.0.0.1:4318")),
+        );
+    }
+
+    #[test]
+    fn macos_text_is_pinned() {
+        golden(
+            "takeover-macos-redirect.txt",
+            &render(Platform::Macos, 8443),
+        );
+        golden("takeover-macos-direct.txt", &render(Platform::Macos, 443));
+        golden(
+            "plain-macos.txt",
+            &text(&setup_for(Platform::Macos, "http://127.0.0.1:4318")),
+        );
+    }
+
+    #[test]
+    fn the_wrappers_are_the_linux_text() {
+        assert_eq!(setup("http://x"), setup_for(Platform::Linux, "http://x"));
+    }
+
+    #[test]
+    fn macos_has_no_linux_machinery_and_flushes_in_step_and_undo() {
+        for port in [8443, 443] {
+            let r = render(Platform::Macos, port);
+            for linux in ["nft", "nscd", "nsswitch", "only programs run by your own"] {
+                assert!(!r.contains(linux), "{linux}: {r}");
+            }
+            assert_eq!(r.matches("sudo dscacheutil -flushcache").count(), 2, "{r}");
+            assert_eq!(
+                r.matches("sudo killall -HUP mDNSResponder").count(),
+                2,
+                "{r}"
+            );
+            assert_eq!(r.contains("pfctl"), port != 443, "{r}");
+        }
+        let plain = text(&setup_for(Platform::Macos, "http://x"));
+        assert!(!plain.contains("only programs run by your own user"));
+        assert!(
+            text(&setup_for(Platform::Linux, "http://x"))
+                .contains("only programs run by your own user")
+        );
+    }
+
+    #[test]
+    fn macos_steps_are_numbered_without_gaps() {
+        for (port, last) in [(8443, 5), (443, 4)] {
+            let r = render(Platform::Macos, port);
+            let nums: Vec<usize> = r
+                .lines()
+                .filter_map(|l| l.split_once(". ")?.0.parse().ok())
+                .collect();
+            assert_eq!(nums, (1..=last).collect::<Vec<_>>(), "{r}");
+        }
     }
 }

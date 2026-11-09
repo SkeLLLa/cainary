@@ -23,6 +23,14 @@ struct StoredAlert: Identifiable, Equatable, Sendable {
     var lineBytes: Int
 }
 
+/// Why the collector failed to start or exited: the collector's stable `code` and `port` when it
+/// reported them (`port-in-use`, `tls-no-host`), and a message fit to show.
+struct CollectorFailure: Equatable, Sendable {
+    var code: String?
+    var port: Int?
+    var message: String
+}
+
 @MainActor
 final class CollectorStore: ObservableObject {
     enum State: Equatable {
@@ -34,6 +42,8 @@ final class CollectorStore: ObservableObject {
 
     static let maxBatches = 50
     static let maxAlerts = 200
+    static let maxErrors = 20
+    static let maxStderrLines = 50
     static let maxRetainedBytes = 16 << 20
     static let notifyInterval: TimeInterval = 60
     /// Shown as the quit budget; a toggle off allows 2 s.
@@ -48,11 +58,26 @@ final class CollectorStore: ObservableObject {
     /// Red flags seen since the collector started, including ones no longer retained.
     @Published private(set) var alertTotal = 0
     @Published private(set) var batchTotal = 0
-    @Published private(set) var lastError: String?
+    /// The newest 20 `error` lines, newest first.
+    @Published private(set) var errors: [CollectorError] = []
+    /// The child's last stderr lines (at most 50), each through `safeLine`. Set when it exits.
+    @Published private(set) var stderrTail: [String] = []
+    /// Why the collector failed to start or exited; cleared by the next start.
+    @Published private(set) var failure: CollectorFailure?
+    /// Red flags the user has looked at; `unseenFlagCount` is what is left.
+    @Published private(set) var seenFlagCount = 0
+    /// Feed pause: while on, rows that arrive are held back from `feedBatches` and `feedAlerts`.
+    @Published private(set) var paused = false
     /// The child's stderr when it stopped after a `listen` error: the privileged-port note, for a
-    /// selectable box. Rare on macOS, where low ports are normally allowed.
+    /// selectable box. Rare on macOS: the settings keep both ports at 1024 and up, since loopback
+    /// ports below that need root.
     @Published private(set) var failureNote: String?
     @Published private(set) var settings: CollectorSettings
+    /// Bumped on every TLS-mode `hello`; the trust status is refreshed on each one.
+    @Published private(set) var tlsHelloCount = 0
+    /// The takeover steps from the last TLS-mode `hello`, kept after the collector stops so
+    /// Setup can still show their undo commands.
+    @Published private(set) var lastTakeoverLines: [String]?
 
     private let defaults: KeyValueStore
     private let poster: AlertPosting?
@@ -70,6 +95,10 @@ final class CollectorStore: ObservableObject {
     private var retainedBytes = 0
     private var lastNotified: [String: Date] = [:]
     private var sawListenError = false
+    /// The first `error` before `hello`: what the collector said about why it couldn't start.
+    private var startupError: CollectorError?
+    /// While paused: rows with an id above this are held. Nil when not paused.
+    private var pausedAfterId: Int?
     private var stopping: Task<Void, Never>?
     private var restartTask: Task<Void, Never>?
 
@@ -100,6 +129,59 @@ final class CollectorStore: ObservableObject {
         }
     }
 
+    // MARK: Flags and the feed
+
+    /// Red flags since the collector started (retained or not).
+    var flagCount: Int { alertTotal }
+    var unseenFlagCount: Int { max(0, alertTotal - seenFlagCount) }
+
+    func markFlagsSeen() {
+        seenFlagCount = alertTotal
+    }
+
+    /// The batches the feed shows: all of them, or those from before the pause.
+    var feedBatches: [StoredBatch] {
+        guard let cut = pausedAfterId else { return batches }
+        return batches.filter { $0.id <= cut }
+    }
+
+    var feedAlerts: [StoredAlert] {
+        guard let cut = pausedAfterId else { return alerts }
+        return alerts.filter { $0.id <= cut }
+    }
+
+    /// Rows held back while paused: batches and alerts that arrived since.
+    var heldCount: Int {
+        guard let cut = pausedAfterId else { return 0 }
+        return batches.filter { $0.id > cut }.count + alerts.filter { $0.id > cut }.count
+    }
+
+    func pause() {
+        guard !paused else { return }
+        paused = true
+        pausedAfterId = nextId
+    }
+
+    /// Merges the held rows into the feed.
+    func resume() {
+        paused = false
+        pausedAfterId = nil
+    }
+
+    func togglePause() {
+        if paused { resume() } else { pause() }
+    }
+
+    /// Empties the feed, held rows included. State, errors and the red-flag count stay; nothing
+    /// is left to look at, so the flags count as seen. A pause stays on.
+    func clearFeed() {
+        batches = []
+        alerts = []
+        retainedBytes = 0
+        seenFlagCount = alertTotal
+        if paused { pausedAfterId = nextId }
+    }
+
     // MARK: Settings
 
     /// Saves `new`. Turning it on or off starts or stops the child; any other change that
@@ -128,9 +210,31 @@ final class CollectorStore: ObservableObject {
 
     // MARK: Lifecycle
 
-    /// Starts at launch when the toggle is on.
-    func launchIfEnabled() {
-        if settings.enabled { start() }
+    /// Starts at launch when "start when cAInary starts" is on and the settings can run.
+    func launchAtStartIfWanted() {
+        guard settings.startAtLaunch else {
+            // Not asked for: the collector starts off, and stays off across restarts and rule edits.
+            if settings.enabled {
+                var off = settings
+                off.enabled = false
+                settings = off
+                defaults.collectorSettings = off
+            }
+            return
+        }
+        if let problem = settings.problem {
+            state = .failed(problem.message)
+            failure = CollectorFailure(
+                code: problem.code.rawValue, port: nil, message: problem.message)
+            return
+        }
+        if settings.enabled {
+            start()
+        } else {
+            var on = settings
+            on.enabled = true
+            apply(on)
+        }
     }
 
     func start() {
@@ -143,16 +247,24 @@ final class CollectorStore: ObservableObject {
         alertTotal = 0
         batchTotal = 0
         retainedBytes = 0
-        lastError = nil
+        errors = []
+        stderrTail = []
+        failure = nil
         failureNote = nil
         sawListenError = false
+        startupError = nil
+        seenFlagCount = 0
+        paused = false
+        pausedAfterId = nil
         lastNotified = [:]
-        if let problem = settings.takeoverProblem {
-            state = .failed(problem)
+        if let problem = settings.problem {
+            state = .failed(problem.message)
+            failure = CollectorFailure(
+                code: problem.code.rawValue, port: nil, message: problem.message)
             return
         }
         guard let config = settings.configLine else {
-            state = .failed("Too many red-flag patterns.")
+            fail("Too many red-flag patterns.", stopChild: false)
             return
         }
         state = .starting
@@ -166,7 +278,7 @@ final class CollectorStore: ObservableObject {
     }
 
     private func launch(config: Data, generation mine: Int) {
-        let child = makeClient(helper, settings.arguments, config) { event in
+        let child = makeClient(helper, settings.arguments, config) { [weak self] event in
             Task { @MainActor [weak self] in self?.handle(event, generation: mine) }
         }
         client = child
@@ -224,9 +336,14 @@ final class CollectorStore: ObservableObject {
             guard case .failed = state else {
                 let first = stderr.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
                 if sawListenError, !stderr.isEmpty { failureNote = stderr.plainMultilineText }
+                stderrTail = Self.tail(of: stderr)
+                // A startup error from stdout beats the first stderr line, and either beats the status.
+                let said = startupError?.message.flatMap { $0.isEmpty ? nil : $0 }
+                let text = said ?? (first.isEmpty ? "exited with code \(code)." : first)
                 return fail(
                     first.isEmpty
-                        ? "Stopped: exited with code \(code)." : "Stopped: \(first.plainText)")
+                        ? "Stopped: exited with code \(code)." : "Stopped: \(first.plainText)",
+                    code: startupError?.code, port: startupError?.port, text: text.safeLine)
             }
         case .failed(let reason): fail("Couldn't start: \(reason.plainText)")
         }
@@ -234,7 +351,13 @@ final class CollectorStore: ObservableObject {
 
     private func handleLine(_ line: Data) {
         switch CollectorEvent.decode(line) {
-        case .hello(let hello): state = .listening(hello)
+        case .hello(let hello):
+            state = .listening(hello)
+            if hello.mode == "tls-receiver" {
+                tlsHelloCount += 1
+                if let lines = hello.setup?.takeover { lastTakeoverLines = lines }
+            }
+            failure = nil
         case .batch(let batch):
             batchTotal += 1
             batches.append(StoredBatch(id: newId(), batch: batch, line: line))
@@ -245,7 +368,9 @@ final class CollectorStore: ObservableObject {
             retain(line.count)
             notify(alert)
         case .error(let error):
-            lastError = error.message?.plainText
+            if startupError == nil, case .starting = state { startupError = error }
+            errors.insert(error, at: 0)
+            if errors.count > Self.maxErrors { errors.removeLast(errors.count - Self.maxErrors) }
             if error.source == "listen" { sawListenError = true }
         case .unsupported:
             fail("Update cAInary: this collector speaks a newer format.")
@@ -284,10 +409,21 @@ final class CollectorStore: ObservableObject {
         retainedBytes -= alerts.removeFirst().lineBytes
     }
 
-    /// Stops the child and shows why.
-    private func fail(_ reason: String) {
+    /// The last 50 non-empty stderr lines, each through `safeLine`.
+    private static func tail(of stderr: String) -> [String] {
+        let lines = stderr.split(whereSeparator: \.isNewline).map { String($0).safeLine }
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        return Array(lines.suffix(maxStderrLines))
+    }
+
+    /// Stops the child and shows why. `text` is the failure's message when it differs.
+    private func fail(
+        _ reason: String, code: String? = nil, port: Int? = nil, text: String? = nil,
+        stopChild: Bool = true
+    ) {
         state = .failed(reason)
-        guard let child = client else { return }
+        failure = CollectorFailure(code: code, port: port, message: text ?? reason)
+        guard stopChild, let child = client else { return }
         client = nil
         stopInBackground(child)
     }

@@ -1511,13 +1511,23 @@ fn check_golden(name: &str, fixture_rel: &str, path: &str, batches: usize) {
     let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/golden")
         .join(format!("{name}.jsonl"));
-    if std::env::var_os("CAINARY_BLESS").is_some() {
+    // Bless on Linux only: the files hold the Linux hello.
+    if cfg!(target_os = "linux") && std::env::var_os("CAINARY_BLESS").is_some() {
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(&file, &got).unwrap();
         return;
     }
     let want = std::fs::read_to_string(&file)
         .unwrap_or_else(|e| panic!("{}: {e} (run with CAINARY_BLESS=1)", file.display()));
+    // The goldens are blessed on Linux; elsewhere the hello lacks the Linux-only peer note.
+    let want = if cfg!(target_os = "linux") {
+        want
+    } else {
+        want.replace(
+            ",\"On Linux only programs run by your own user can send: connections from another local user are refused.\"",
+            "",
+        )
+    };
     assert!(
         got == want,
         "{name} differs from {}; re-bless with CAINARY_BLESS=1",

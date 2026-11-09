@@ -30,26 +30,15 @@ not a schedule: there are no dates, and plans can change. The design of what exi
   repositories, the CLI on crates.io and through mise or packslip
   ([distribution.md](distribution.md)).
 
-## macOS: catching up with the Linux tray
+## macOS: remaining gaps with the Linux tray
 
-The newer collector features came to Linux first. Planned for macOS, roughly in this order:
+The collector window (Feed, Red flags, Rules, Logs, Setup), the sidebar Live row, the popover
+collector line, the step-by-step takeover guide with its `pf` redirect and DNS flush, and one-click
+`/etc/hosts` and redirect editing are done ([macos.md](macos.md) §2.8). Still open:
 
-- **Correct takeover steps on macOS.** The 443 redirect and its undo as a `pf` rule instead of
-  Linux `nft` commands, and how to flush the macOS DNS cache.
-- **The collector page.** Feed, Red flags, Setup and Logs tabs as on Linux: search, signal and
-  flag filters, pause, red flags grouped by rule with "Show in feed", and the collector's own
-  messages.
-- **The collector in the popover.** Its state and red-flag count in the popover, and the count on
-  the menu bar icon.
-- **Smaller gaps.** Per-agent trust status, the certificate fingerprint and the Codex start
-  command; the third icon style; "start the collector when cAInary starts" separate from turning
-  it on now.
-- **The step-by-step takeover guide.** Each step with its status and its own undo, and a warning
-  when `/etc/hosts` still points the takeover names here.
-- **One-click `/etc/hosts` editing** with an administrator prompt, and a check that the names
-  resolve to this Mac.
-- **Port 443.** Through a `pf` redirect, so the collector itself keeps an unprivileged port.
+- **Menu bar icon.** The red-flag count on the icon, and the third icon style.
 - **Own-user check** (optional). Refuse telemetry from other local users, as on Linux.
+- **A redirect that survives a reboot.** Today the `pf` redirect lasts until restart.
 
 ## Findings cAInary set up itself
 

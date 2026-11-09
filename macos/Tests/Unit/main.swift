@@ -10,6 +10,12 @@ enum UnitTests {
         signal(SIGPIPE, SIG_IGN)
 
         decodeTests()
+        guideTests()
+        prefsMigrationTests()
+        hostsFileTests()
+        await hostLookupTests()
+        await hostsEditorTests()
+        modelTests()
         payloadTests()
         trackerTests()
         notifierTests()
@@ -21,6 +27,7 @@ enum UnitTests {
         await copyReportStoreTests()
         await collectorTests()
         await trustTests()
+        await takeoverControllerTests()
 
         exit(finishChecks())
     }

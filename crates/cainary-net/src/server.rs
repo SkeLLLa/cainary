@@ -483,7 +483,7 @@ pub fn start(cfg: Config, ready: Ready) -> Result<Server, SetupError> {
     #[allow(unused_mut)]
     let mut public_port: Option<u16> = None;
     #[allow(unused_mut)]
-    let mut setup_info = setup::setup(&endpoint);
+    let mut setup_info = setup::setup_for(setup::Platform::current(), &endpoint);
     #[allow(unused_mut)]
     let mut mode = "receiver";
     #[allow(unused_mut)]
@@ -506,15 +506,18 @@ pub fn start(cfg: Config, ready: Ready) -> Result<Server, SetupError> {
             format!("SSL_CERT_FILE={ca_path}"),
             format!("CODEX_CA_CERTIFICATE={ca_path}"),
         ];
-        setup_info.takeover = Some(setup::takeover(&setup::Takeover {
-            hosts: &tls_hosts,
-            ca_path: &ca_path,
-            fingerprint: &fingerprint,
-            port,
-            public_port: run.public_port,
-            v4: addrs.iter().any(SocketAddr::is_ipv4),
-            v6: addrs.iter().any(SocketAddr::is_ipv6),
-        }));
+        setup_info.takeover = Some(setup::takeover_for(
+            setup::Platform::current(),
+            &setup::Takeover {
+                hosts: &tls_hosts,
+                ca_path: &ca_path,
+                fingerprint: &fingerprint,
+                port,
+                public_port: run.public_port,
+                v4: addrs.iter().any(SocketAddr::is_ipv4),
+                v6: addrs.iter().any(SocketAddr::is_ipv6),
+            },
+        ));
         tls_hello = Some(output::TlsHello {
             hosts: tls_hosts.clone(),
             ca_path,

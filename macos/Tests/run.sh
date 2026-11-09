@@ -3,6 +3,9 @@
 # XCTest). Run from the repo root (make ui-test does). The unit build compiles every Sources/*.swift
 # except main.swift, plus Tests/Support and Tests/Unit, into target/macos-tests/tests.
 set -eu
+# Stable snapshot clocks.
+TZ=UTC
+export TZ
 
 here=$(cd "$(dirname "$0")" && pwd)
 macos=$(dirname "$here")
@@ -18,14 +21,17 @@ swiftc=${SWIFTC:-swiftc}
 # Sources minus main.swift; the tests bring their own @main.
 sources=$(find "$macos/Sources" -name '*.swift' ! -name main.swift | sort)
 
-# shellcheck disable=SC2086 # the lists are paths without spaces
-$swiftc -parse-as-library -swift-version 6 \
-  -sdk "$sdk" -module-cache-path "$tmp/swift-mc" -target "$arch-apple-macos14" \
-  -Onone -g -D DEBUG \
-  $sources "$here"/Support/*.swift "$here"/Unit/*.swift \
-  -o "$out/tests"
+# CAINARY_SNAPSHOTS_ONLY=1 skips the unit step (make screenshots).
+if [ -z "${CAINARY_SNAPSHOTS_ONLY:-}" ]; then
+  # shellcheck disable=SC2086 # the lists are paths without spaces
+  $swiftc -parse-as-library -swift-version 6 \
+    -sdk "$sdk" -module-cache-path "$tmp/swift-mc" -target "$arch-apple-macos14" \
+    -Onone -g -D DEBUG \
+    $sources "$here"/Support/*.swift "$here"/Unit/*.swift \
+    -o "$out/tests"
 
-CAINARY_ROOT="$root" "$out/tests"
+  CAINARY_ROOT="$root" "$out/tests"
+fi
 
 # Snapshots: the real helper on fixtures, rendered to target/ui-snapshots/ (§5c). Needs
 # target/debug/cainary, which make ui-test builds first.

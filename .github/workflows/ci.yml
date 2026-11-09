@@ -190,7 +190,7 @@ jobs:
         run: |
           set -euo pipefail
           APP="dist/cAInary.app"
-          for BIN in "${APP}/Contents/MacOS/cAInary" "${APP}/Contents/Helpers/cainary" "${APP}/Contents/Helpers/cainary-otel-debug"; do
+          for BIN in "${APP}/Contents/MacOS/cAInary" "${APP}/Contents/Helpers/cainary" "${APP}/Contents/Helpers/cainary-otel-debug" "${APP}/Contents/Helpers/cainary-hosts-helper"; do
             ARCHS_FOUND="$(lipo -archs "${BIN}")"
             echo "${BIN}: ${ARCHS_FOUND}"
             for arch in arm64 x86_64; do
@@ -204,6 +204,7 @@ jobs:
           "${APP}/Contents/Helpers/cainary" --version
           "${APP}/Contents/Helpers/cainary-otel-debug" --version
           "${APP}/Contents/Helpers/cainary-otel-debug" --list-presets
+          "${APP}/Contents/Helpers/cainary-hosts-helper" --version
       - name: Upload bundle
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

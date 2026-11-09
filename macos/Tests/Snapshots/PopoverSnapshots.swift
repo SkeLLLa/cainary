@@ -9,13 +9,14 @@ private struct PopoverHost: View {
     var notInstalledExpanded = false
     var legendExpanded = false
     var trackingUnavailable = false
+    var collector: CollectorPillState?
 
     var body: some View {
         PopoverView(
             state: state,
             notInstalledExpanded: .constant(notInstalledExpanded),
             legendExpanded: .constant(legendExpanded),
-            trackingUnavailable: trackingUnavailable)
+            trackingUnavailable: trackingUnavailable, collector: collector)
     }
 }
 
@@ -40,13 +41,14 @@ func popoverSnapshots(root: URL, out: URL) async {
     func snap(
         _ file: String, _ state: ScanState, dark: Bool = false,
         notInstalled: Bool = false, legend: Bool = false, untracked: Bool = false,
+        collector: CollectorPillState? = CollectorPillState(state: .off),
         heights: ClosedRange<CGFloat> = 200...1400
     ) {
         let url = out.appendingPathComponent(file)
         let size = writePNG(
             PopoverHost(
                 state: state, notInstalledExpanded: notInstalled, legendExpanded: legend,
-                trackingUnavailable: untracked),
+                trackingUnavailable: untracked, collector: collector),
             to: url, dark: dark)
         checkPNG(file, url, size: size, heights: heights)
     }
@@ -91,6 +93,18 @@ func popoverSnapshots(root: URL, out: URL) async {
     snap(
         "popover-claude-code-org-macos-expanded.png", .ready(org, at: now),
         notInstalled: true, legend: true)
+    // The collector line: listening with unseen red flags, and a failure.
+    if case .hello(let hello) = CollectorEvent.decode(CollectorSamples.data(CollectorSamples.hello))
+    {
+        snap(
+            "popover-collector-flags.png", .ready(org, at: now),
+            collector: CollectorPillState(state: .listening(hello), unseenFlags: 3))
+    } else {
+        check("popover: sample hello decodes", false)
+    }
+    snap(
+        "popover-collector-failed.png", .ready(org, at: now),
+        collector: CollectorPillState(state: .failed("Port 4318 is in use.")))
     snap("popover-failed.png", .failed(.timedOut, last: LastScan(report: org, at: now)))
     // No report to show, so these two are short: only the banner or the spinner and the footer.
     snap("popover-failed-nolast.png", .failed(.helperMissing, last: nil), heights: 80...1400)

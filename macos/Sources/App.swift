@@ -19,7 +19,7 @@ struct CainaryApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            PopoverHost(store: store, navigation: navigation)
+            PopoverHost(store: store, navigation: navigation, collector: collector)
         } label: {
             LabelHost(
                 store: store, navigation: navigation, collector: collector, delegate: delegate)
@@ -27,17 +27,16 @@ struct CainaryApp: App {
         .menuBarExtraStyle(.window)
 
         Window("cAInary", id: WindowOpener.detailsID) {
-            DetailsHost(store: store, navigation: navigation, collector: collector)
+            DetailsHost(
+                store: store, navigation: navigation, collector: collector, trust: trust)
         }
         .defaultSize(width: 780, height: 560)
         .commandsRemoved()
 
         Settings {
             SettingsView(
-                onRefreshChanged: { store.restartTimer() }, collector: collector, trust: trust,
-                hostSuggestions: store.state.lastGood.map {
-                    TelemetryHosts.suggestions(in: $0.report)
-                } ?? [])
+                onRefreshChanged: { store.restartTimer() }, collector: collector,
+                navigation: navigation)
         }
     }
 }
@@ -107,9 +106,15 @@ private struct LabelHost: View {
             .task {
                 WindowOpener.shared.install(openWindow: openWindow, openSettings: openSettings)
                 delegate.openEntry = { id in
-                    // A red-flag notification opens the collector pane; anything else is an entry.
-                    navigation.select(
-                        id.hasPrefix(CollectorStore.notificationPrefix) ? .collector : .entry(id))
+                    // A red-flag notification opens the collector's Flags tab on that flag;
+                    // anything else is an entry.
+                    if id.hasPrefix(CollectorStore.notificationPrefix) {
+                        navigation.flagFocus = String(
+                            id.dropFirst(CollectorStore.notificationPrefix.count))
+                        navigation.openCollector(.flags)
+                    } else {
+                        navigation.select(.entry(id))
+                    }
                     WindowOpener.shared.openDetails()
                 }
                 delegate.onTerminate = { collector.stopForQuit() }
@@ -118,7 +123,7 @@ private struct LabelHost: View {
                     actions: .live(store: store, navigation: navigation),
                     canCopy: { store.state.lastGood != nil })
                 store.start()
-                collector.launchIfEnabled()
+                collector.launchAtStartIfWanted()
             }
     }
 }
@@ -127,6 +132,7 @@ private struct LabelHost: View {
 private struct PopoverHost: View {
     @ObservedObject var store: ReportStore
     @ObservedObject var navigation: Navigation
+    @ObservedObject var collector: CollectorStore
     @AppStorage(PrefKey.notInstalledExpanded, store: Prefs.defaults) private var notInstalled =
         false
 
@@ -137,6 +143,8 @@ private struct PopoverHost: View {
                 notInstalledExpanded: $notInstalled,
                 legendExpanded: $navigation.legendExpanded,
                 trackingUnavailable: store.trackingUnavailable,
+                collector: CollectorPillState(
+                    state: collector.state, unseenFlags: collector.unseenFlagCount),
                 actions: actions
             )
             .background(OverlayScrollers())
@@ -164,6 +172,10 @@ extension PopoverActions {
                 WindowOpener.shared.openDetails()
             },
             openDetails: { WindowOpener.shared.openDetails() },
+            openCollector: { tab in
+                navigation.openCollector(tab)
+                WindowOpener.shared.openDetails()
+            },
             openChanges: {
                 navigation.select(.changes)
                 WindowOpener.shared.openDetails()
@@ -228,10 +240,11 @@ private struct DetailsHost: View {
     @ObservedObject var store: ReportStore
     @ObservedObject var navigation: Navigation
     @ObservedObject var collector: CollectorStore
+    @ObservedObject var trust: TrustStore
 
     var body: some View {
         DetailView(
             state: store.state, navigation: navigation, collector: collector,
-            onRetry: { store.refresh() })
+            trust: trust, onRetry: { store.refresh() })
     }
 }

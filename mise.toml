@@ -67,6 +67,14 @@ run = "make check"
 description = "macOS app unit checks and snapshots (target/ui-snapshots/)"
 run = "make ui-test"
 
+[tasks.screenshots]
+description = "Snapshots only, then copy the curated PNGs to docs/screenshots/macos/"
+run = "make screenshots"
+
+[tasks."linux:screenshots"]
+description = "Linux QML snapshots, then copy the curated PNGs to docs/screenshots/linux/ (needs Qt 6)"
+run = "make screenshots-linux"
+
 [tasks.bundle]
 description = "Build the macOS app for this Mac: dist/cAInary.app (+ zip)"
 alias = "app"

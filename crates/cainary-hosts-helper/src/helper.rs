@@ -4,7 +4,8 @@
 //! `/etc/hosts` is the commit point: every `error` happens before it. Exit 0 on `ok`, 2 on a
 //! refused precondition (bad arguments, not run by pkexec, too many or reserved names), 1 on any
 //! other error. stderr stays empty. It reads no stdin, takes no path from the caller, runs
-//! nothing and reads only `PKEXEC_UID` from the environment.
+//! nothing and reads only the invoker uid (`PKEXEC_UID`, on macOS `CAINARY_HOSTS_UID`) from the
+//! environment.
 
 use std::io::Write;
 use std::process::exit;
@@ -27,6 +28,7 @@ pub enum Fail {
     NotRegular,
     Unprotected,
     MountPoint,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     NoMountId,
     Hardlinked,
     TooLarge,
@@ -176,7 +178,7 @@ fn run_checked(args: &[String]) -> Result<(Op, Done), Fail> {
     let op = parse_args(args)?;
     // SAFETY: geteuid(2) cannot fail.
     let root = unsafe { libc::geteuid() } == 0;
-    let uid = parse_uid(std::env::var("PKEXEC_UID").ok().as_deref()).filter(|_| root);
+    let uid = parse_uid(crate::os::invoker_uid().as_deref()).filter(|_| root);
     uid.ok_or(Fail::NotPkexec)?;
     let node = nodename();
     check_reserved(&op, &node)?;

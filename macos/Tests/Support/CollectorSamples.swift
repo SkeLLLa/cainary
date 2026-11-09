@@ -16,6 +16,18 @@ enum CollectorSamples {
     static let error =
         #"{"v":1,"type":"error","ts":"2026-01-01T12:00:06Z","source":"http","status":415,"method":"POST","path":"/v1/logs","message":"protobuf is not supported"}"#
 
+    static let errorPortInUse =
+        #"{"v":1,"type":"error","ts":"2026-01-01T12:00:00Z","source":"listen","code":"port-in-use","message":"127.0.0.1:4318 is already in use","port":4318}"#
+
+    static let errorTLSNoHost =
+        #"{"v":1,"type":"error","ts":"2026-01-01T12:00:00Z","source":"tls","code":"tls-no-host","message":"no host names to serve"}"#
+
+    static let errorTLSCount =
+        #"{"v":1,"type":"error","ts":"2026-01-01T12:00:08Z","source":"tls","message":"handshake failed","count":3}"#
+
+    static let batchProtobufGzip =
+        #"{"v":1,"type":"batch","ts":"2026-01-01T12:00:09Z","seq":2,"signal":"logs","path":"/v1/logs","host":"otel.example-corp.test","bytes":812,"format":"protobuf","encoding":"gzip","records":1}"#
+
     /// A future type, with keys the app doesn't know: skipped.
     static let future =
         #"{"v":1,"type":"leak","ts":"2026-01-01T12:00:07Z","host":"example.invalid"}"#

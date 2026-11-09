@@ -78,6 +78,7 @@ func collectorTests() async {
     await clientTests2()
     await storeRetentionTests()
     await storeProcessTests()
+    await storeStateTests()
 }
 
 // MARK: - Line contract
@@ -401,7 +402,9 @@ private func storeRetentionTests() async {
     feed("garbage")
     feed(CollectorSamples.error)
     check("collector store: unknown lines skipped", store.batches.isEmpty && store.alerts.isEmpty)
-    check("collector store: error message kept", store.lastError == "protobuf is not supported")
+    check(
+        "collector store: error message kept",
+        store.errors.first?.message?.plainText == "protobuf is not supported")
 
     for _ in 0..<60 { feed(CollectorSamples.batch) }
     check("collector store: last 50 batches", store.batches.count == 50 && store.batchTotal == 60)
@@ -511,6 +514,7 @@ private func storeProcessTests() async {
     let mem = MemoryStore()
     var s = CollectorSettings()
     s.enabled = true
+    s.startAtLaunch = true
     s.patterns = [CollectorPattern(name: "customer", pattern: "acme-internal")]
     mem.collectorSettings = s
     let store = CollectorStore(
@@ -521,7 +525,7 @@ private func storeProcessTests() async {
         return false
     }
 
-    store.launchIfEnabled()
+    store.launchAtStartIfWanted()
     await eventually("collector store: starts when enabled") { listening() }
     check(
         "collector store: argv has no pattern",
@@ -595,4 +599,282 @@ private func storeProcessTests() async {
     unsetenv("CAINARY_STUB_PIDFILE")
     unsetenv("CAINARY_STUB_ARGS")
     unsetenv("CAINARY_STUB_CONFIG")
+}
+
+// MARK: - Errors, failure, flags, pause
+
+/// A store with no real child: events are fed by hand. `start()` leaves it `.starting` until the
+/// test stops it, so nothing is spawned.
+@MainActor
+private func fedStore(
+    settings: CollectorSettings = CollectorSettings(), defaults: MemoryStore = MemoryStore()
+) -> CollectorStore {
+    defaults.collectorSettings = settings
+    return CollectorStore(
+        defaults: defaults, helper: URL(fileURLWithPath: "/nonexistent/collector"))
+}
+
+@MainActor
+private func storeStateTests() async {
+    func feed(_ store: CollectorStore, _ line: String) {
+        store.handle(.line(CollectorSamples.data(line)), generation: store.generation)
+    }
+
+    // Errors: newest 20, newest first, with the new fields.
+    let errs = fedStore()
+    feed(errs, CollectorSamples.hello)
+    for _ in 0..<25 { feed(errs, CollectorSamples.error) }
+    feed(errs, CollectorSamples.errorTLSCount)
+    check("collector state: errors capped at 20", errs.errors.count == 20)
+    check("collector state: newest error first", errs.errors.first?.count == 3)
+
+    // A startup error with a code becomes the failure when the child exits.
+    let port = fedStore()
+    port.start()
+    feed(port, CollectorSamples.errorPortInUse)
+    port.handle(
+        .exited(1, stderr: "cainary-otel-debug: listen failed\nsecond\u{1b}[31m line\n"),
+        generation: port.generation)
+    check(
+        "collector state: port-in-use failure",
+        port.failure
+            == CollectorFailure(
+                code: "port-in-use", port: 4318, message: "127.0.0.1:4318 is already in use"))
+    var isFailed = false
+    if case .failed = port.state { isFailed = true }
+    check("collector state: failed state", isFailed)
+    check(
+        "collector state: stderr tail is safe",
+        port.stderrTail == ["cainary-otel-debug: listen failed", "second\\u{001B}[31m line"])
+    port.stop()
+
+    let host = fedStore()
+    host.start()
+    feed(host, CollectorSamples.errorTLSNoHost)
+    host.handle(.exited(2, stderr: ""), generation: host.generation)
+    check(
+        "collector state: tls-no-host failure",
+        host.failure?.code == "tls-no-host" && host.failure?.port == nil)
+    host.stop()
+
+    // Without a startup error the first stderr line, then the exit status, is the message.
+    let bare = fedStore()
+    bare.start()
+    bare.handle(.exited(3, stderr: "boom\n"), generation: bare.generation)
+    check(
+        "collector state: stderr line is the message",
+        bare.failure == CollectorFailure(code: nil, port: nil, message: "boom"))
+    bare.stop()
+    let status = fedStore()
+    status.start()
+    status.handle(.exited(3, stderr: ""), generation: status.generation)
+    check(
+        "collector state: exit status is the message",
+        status.failure?.message == "exited with code 3.")
+    status.stop()
+
+    // An error after hello is not a startup error.
+    let late = fedStore()
+    late.start()
+    feed(late, CollectorSamples.hello)
+    feed(late, CollectorSamples.errorPortInUse)
+    late.handle(.exited(1, stderr: "gone"), generation: late.generation)
+    check("collector state: late error is no startup error", late.failure?.code == nil)
+    late.stop()
+
+    // A new start clears the failure, errors and stderr; hello clears it too.
+    let again = fedStore()
+    again.start()
+    feed(again, CollectorSamples.errorPortInUse)
+    again.handle(.exited(1, stderr: "x"), generation: again.generation)
+    check("collector state: failure set", again.failure != nil && !again.stderrTail.isEmpty)
+    again.retry()
+    check(
+        "collector state: start clears failure",
+        again.failure == nil && again.errors.isEmpty && again.stderrTail.isEmpty)
+    feed(again, CollectorSamples.hello)
+    check("collector state: listening after retry", again.failure == nil)
+    again.stop()
+
+    // The stderr tail keeps the last 50 lines.
+    let many = fedStore()
+    many.start()
+    many.handle(
+        .exited(1, stderr: (1...80).map { "line \($0)" }.joined(separator: "\n")),
+        generation: many.generation)
+    check(
+        "collector state: stderr tail is 50 lines",
+        many.stderrTail.count == 50 && many.stderrTail.first == "line 31"
+            && many.stderrTail.last == "line 80")
+    many.stop()
+
+    // Settings that can't run fail with the settings code.
+    var bad = CollectorSettings()
+    bad.takeover = true
+    let blocked = fedStore(settings: bad)
+    blocked.start()
+    check(
+        "collector state: settings problem is a failure",
+        blocked.failure?.code == "tls-no-host" && blocked.failure?.port == nil)
+
+    // Unseen flags.
+    let flags = fedStore()
+    feed(flags, CollectorSamples.hello)
+    check("collector flags: none yet", flags.flagCount == 0 && flags.unseenFlagCount == 0)
+    for _ in 0..<3 { feed(flags, CollectorSamples.alert) }
+    check("collector flags: unseen counts", flags.flagCount == 3 && flags.unseenFlagCount == 3)
+    flags.markFlagsSeen()
+    check("collector flags: marked seen", flags.unseenFlagCount == 0 && flags.flagCount == 3)
+    feed(flags, CollectorSamples.alert)
+    check("collector flags: new one is unseen", flags.unseenFlagCount == 1)
+    flags.clearFeed()
+    check(
+        "collector flags: clear leaves nothing unseen",
+        flags.unseenFlagCount == 0 && flags.alerts.isEmpty && flags.flagCount == 4)
+    flags.stop()
+    flags.start()
+    check("collector flags: start resets", flags.flagCount == 0 && flags.unseenFlagCount == 0)
+    flags.stop()
+
+    // Pause holds rows; resume merges them; clear empties everything.
+    let feedStore = fedStore()
+    feed(feedStore, CollectorSamples.hello)
+    feed(feedStore, CollectorSamples.batch)
+    check(
+        "collector pause: live before the pause",
+        feedStore.feedBatches.count == 1 && feedStore.heldCount == 0)
+    feedStore.pause()
+    check("collector pause: paused", feedStore.paused)
+    feed(feedStore, CollectorSamples.batchProtobufGzip)
+    feed(feedStore, CollectorSamples.alert)
+    check(
+        "collector pause: rows held",
+        feedStore.feedBatches.count == 1 && feedStore.feedAlerts.isEmpty
+            && feedStore.heldCount == 2)
+    check(
+        "collector pause: data and counts keep coming",
+        feedStore.batches.count == 2 && feedStore.alerts.count == 1
+            && feedStore.unseenFlagCount == 1)
+    feedStore.pause()
+    check("collector pause: pausing twice keeps the cut", feedStore.heldCount == 2)
+    feedStore.resume()
+    check(
+        "collector pause: resume merges",
+        !feedStore.paused && feedStore.feedBatches.count == 2 && feedStore.feedAlerts.count == 1
+            && feedStore.heldCount == 0)
+    feedStore.togglePause()
+    feed(feedStore, CollectorSamples.batch)
+    check("collector pause: toggle pauses", feedStore.paused && feedStore.heldCount == 1)
+    feedStore.clearFeed()
+    check(
+        "collector pause: clear empties held rows too",
+        feedStore.feedBatches.isEmpty && feedStore.heldCount == 0 && feedStore.paused)
+    feed(feedStore, CollectorSamples.batch)
+    check("collector pause: still paused after clear", feedStore.heldCount == 1)
+    feedStore.togglePause()
+    check("collector pause: toggle resumes", feedStore.feedBatches.count == 1)
+
+    // Launch at start.
+    var wanted = CollectorSettings()
+    wanted.startAtLaunch = true
+    let launch = fedStore(settings: wanted)
+    launch.launchAtStartIfWanted()
+    check(
+        "collector launch: starts and turns on",
+        launch.state == .starting && launch.settings.enabled)
+    check("collector launch: persists enabled", launch.settings.enabled)
+    launch.stop()
+
+    let off = fedStore()
+    off.launchAtStartIfWanted()
+    check("collector launch: not wanted stays off", off.state == .off)
+
+    var broken = wanted
+    broken.takeover = true
+    let problem = fedStore(settings: broken)
+    problem.launchAtStartIfWanted()
+
+    // Not wanted at launch: a saved "enabled" is cleared and persisted, so a later change
+    // doesn't start it through the restart path.
+    var stale = CollectorSettings()
+    stale.enabled = true
+    let staleDefaults = MemoryStore()
+    let staleStore = fedStore(settings: stale, defaults: staleDefaults)
+    staleStore.launchAtStartIfWanted()
+    check(
+        "collector launch: not wanted clears enabled",
+        !staleStore.settings.enabled && staleStore.state == .off)
+    check(
+        "collector launch: cleared enabled is persisted",
+        !staleDefaults.collectorSettings.enabled)
+    var edited = staleStore.settings
+    edited.port = 4500
+    staleStore.apply(edited)
+    check("collector launch: a later edit stays off", staleStore.state == .off)
+
+    // A settings problem is shown, not swallowed.
+    check(
+        "collector launch: a settings problem is a failure",
+        problem.failure?.code == "tls-no-host" && problem.state != .off)
+
+    // The takeover port can't be below 1024 on macOS.
+    check(
+        "takeover port: range starts at 1024",
+        CollectorSettings.takeoverPortRange == 1024...65535)
+    var lowPort = CollectorSettings()
+    lowPort.takeover = true
+    lowPort.takeoverHosts = ["otel.example-corp.com"]
+    lowPort.takeoverPort = 443
+    check(
+        "takeover port: 443 is a problem",
+        lowPort.problem?.code == .portRange && lowPort.problem?.message.contains("1024") == true)
+    lowPort.takeoverPort = 1024
+    check("takeover port: 1024 is fine", lowPort.problem == nil)
+    var atTop = lowPort
+    atTop.takeoverPort = 65535
+    check(
+        "takeover port: no next port past 65535",
+        FailureAdvice.tryNextPort(
+            CollectorFailure(code: "port-in-use", port: 65535, message: "x"), in: atTop) == nil)
+    check(
+        "takeover port: next port within range",
+        FailureAdvice.tryNextPort(
+            CollectorFailure(code: "port-in-use", port: 1024, message: "x"), in: lowPort)?.port
+            == 1025)
+
+    // A failure without a port falls back to the effective port.
+    let noPort = CollectorFailure(code: "port-in-use", port: nil, message: "x")
+    check(
+        "try port: HTTP port when no takeover",
+        FailureAdvice.tryNextPort(noPort, in: CollectorSettings())?.settings.port == 4319)
+    check(
+        "try port: takeover port in takeover mode",
+        FailureAdvice.tryNextPort(noPort, in: lowPort)?.settings.takeoverPort == 1025)
+
+    // Where each failure's fix lives.
+    let patterns = CollectorFailure(code: "patterns", port: nil, message: "Too many.")
+    check(
+        "failure advice: patterns go to Rules",
+        FailureAdvice(patterns).fix == .rules && FailureAdvice(patterns).message.contains("Rules")
+            && !FailureAdvice(patterns).message.contains("Red flags"))
+    let inUse = CollectorFailure(code: "port-in-use", port: 8443, message: "x")
+    check(
+        "failure advice: takeover port goes to Setup",
+        FailureAdvice(inUse, takeover: true).fix == .setup
+            && FailureAdvice(inUse, takeover: true).message.contains("Setup")
+            && FailureAdvice(inUse).fix == .settings)
+
+    // A TLS hello is counted (the trust status refreshes on each); a plain one isn't.
+    let tlsHello = fedStore()
+    feed(tlsHello, CollectorSamples.hello)
+    check("collector tls hello: plain hello not counted", tlsHello.tlsHelloCount == 0)
+    feed(
+        tlsHello,
+        #"{"v":1,"type":"hello","ts":"T","mode":"tls-receiver","endpoint":"https://127.0.0.1:8443"}"#
+    )
+    feed(
+        tlsHello,
+        #"{"v":1,"type":"hello","ts":"T","mode":"tls-receiver","endpoint":"https://127.0.0.1:8443"}"#
+    )
+    check("collector tls hello: each one counted", tlsHello.tlsHelloCount == 2)
 }
