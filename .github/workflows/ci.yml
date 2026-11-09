@@ -1,16 +1,22 @@
 name: CI
 
+# Pull requests only. Pushes to master are checked by release.yml's gates, which run the same
+# checks (and build, sign and verify the packages) before anything is published; running both on
+# one push only competed for runners. workflow_dispatch reruns CI on any branch by hand. The
+# weekly run on master saves the default-branch caches that pull requests restore from, and
+# runs the packaging jobs on master even when no release has built them since.
 on:
-  push:
-    branches: [master]
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
 
 # Nothing is granted by default; each job asks for what it needs.
 permissions: {}
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 # CI runs plain make. On the runner jobs, jdx/mise-action installs the tools that mise.toml pins
 # (rust, shellcheck, jactionlint) and MISE_ENV=ci layers mise.ci.toml over it: plain cargo
@@ -118,8 +124,6 @@ jobs:
           swift format --version
       - name: Cache cargo
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          save-if: ${{ github.ref == 'refs/heads/master' }}
       - name: make check (fmt, clippy, swift format, shellcheck, cargo test, ui-test)
         run: make check
       - name: Upload UI snapshots
@@ -156,8 +160,6 @@ jobs:
         run: cargo --version
       - name: Cache cargo
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          save-if: ${{ github.ref == 'refs/heads/master' }}
       - name: make check-rust (fmt, clippy, cargo test)
         run: make check-rust
       - name: make publish-check (cargo publish --dry-run for both crates)
@@ -215,10 +217,12 @@ jobs:
 
   # The Qt tray app, in containers of the distros it ships for (docs/linux.md). The CLI is the
   # root workspace, checked by `linux` above; the musl build of it is checked by linux-package.
+  # `make linux-check` is split in two jobs per distro: clippy (check mode) and the tests
+  # (codegen) each compile cxx-qt-lib's C++ anyway, so in one job they only ran back to back.
   linux-app:
-    name: Tray app (${{ matrix.name }})
+    name: Tray app ${{ matrix.check }} (${{ matrix.name }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 30
     container: ${{ matrix.image }}
     permissions:
       contents: read
@@ -226,17 +230,29 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Primary: the .deb and tarball are built here (Qt 6.8, LayerShellQt 6.3).
+          # Primary: the .deb and tarball are built here (Qt 6.8, LayerShellQt 6.3). Its test
+          # job keeps the offscreen self-test's UI snapshots (linux-test writes them).
           - name: debian-trixie
             image: debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
-            target: linux-check
+            check: lint
+            targets: linux-lint linux-validate
+          - name: debian-trixie
+            image: debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
+            check: test
+            targets: linux-test
           # The newest Qt and LayerShellQt.
           - name: fedora-44
             image: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
-            target: linux-check
+            check: lint
+            targets: linux-lint linux-validate
+          - name: fedora-44
+            image: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
+            check: test
+            targets: linux-test
           - name: archlinux
             image: archlinux:latest@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
-            target: linux-build
+            check: build
+            targets: linux-build
     env:
       CARGO_HOME: /usr/local/cargo
       RUSTUP_HOME: /usr/local/rustup
@@ -258,15 +274,11 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: linux -> target
-          shared-key: linux-app-${{ matrix.name }}
-          save-if: ${{ github.ref == 'refs/heads/master' }}
-      - name: make ${{ matrix.target }}
-        run: make ${{ matrix.target }}
-      - name: make linux-ui-test
-        if: matrix.name == 'debian-trixie'
-        run: make linux-ui-test
+          shared-key: linux-app-${{ matrix.name }}-${{ matrix.check }}
+      - name: make ${{ matrix.targets }}
+        run: make ${{ matrix.targets }}
       - name: Upload UI snapshots
-        if: always() && matrix.name == 'debian-trixie'
+        if: always() && matrix.name == 'debian-trixie' && matrix.check == 'test'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ui-snapshots-linux
@@ -304,8 +316,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install Rust, build dependencies, cargo-deb and cargo-generate-rpm
-        run: packaging/ci/linux-ci.sh deps package
+      - name: Install Rust and the tray's build dependencies
+        run: packaging/ci/linux-ci.sh deps build
+      # Before the tools: rust-cache also restores $CARGO_HOME/bin, so a cached cargo-deb or
+      # cargo-generate-rpm at the pinned version makes `cargo install` a no-op.
       - name: Cache cargo
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
@@ -313,7 +327,17 @@ jobs:
             . -> target
             linux -> target
           shared-key: linux-package-${{ matrix.name }}
-          save-if: ${{ github.ref == 'refs/heads/master' }}
+      # As in release.yml: cargo install builds in its own temporary target dir, and the CLI
+      # (target/) and the tray (linux/target) don't share a target dir, so none of them contend
+      # for a cargo lock.
+      - parallel:
+          - name: Install cargo-deb and cargo-generate-rpm (as the formats need)
+            env:
+              FORMATS: ${{ matrix.formats }}
+            run: packaging/ci/linux-ci.sh deps tools "${FORMATS}"
+          - name: Build the CLI and the tray app
+            run: make -j2 linux-cli linux-build-release
+      # Both builds are fresh by now: this only packages.
       - name: make linux
         run: make linux LINUX_FORMATS=${{ matrix.formats }}
       - name: Inspect the artifacts

@@ -1144,23 +1144,27 @@ only; [linux.md](linux.md) §8). They need no network and no real machine state.
   `cainary-otel-debug`, `cainary-bind-helper` and `cainary-hosts-helper`), `linux-helper` (builds
   both root helpers and prints the admin install commands), `linux-build`, `linux-build-release`,
   `linux-test` (under `dbus-run-session`, `QT_QPA_PLATFORM=offscreen`),
-  `linux-fmt`, `linux-lint`, `linux-check` (lint, test, shellcheck, desktop-file and AppStream
-  validation), `linux-ui-test`, `linux-run`, `linux-run-release`, and `linux` (CLI plus tray release build, then
+  `linux-fmt`, `linux-lint`, `linux-validate` (shellcheck, desktop-file and AppStream
+  validation), `linux-check` (lint, test and validate), `linux-ui-test`, `linux-run`, `linux-run-release`, and `linux` (CLI plus tray release build, then
   `packaging/linux.sh` into `dist/`; `LINUX_FORMATS` defaults to `tar`). See
   [linux.md](linux.md) §8.
 - **Install:** copy `cAInary.app` to `/Applications`. For the CLI, optionally
   `ln -s /Applications/cAInary.app/Contents/Helpers/cainary ~/.local/bin/cainary`, or
   `cargo install cainary --locked`. The other methods are in [distribution.md](distribution.md).
-- **CI** (`.github/workflows/ci.yml`): Conventional Commit messages, action pins, `zizmor` and
+- **CI** (`.github/workflows/ci.yml`, on pull requests, weekly on `master` and by hand; pushes to
+  `master` are checked by the release gates instead): Conventional Commit messages, action pins, `zizmor` and
   `actionlint` on the workflows, `make check` on macOS (uploading the UI snapshots), `make
   check-rust` plus `make publish-check` on Linux, and a bundle smoke test of the macOS app. On the
   runner jobs CI installs the pinned tools with `jdx/mise-action` (`MISE_ENV=ci` layers
   `mise.ci.toml` over `mise.toml`: plain cargo instead of `mbx`, Xcode's swiftc) and runs plain
-  `make`. The Linux tray has its own jobs (`linux-app`, `linux-package`, `linux-install-smoke`),
+  `make`. The Linux tray has its own jobs (`linux-app`, which runs `linux-check` as a lint job and a
+  test job per distro, `linux-package`, `linux-install-smoke`),
   which bootstrap rustup and run `packaging/ci/linux-ci.sh` in distro containers (Debian trixie,
   Fedora, Arch; see [distribution.md](distribution.md)).
-- **Release** (`.github/workflows/release.yml`): an action-pin gate, `make check` and the Linux
-  tray checks (`make linux-check` on Debian trixie), then `prepare` has git-cliff
+- **Release** (`.github/workflows/release.yml`): an action-pin gate, `make check`, `make
+  check-rust` plus `make publish-check`, the Linux tray checks (`make linux-check` on Debian trixie
+  and Fedora 44, `make linux-build` on Arch) and the workflow checks (`zizmor`, `make
+  lint-actions`), then `prepare` has git-cliff
   pick the version (`scripts/set-version.sh` updates `Cargo.toml`, `Cargo.lock`,
   `linux/Cargo.toml`, `linux/Cargo.lock` and the AppStream release list) without pushing, the
   builds apply it locally to the same commit for the universal macOS bundle and the Linux
