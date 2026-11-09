@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0](https://github.com/SkeLLLa/cainary/compare/v1.0.0...v1.1.0) - 2026-11-09
+
+### Added
+
+- *(macos)* add otel debugger
+
+### Fixed
+
+- linux build
+
 ## [1.0.0](https://github.com/SkeLLLa/cainary/compare/v0.5.2...v1.0.0) - 2026-11-08
 
 ### Added

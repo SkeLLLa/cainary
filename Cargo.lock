@@ -79,7 +79,7 @@ dependencies = [
 
 [[package]]
 name = "cainary"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "cainary-core",
  "serde_json",
@@ -87,14 +87,14 @@ dependencies = [
 
 [[package]]
 name = "cainary-bind-helper"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "cainary-core"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "libc",
  "plist",
@@ -105,14 +105,14 @@ dependencies = [
 
 [[package]]
 name = "cainary-hosts-helper"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "cainary-net"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "cainary-core",
  "cainary-sig",
@@ -129,7 +129,7 @@ dependencies = [
 
 [[package]]
 name = "cainary-sig"
-version = "1.0.0"
+version = "1.1.0"
 
 [[package]]
 name = "cc"
