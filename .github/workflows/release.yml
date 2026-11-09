@@ -120,22 +120,43 @@ jobs:
       - name: Run checks
         run: make check-rust
 
-  # The Linux tray app, as ci.yml's linux-app job on debian:trixie.
+      - name: Check the crates package (cargo publish --dry-run)
+        run: make publish-check
+
+  # The Linux tray app, as ci.yml's linux-app jobs: the full checks on the distro the .deb and
+  # tarball are built on and on the newest Qt, a build on Arch. ci.yml runs on pull requests only,
+  # so these are the checks a push to master gets.
   quality-linux:
-    name: Quality gate (Linux tray)
+    name: Quality gate (Linux tray, ${{ matrix.name }})
     needs: pin-gate
     if: ${{ github.repository_owner == 'SkeLLLa' && !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    container: debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
+    container: ${{ matrix.image }}
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: debian-trixie
+            image: debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
+            target: linux-check
+          - name: fedora-44
+            image: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
+            target: linux-check
+          - name: archlinux
+            image: archlinux:latest@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
+            target: linux-build
     env:
       CARGO_HOME: /usr/local/cargo
       RUSTUP_HOME: /usr/local/rustup
     steps:
       - name: Install git
-        run: apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates git
+        run: |
+          if command -v apt-get > /dev/null; then apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates git
+          elif command -v dnf > /dev/null; then dnf install -y -q git-core
+          else pacman -Syu --noconfirm --needed git; fi
 
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -146,7 +167,47 @@ jobs:
         run: packaging/ci/linux-ci.sh deps build
 
       - name: Run checks
-        run: make linux-check
+        env:
+          TARGET: ${{ matrix.target }}
+        run: make "${TARGET}"
+
+  # ci.yml's pin-check, zizmor and actions-lint jobs, for pushes to master (ci.yml runs on pull
+  # requests only). pin-gate above checks the pins themselves.
+  quality-workflows:
+    name: Quality gate (workflows)
+    needs: pin-gate
+    if: ${{ github.repository_owner == 'SkeLLLa' && !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      MISE_ENV: ci
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test the pin checker
+        run: scripts/test-action-pins.sh
+
+      - name: Run zizmor
+        uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
+        with:
+          advanced-security: false
+
+      # mise 2026.10.14, pinned by checksum. mise.lock pins the tools (the action adds --locked).
+      - name: Install jactionlint and shellcheck (versions from mise.toml)
+        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          version: 2026.10.14
+          sha256: 50be7185bcf75929f01cc5630276bcb43ca367f7c5b176e2580903d28c611dc4
+          install_args: jactionlint shellcheck
+          cache: false
+
+      - name: Lint the workflows
+        run: make lint-actions
 
   # Decides what to release and publishes nothing: the version, the commit every build starts
   # from, and a hash of the version-bumped files. The bump is committed, tagged and released
@@ -371,6 +432,28 @@ jobs:
           rm -f "${RUNNER_TEMP}/certificate.p12"
           security delete-keychain "${RUNNER_TEMP}/build.keychain-db" || true
 
+      # ci.yml's bundle smoke test, on the bundle about to be published (ci.yml runs on pull
+      # requests only): every binary is universal, the signature verifies, the helpers start.
+      - name: Verify bundle
+        run: |
+          set -euo pipefail
+          APP="dist/cAInary.app"
+          for BIN in "${APP}/Contents/MacOS/cAInary" "${APP}/Contents/Helpers/cainary" "${APP}/Contents/Helpers/cainary-otel-debug" "${APP}/Contents/Helpers/cainary-hosts-helper"; do
+            ARCHS_FOUND="$(lipo -archs "${BIN}")"
+            echo "${BIN}: ${ARCHS_FOUND}"
+            for arch in arm64 x86_64; do
+              case " ${ARCHS_FOUND} " in
+                *" ${arch} "*) ;;
+                *) echo "${BIN}: missing architecture ${arch}" >&2; exit 1 ;;
+              esac
+            done
+          done
+          codesign --verify --deep --strict --verbose=2 "${APP}"
+          "${APP}/Contents/Helpers/cainary" --version
+          "${APP}/Contents/Helpers/cainary-otel-debug" --version
+          "${APP}/Contents/Helpers/cainary-otel-debug" --list-presets
+          "${APP}/Contents/Helpers/cainary-hosts-helper" --version
+
       - name: Signing status
         run: |
           set -euo pipefail
@@ -564,8 +647,12 @@ jobs:
       # Independent: cargo install builds in its own temporary target dir, so it doesn't
       # contend with the tray build for the linux/target lock.
       - parallel:
-          - name: Install cargo-deb and cargo-generate-rpm
-            run: packaging/ci/linux-ci.sh deps tools
+          # Only the tool this job's formats need: each is a minutes-long source build that
+          # shares the CPUs with the tray build.
+          - name: Install cargo-deb or cargo-generate-rpm (as the formats need)
+            env:
+              FORMATS: ${{ matrix.formats }}
+            run: packaging/ci/linux-ci.sh deps tools "${FORMATS}"
 
           # The About window's commit and build date are compiled in from the job env.
           - name: Build the tray app
@@ -724,7 +811,7 @@ jobs:
   # so this also waits for the quality gates.
   checksums:
     name: Checksums and provenance
-    needs: [quality, quality-rust-linux, quality-linux, prepare, build, build-linux, sign-linux, verify-linux]
+    needs: [quality, quality-rust-linux, quality-linux, quality-workflows, prepare, build, build-linux, sign-linux, verify-linux]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -795,7 +882,7 @@ jobs:
   # run) finds the tag prepare saw and only completes the release.
   publish:
     name: Publish release
-    needs: [quality, quality-rust-linux, quality-linux, prepare, build, build-linux, sign-linux, verify-linux, checksums]
+    needs: [quality, quality-rust-linux, quality-linux, quality-workflows, prepare, build, build-linux, sign-linux, verify-linux, checksums]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:

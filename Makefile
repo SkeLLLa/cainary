@@ -3,7 +3,7 @@
 .DEFAULT_GOAL := help
 PHONY_RELEASE := release otel-debug linux-build-release linux-run-release
 .PHONY: help build test test-tls fmt lint lint-actions check-rust check core-universal app bundle bundle-debug-helpers ui-test screenshots screenshots-linux scan publish-check clean \
-	linux linux-cli linux-helper linux-build linux-test linux-fmt linux-lint linux-check linux-ui-test linux-run $(PHONY_RELEASE)
+	linux linux-cli linux-helper linux-build linux-test linux-fmt linux-lint linux-validate linux-check linux-ui-test linux-run $(PHONY_RELEASE)
 
 # cargo needs a writable CARGO_HOME. Normally that is the existing CARGO_HOME or ~/.cargo and
 # nothing changes. When that directory cannot be written (the agent sandbox), use
@@ -70,7 +70,8 @@ help:
 	@echo "  linux-test      tray tests under dbus-run-session, QT_QPA_PLATFORM=offscreen"
 	@echo "  linux-fmt       cargo fmt for linux/ (in place)"
 	@echo "  linux-lint      fmt --check and clippy -D warnings for linux/"
-	@echo "  linux-check     linux-lint + linux-test + shellcheck + desktop/AppStream validation (CI)"
+	@echo "  linux-validate  shellcheck + desktop/AppStream validation"
+	@echo "  linux-check     linux-lint + linux-test + linux-validate (CI)"
 	@echo "  linux-ui-test   offscreen snapshots of the tray windows -> target/ui-snapshots/linux/"
 	@echo "  linux-run       run the tray app against the debug cainary and collector (--dev)"
 	@echo "  linux-build-release  release build of the Qt tray app -> linux/target/release/"
@@ -212,10 +213,14 @@ linux-helper:
 linux-build:
 	$(CARGO_CMD) build $(LINUX_MANIFEST) --workspace
 
-# A private session bus for the tray's D-Bus tests, and no display.
+# A private session bus for the tray's D-Bus tests, and no display. The offscreen self-test keeps
+# its snapshots in target/ui-snapshots/linux/, as linux-ui-test does, so CI uploads them from here.
 ifeq ($(HOST_OS),Linux)
 linux-test:
-	$(CARGO_CD) dbus-run-session -- env QT_QPA_PLATFORM=offscreen $(CARGO) test --manifest-path "$(CURDIR)/linux/Cargo.toml"
+	mkdir -p target/ui-snapshots/linux
+	$(CARGO_CD) dbus-run-session -- env QT_QPA_PLATFORM=offscreen \
+		CAINARY_UI_SNAPSHOTS="$(CURDIR)/target/ui-snapshots/linux" \
+		$(CARGO) test --manifest-path "$(CURDIR)/linux/Cargo.toml"
 else
 linux-test:
 	$(call skipped,Linux)
@@ -236,8 +241,11 @@ endif
 
 # appstreamcli reports cid-domain-not-lowercase: the ID ua.SkeLLLa.cAInary is fixed (it is the
 # D-Bus name and the icon and desktop file names). Every other error or warning still fails.
+# linux-validate is the packaging-data part of linux-check, without cargo; CI runs it in the lint job.
 ifeq ($(HOST_OS),Linux)
-linux-check: linux-lint linux-test
+linux-check: linux-lint linux-test linux-validate
+
+linux-validate:
 	shellcheck packaging/linux.sh packaging/dist/install-user.sh packaging/ci/*.sh
 	desktop-file-validate linux/data/ua.SkeLLLa.cAInary.desktop
 	@tmp="$$(mktemp -d)" && cp linux/data/autostart.desktop.in "$$tmp/autostart.desktop" && \
@@ -249,7 +257,7 @@ linux-check: linux-lint linux-test
 			echo "$$out"; echo "appstreamcli: validation failed" >&2; exit $$rc; \
 		else echo "appstreamcli: metainfo OK (expected cid-domain-not-lowercase ignored)"; fi
 else
-linux-check:
+linux-check linux-validate:
 	$(call skipped,Linux)
 endif
 

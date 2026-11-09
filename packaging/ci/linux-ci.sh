@@ -7,7 +7,9 @@
 #   packaging/ci/linux-ci.sh deps rust|build|tools|package
 #       rust     curl, git, the distro musl linker, and the Rust toolchain from mise.toml
 #       build    rust + the tray's build dependencies + the linux-check tools
-#       tools    cargo-deb and cargo-generate-rpm at the versions in mise.toml, after build
+#       tools [FORMATS]
+#                cargo-deb and cargo-generate-rpm at the versions in mise.toml, after build; with
+#                FORMATS (packaging/linux.sh --formats, e.g. tar,deb) only the ones those need
 #       package  build + tools
 #   packaging/ci/linux-ci.sh version
 #       the release version, from Cargo.toml
@@ -115,12 +117,17 @@ deps_build() {
     "$QMAKE" -query QT_VERSION
 }
 
-# Needs only deps_build's toolchain, so it can run alongside the tray build.
+# Needs only deps_build's toolchain, so it can run alongside the tray build. Each tool is a
+# minutes-long source build, so a job that packages only some formats installs only theirs.
 deps_tools() {
+    formats="${1:-deb,rpm}"
+    tools=""
+    case ",$formats," in *,deb,*) tools="cargo-deb" ;; esac
+    case ",$formats," in *,rpm,*) tools="$tools cargo-generate-rpm" ;; esac
     extra="$(deps_pkgs "$PM" package)"
     # shellcheck disable=SC2086
     if [ -n "$extra" ]; then pkg_install $extra; fi
-    for tool in cargo-deb cargo-generate-rpm; do
+    for tool in $tools; do
         v="$(toml_get mise.toml tools "cargo:$tool")" || die "no $tool version in mise.toml"
         cargo install --locked "$tool@$v"
     done
@@ -318,9 +325,9 @@ case "${1:-}" in
         case "${2:-}" in
             rust) deps_rust ;;
             build) deps_build ;;
-            tools) deps_tools ;;
+            tools) deps_tools "${3:-}" ;;
             package) deps_package ;;
-            *) die "usage: $0 deps rust|build|tools|package" ;;
+            *) die "usage: $0 deps rust|build|tools [FORMATS]|package" ;;
         esac
         ;;
     version) cargo_version ;;

@@ -49,8 +49,10 @@ A release download through a browser is quarantined, and releases are not notari
 
 `release.yml` runs on pushes to `master` without `[skip ci]`. `pin-gate` first checks that every
 action in every workflow is pinned to a commit SHA, and `quality` (macOS `make check`),
-`quality-rust-linux` (`make check-rust`) and `quality-linux` (`make linux-check` on Debian trixie)
-rerun the CI checks; nothing is published unless they pass. When there is something to release,
+`quality-rust-linux` (`make check-rust` and `make publish-check`), `quality-linux` (`make
+linux-check` on Debian trixie and Fedora 44, `make linux-build` on Arch) and `quality-workflows`
+(`zizmor`, `make lint-actions`) run the CI checks, since `ci.yml` runs on pull requests only;
+nothing is published unless they pass. When there is something to release,
 the `prepare` job works out the version and the commit to build, and changes nothing. The `build`
 (macOS), `build-linux-cli` and `build-linux` jobs check out that commit, apply the version bump
 locally (`scripts/release-tree.sh`) and build; `sign-linux` signs the .rpm files (see
@@ -135,7 +137,7 @@ Fedora 44 (x86_64 and aarch64) and Arch Linux (the tarball with the AUR
 package's dependencies). It runs `cainary --version`, `cainary scan --json --env-kind launchd`,
 `cainary-tray --version` and `QT_QPA_PLATFORM=offscreen cainary-tray --self-test`. Nothing is
 published unless every one passes. `ci.yml` runs the same package and install jobs on pull
-requests, plus the tray's checks (`make linux-check`) on Debian trixie and Fedora 44 and a
+requests and weekly on `master` (a push to `master` builds packages only when it releases), plus the tray's checks (`make linux-check`) on Debian trixie and Fedora 44 and a
 build-only job on Arch.
 
 **Not shipped.** Ubuntu 24.04 can't run the tray app (Qt 6.4, no Qt 6 LayerShellQt); its users
