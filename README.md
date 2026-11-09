@@ -41,7 +41,7 @@ It comes in two parts:
 <tr><td colspan="2"><b>Rules: presets and your own patterns</b></td></tr>
 <tr>
 <td width="50%"><img src="docs/screenshots/macos/collector-rules.png" alt="macOS: the Rules tab"></td>
-<td width="50%"><i>Linux: in the Red flags tab</i></td>
+<td width="50%"><img src="docs/screenshots/linux/details-collector-rules.png" alt="Linux: the rules editor in the Red flags tab"></td>
 </tr>
 <tr><td colspan="2"><b>Setup: the HTTPS takeover guide</b></td></tr>
 <tr>
@@ -60,7 +60,7 @@ It comes in two parts:
 </tr>
 </table>
 
-Regenerate with `make screenshots` on macOS and `make screenshots-linux` on Linux.
+Regenerate with `make screenshots` on macOS and `make screenshots-linux` on Linux (Plasma 6, Breeze Dark).
 
 </details>
 

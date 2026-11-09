@@ -62,8 +62,12 @@ pub fn run() -> Result<i32, String> {
 
     let snapshots = snapshot_directory();
     let mut last_view = String::new();
+    let size = snapshot_size();
     for scenario in fixtures::scenarios() {
         show(&scenario, &mut last_view);
+        if let Some((width, height)) = size.filter(|_| scenario.window == "details") {
+            ffi::cainary_resize_window(&QString::from("details"), width, height);
+        }
         settle(&mut application);
         if scenario.dark {
             ffi::cainary_set_dark_palette(true);
@@ -98,7 +102,10 @@ pub fn run() -> Result<i32, String> {
 /// Publishes the scenario's view and settings the way the app does, then opens its window.
 fn show(scenario: &Scenario, last_view: &mut String) {
     app::publish_view_state(last_view, &scenario.state, &scenario.settings, false);
-    app::sync_settings(&scenario.settings, "", false, false);
+    // Native snapshots show the installed app, where Plasma has the notification and file
+    // chooser portals; the self-test itself never calls them.
+    let native = env_defaults::native_snapshots();
+    app::sync_settings(&scenario.settings, "", native, native);
     if let Some(collector) = scenario.collector() {
         ui::collector(move |controller| controller.apply(&collector));
     }
@@ -115,6 +122,17 @@ fn settle(application: &mut cxx::UniquePtr<QGuiApplication>) {
         application.pin_mut().process_events();
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+/// `CAINARY_UI_SNAPSHOTS_SIZE=WxH`: the Details window's size for native snapshots (the
+/// README's), whose Plasma fonts need more room than the 900x600 default; ignored otherwise.
+fn snapshot_size() -> Option<(i32, i32)> {
+    if !env_defaults::native_snapshots() {
+        return None;
+    }
+    let value = std::env::var("CAINARY_UI_SNAPSHOTS_SIZE").ok()?;
+    let (width, height) = value.split_once('x')?;
+    Some((width.parse().ok()?, height.parse().ok()?))
 }
 
 /// `CAINARY_UI_SNAPSHOTS`; without it the self-test writes nothing.

@@ -7,10 +7,20 @@ pub fn before_application(self_test: bool) {
     // SAFETY: the caller runs this before spawning any thread or creating any Qt object.
     unsafe {
         if self_test {
-            std::env::set_var("QT_QPA_PLATFORM", "offscreen");
+            // Native snapshots may bring their own offscreen screen (`offscreen:configfile=…`,
+            // a large HiDPI one), so the popup isn't capped by the default 800x600.
+            let preset = std::env::var("QT_QPA_PLATFORM").unwrap_or_default();
+            if !(native_snapshots() && preset.starts_with("offscreen:")) {
+                std::env::set_var("QT_QPA_PLATFORM", "offscreen");
+            }
             // The portal theme would D-Bus-activate xdg-desktop-portal backends that outlive
-            // the self-test and keep its stdout pipe open.
-            std::env::set_var("QT_QPA_PLATFORMTHEME", "generic");
+            // the self-test and keep its stdout pipe open. Native snapshots (the README's) keep
+            // the host's Plasma theme instead.
+            if native_snapshots() {
+                std::env::set_var("QT_QPA_PLATFORMTHEME", "kde");
+            } else {
+                std::env::set_var("QT_QPA_PLATFORMTHEME", "generic");
+            }
             std::env::set_var("QT_NO_XDG_DESKTOP_PORTAL", "1");
             // format_time follows the locale; fixed, the snapshots don't depend on the host's.
             std::env::set_var("LC_ALL", "C.UTF-8");
@@ -58,10 +68,17 @@ fn add_private_icons_to_search_path() {
 /// (and in the self-test, whose snapshots must not depend on the host's theme) Fusion, which
 /// paints from the palette alone.
 fn controls_style(self_test: bool) -> String {
-    if self_test || !is_kde_session() {
+    if (self_test && !native_snapshots()) || !is_kde_session() {
         return "Fusion".into();
     }
     ffi::cainary_controls_style().to_string()
+}
+
+/// `CAINARY_UI_SNAPSHOTS_NATIVE=1`: the self-test paints with the host's Plasma theme (palette,
+/// fonts, icons, Breeze), for screenshots that look like the installed app. Plasma only; the
+/// golden snapshots never set it.
+pub fn native_snapshots() -> bool {
+    std::env::var_os("CAINARY_UI_SNAPSHOTS_NATIVE").is_some_and(|v| v == "1") && is_kde_session()
 }
 
 /// Whether this is a KDE Plasma session.

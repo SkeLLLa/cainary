@@ -133,6 +133,15 @@ bool cainary_grab_window(const QString &name, const QString &path)
     return false;
 }
 
+// Resizes the window `name` (logical pixels); the native README snapshots use it.
+void cainary_resize_window(const QString &name, int width, int height)
+{
+    for (QWindow *window : QGuiApplication::allWindows()) {
+        if (window->objectName() == name)
+            window->resize(width, height);
+    }
+}
+
 void cainary_set_dark_palette(bool dark)
 {
     static const QPalette original = QGuiApplication::palette();

@@ -72,7 +72,7 @@ description = "Snapshots only, then copy the curated PNGs to docs/screenshots/ma
 run = "make screenshots"
 
 [tasks."linux:screenshots"]
-description = "Linux QML snapshots, then copy the curated PNGs to docs/screenshots/linux/ (needs Qt 6)"
+description = "The tray's self-test in Plasma's Breeze style at 2x, then copy the curated PNGs to docs/screenshots/linux/ (needs Plasma 6)"
 run = "make screenshots-linux"
 
 [tasks.bundle]

@@ -1443,6 +1443,15 @@ pub fn scenarios() -> Vec<Scenario> {
         ),
         live(
             details(
+                "details-collector-rules",
+                ":collector:rules",
+                &live_settings,
+                false,
+            ),
+            collector_sample,
+        ),
+        live(
+            details(
                 "details-collector-setup",
                 ":collector:setup",
                 &https_takeover,
