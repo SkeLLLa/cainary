@@ -64,7 +64,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Run zizmor
-        uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
+        uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
         with:
           advanced-security: false
 
@@ -83,7 +83,7 @@ jobs:
       # mise 2026.10.14, pinned by checksum. mise.lock pins the tools (the action adds --locked).
       # No mise cache: the tools are small and rustup's toolchain is outside it.
       - name: Install jactionlint, shellcheck (versions from mise.toml)
-        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
         with:
           version: 2026.10.14
           sha256: 50be7185bcf75929f01cc5630276bcb43ca367f7c5b176e2580903d28c611dc4
@@ -111,7 +111,7 @@ jobs:
       # mise 2026.10.14, pinned by checksum. mise.lock pins the tools (the action adds --locked).
       # No mise cache: the tools are small and rustup's toolchain is outside it.
       - name: Install rust, shellcheck (versions from mise.toml)
-        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
         with:
           version: 2026.10.14
           sha256: 005b32b9c22ca9cb63ff9d35c74b3abe69c433e9ca655fea288ba3dcbe7e4918
@@ -150,7 +150,7 @@ jobs:
       # mise 2026.10.14, pinned by checksum. mise.lock pins the tools (the action adds --locked).
       # No mise cache: the tools are small and rustup's toolchain is outside it.
       - name: Install rust (versions from mise.toml)
-        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
         with:
           version: 2026.10.14
           sha256: 50be7185bcf75929f01cc5630276bcb43ca367f7c5b176e2580903d28c611dc4
@@ -180,7 +180,7 @@ jobs:
       # mise 2026.10.14, pinned by checksum. mise.lock pins the tools (the action adds --locked).
       # No mise cache: the tools are small and rustup's toolchain is outside it.
       - name: Install rust (versions from mise.toml)
-        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
         with:
           version: 2026.10.14
           sha256: 005b32b9c22ca9cb63ff9d35c74b3abe69c433e9ca655fea288ba3dcbe7e4918
