@@ -74,7 +74,7 @@ jobs:
       # mise 2026.10.14, pinned by checksum. mise.lock pins the tools (the action adds --locked).
       # Release workflows do not use a cache; mise exports the ci environment for later steps.
       - name: Install Rust and shellcheck (versions from mise.toml)
-        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
         env:
           MISE_ENV: ci
         with:
@@ -107,7 +107,7 @@ jobs:
       # mise 2026.10.14, pinned by checksum. mise.lock pins the tools (the action adds --locked).
       # Release workflows do not use a cache; mise exports the ci environment for later steps.
       - name: Install Rust (version from mise.toml)
-        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
         env:
           MISE_ENV: ci
         with:
@@ -193,13 +193,13 @@ jobs:
         run: scripts/test-action-pins.sh
 
       - name: Run zizmor
-        uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
+        uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
         with:
           advanced-security: false
 
       # mise 2026.10.14, pinned by checksum. mise.lock pins the tools (the action adds --locked).
       - name: Install jactionlint and shellcheck (versions from mise.toml)
-        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
         with:
           version: 2026.10.14
           sha256: 50be7185bcf75929f01cc5630276bcb43ca367f7c5b176e2580903d28c611dc4
@@ -243,7 +243,7 @@ jobs:
           persist-credentials: false
 
       - name: Install git-cliff
-        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
           tool: git-cliff@2.14.2
 
@@ -1383,7 +1383,7 @@ jobs:
 
       - name: Sign packslip manifest
         id: packslip
-        uses: jdx/packslip@ddcddd9c8c33977d2d08d5db91caec579da59aab # v1.11.0
+        uses: jdx/packslip@44e50e5f64551234b4a382d991bd7f7f7d021d06 # v1.11.3
         with:
           artifacts: release-assets/*.tar.gz
           manifest: ${{ runner.temp }}/packslip.toml
@@ -1437,7 +1437,7 @@ jobs:
       PACKSLIP_PIN: ${{ vars.PACKSLIP_PIN }}
     steps:
       - name: Install packslip
-        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
           tool: packslip@1.6.0
 
