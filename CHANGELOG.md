@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1](https://github.com/SkeLLLa/cainary/compare/v1.2.0...v1.2.1) - 2026-11-13
+
+### Other
+
+- *(deps)* bump the all-actions group across 1 directory with 4 updates
+- *(deps)* bump toml
+- *(release)* sign and publish the Linux packages with ziptie-soft/pkg-pages
+- add logo.svg and logo.png at the repository root
+
 ## [1.2.0](https://github.com/SkeLLLa/cainary/compare/v1.1.0...v1.2.0) - 2026-11-09
 
 ### Added
