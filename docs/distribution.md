@@ -55,12 +55,12 @@ linux-check` on Debian trixie and Fedora 44, `make linux-build` on Arch) and `qu
 nothing is published unless they pass. When there is something to release,
 the `prepare` job works out the version and the commit to build, and changes nothing. The `build`
 (macOS), `build-linux-cli` and `build-linux` jobs check out that commit, apply the version bump
-locally (`scripts/release-tree.sh`) and build; `sign-linux` signs the .rpm files (see
-[Linux signing](#linux-signing)), `verify-linux` installs the Linux packages and the
-`checksums` job hashes and attests every asset. Only when all of them have passed does the
+locally (`scripts/release-tree.sh`) and build; `packages` signs the .rpm files (see
+[Linux signing](#linux-signing)), installs the Linux packages and builds the APT and DNF
+repositories, and the `checksums` job hashes and attests every asset. Only when all of them have passed does the
 `publish` job commit the bump, tag it, and create the GitHub release with the assets. It is the
 only job that changes the repository, and it pushes without force, so it fails if `master` has
-moved since the built commit. `aur`, `repo` and `pages`, `crates` and the packslip jobs follow. If a run fails before
+moved since the built commit. `aur`, `crates`, the packslip jobs and `pages` follow. If a run fails before
 `publish`, nothing was released and a rerun starts clean. If `publish` fails after tagging, rerun
 the workflow: `prepare` sees the tag made from the same commit, the builds run again, and `publish`
 completes the release without bumping again. For version `<version>`, the release holds:
@@ -131,13 +131,16 @@ builds artifacts for this machine's architecture into `dist/`.
 
 **Checks.** `build-linux` runs `packaging/ci/linux-ci.sh inspect` on each artifact: the file
 lists, the package name, version and architecture, the Qt and QML dependencies, no system-wide
-autostart, and that the tarball's CLI is static. `verify-linux` then installs the artifacts as a
-user would, with no recommended packages, on Debian trixie (x86_64 and arm64), Ubuntu 26.04,
-Fedora 44 (x86_64 and aarch64) and Arch Linux (the tarball with the AUR
-package's dependencies). It runs `cainary --version`, `cainary scan --json --env-kind launchd`,
-`cainary-tray --version` and `QT_QPA_PLATFORM=offscreen cainary-tray --self-test`. Nothing is
+autostart, and that the tarball's CLI is static. `packages` ([ziptie-soft/pkg-pages](https://github.com/ziptie-soft/pkg-pages)'
+`publish.yml`) then installs the .deb and .rpm files as a user would, on Debian trixie (x86_64
+and arm64), Ubuntu 26.04 and Fedora 44 (x86_64 and aarch64), and `verify-linux-tar` installs the
+tarball on Arch Linux with the AUR package's dependencies (`packaging/ci/linux-ci.sh smoke tar`).
+Each runs `cainary --version`, `cainary scan --json --env-kind launchd`, the helpers' and
+`cainary-tray --version` and `QT_QPA_PLATFORM=offscreen cainary-tray --self-test`; pkg-pages'
+smoke test is that list inline in `release.yml`, as its containers have no checkout. Nothing is
 published unless every one passes. `ci.yml` runs the same package and install jobs on pull
-requests and weekly on `master` (a push to `master` builds packages only when it releases), plus the tray's checks (`make linux-check`) on Debian trixie and Fedora 44 and a
+requests and weekly on `master` (a push to `master` builds packages only when it releases), with
+no recommended packages (pkg-pages' install test lets apt install them), plus the tray's checks (`make linux-check`) on Debian trixie and Fedora 44 and a
 build-only job on Arch.
 
 **Not shipped.** Ubuntu 24.04 can't run the tray app (Qt 6.4, no Qt 6 LayerShellQt); its users
@@ -146,14 +149,16 @@ have the CLI. An AppImage that bundles Qt, and a Flatpak, are deferred ([linux.m
 
 ## APT and DNF repositories
 
-The `repo` and `pages` jobs in `release.yml` build package repositories and deploy them to GitHub
-Pages (`https://skellla.github.io/cainary/`), in the same layout as
-[plasma-drop](https://skellla.github.io/plasma-drop/)'s. `packaging/ci/pages-repo.sh` writes the
-site: an APT repository under `deb/` (suite `stable`, component `main`, amd64 and arm64), a DNF
-repository per architecture under `rpm/x86_64/` and `rpm/aarch64/`, and an index page with these
-commands. Each deploy replaces the site, so the job rebuilds it from this release's packages,
-which `verify-linux` installed, plus those of the 9 releases before it, downloaded from the
-release page. Users can still pin or downgrade within those 10 versions.
+The `packages` job in `release.yml` calls [ziptie-soft/pkg-pages](https://github.com/ziptie-soft/pkg-pages)' reusable
+`publish.yml` (pinned by SHA), which builds the package repositories, and `pages` deploys them to
+GitHub Pages (`https://skellla.github.io/cainary/`), in the same layout as
+[plasma-drop](https://skellla.github.io/plasma-drop/)'s and
+[star-forge](https://skellla.github.io/star-forge/)'s: an APT repository under `deb/` (suite
+`stable`, component `main`, amd64 and arm64), a DNF repository per architecture under
+`rpm/x86_64/` and `rpm/aarch64/`, and a landing page with these commands and a packslip and mise
+card. Each deploy replaces the site, so it is rebuilt from this release's packages, which
+`packages` installed, plus those of the 9 releases before it, downloaded from the release page.
+Users can still pin or downgrade within those 10 versions.
 
 ```sh
 # Fedora 44+
@@ -168,24 +173,23 @@ sudo apt update
 sudo apt install cainary
 ```
 
-`repo` signs the APT `InRelease`, every .rpm and each `repomd.xml` with the key pinned in
+`packages` signs the APT `InRelease`, every .rpm and each `repomd.xml` with the key pinned in
 `packaging/signing/repo.asc` ([Linux signing](#linux-signing)), and publishes the public key as
 `cainary.asc`; the index page, `cainary.list` and `cainary.repo` check it
 (`signed-by=/etc/apt/keyrings/cainary.asc`, `gpgcheck=1`, `repo_gpgcheck=1`). Without a pin,
-`pages-repo.sh` still builds unsigned repositories (`[trusted=yes]`, `gpgcheck=0`) for local
-testing.
+pkg-pages builds unsigned repositories (`[trusted=yes]`, `gpgcheck=0`).
 
-The job runs after `publish` on every release, unless the repository variable `PAGES_PUBLISH` is
-`false`. `PAGES_BASE_URL` overrides the URL written into the repository files (for a custom
-domain). One-time setup:
+The site is built before anything is published; `pages` deploys it only after `publish` and
+`publish-packslip`, on every release, unless the repository variable `PAGES_PUBLISH` is `false`.
+`PAGES_BASE_URL` overrides the URL written into the repository files (for a custom domain), and
+`PACKSLIP_PIN`, once set, is added to the landing page's packslip command. One-time setup:
 
 1. Settings → Pages: set the source to **GitHub Actions**. The `github-pages` environment it
    creates deploys from `master` only.
 2. Optional, for signed packages and metadata: see [Linux signing](#linux-signing).
 
-To check the site locally, run `packaging/ci/pages-repo.sh` on a directory of packages with a
-`file:///` base URL (it needs `apt-ftparchive` and `createrepo_c`); a test key in `GNUPGHOME`
-gives the signed variant.
+To check the site locally, use pkg-pages' `build-repo` (see its
+[docs](https://github.com/ziptie-soft/pkg-pages/blob/master/docs/actions.md)).
 
 ## AUR
 
@@ -328,30 +332,29 @@ are off by default), so the signed `InRelease` is what covers them. A .deb downl
 release page is covered by the checksums, attestation and packslip manifest instead.
 
 **Pin.** `packaging/signing/repo.asc` holds the public key (the primary, its subkeys and their
-revocations), armored, and only it. While it is absent, `sign-linux` passes the packages through
-unsigned and `repo` builds unsigned repositories, with a notice. Once it is committed,
-`packaging/ci/linux-signing.sh import` fails the release when the `REPO_SIGNING_KEY` secret is
-missing, belongs to another primary key, or can't sign (passphrase, expiry, or a subkey the pin
-revokes); setting the secret without committing the pin fails too. `import` also merges the pin
-into CI's keyring, so the published `cainary.asc` is the committed certificate. `verify-linux`
-checks each .rpm against the pin before installing it, and `repo` checks every .rpm it publishes.
+revocations), armored, and only it. While it is absent, `packages` passes the packages through
+unsigned and builds unsigned repositories, with a notice. Once it is committed (read at the
+built commit), pkg-pages fails the release when the `REPO_SIGNING_KEY` secret is missing,
+belongs to another primary key, or can't sign (passphrase, expiry, or a subkey the pin revokes);
+setting the secret without committing the pin fails too. The published `cainary.asc` is the
+committed certificate. The install tests check each .rpm against the pin before installing it,
+and the repository build checks every .rpm it publishes.
 
-**Where it signs.** `sign-linux` runs after `build-linux`, in the Fedora 44 container with
-`rpm-sign`, and replaces the `release-linux-rpm-*` artifacts with the signed files, so
-`verify-linux`, `checksums` and the release page see only those. No build runs in a job that
-holds the key. `repo` (in the Debian trixie container: the runner's rpm 4.18 can't read a pin
-with a revoked subkey) signs the metadata and also signs the .rpm files of the earlier releases
-it republishes. The release's own are already signed and stay byte-identical, while those from
-before the key, or signed by a since-revoked subkey, differ from their release page copies (and
-checksums) by the signature. `pages` only deploys the site, so the key and the Pages deploy token
-never share a job.
+**Where it signs.** `packages` signs the build's `unsigned-linux-rpm-*` artifacts and passes the
+signed files on as an artifact of its own; `checksums` and `publish` fetch that one by ID, so the
+release page and the DNF repository serve the same signed files and the unsigned ones never
+match `release-*`. No build runs in a job that holds the key. pkg-pages also signs the .rpm
+files of the earlier releases it republishes; the release's own stay byte-identical, while those
+from before the key, or signed by a since-revoked subkey, differ from their release page copies
+(and checksums) by the signature. `pages` only deploys the site, so the key and the Pages deploy
+token never share a job.
 
-**Secret.** The subkey lives only in the `linux-signing` GitHub environment, used by
-`sign-linux` and `repo`:
+**Secret.** The subkey lives only in the `linux-signing` GitHub environment, used by pkg-pages'
+sign and repository jobs:
 
 | Secret             | Value                                                  |
 | ------------------ | ------------------------------------------------------ |
-| `REPO_SIGNING_KEY` | one signing subkey, armored, without a passphrase (`linux-signing.sh ci-key`) |
+| `REPO_SIGNING_KEY` | one signing subkey, armored, without a passphrase (pkg-pages' `tools/ci-key`) |
 
 Set it up like `macos-signing` (Settings → Environments → New environment `linux-signing`,
 deployment branches: only `master`, optional required reviewers). Don't keep it as a repository
@@ -369,7 +372,8 @@ FPR=<the primary's fingerprint, from gpg -K>
 gpg --quick-add-key "$FPR" rsa4096 sign 3y
 SUB=<the new subkey's fingerprint, from gpg -K --with-subkey-fingerprints>
 gpg --armor --export "$FPR" > packaging/signing/repo.asc
-packaging/ci/linux-signing.sh ci-key "$SUB" | gh secret set REPO_SIGNING_KEY --env linux-signing
+# tools/ci-key from a checkout of https://github.com/ziptie-soft/pkg-pages
+tools/ci-key "$SUB" | gh secret set REPO_SIGNING_KEY --env linux-signing
 ```
 
 `ci-key` exports that one subkey with the primary's secret left out and the passphrase removed.
@@ -383,10 +387,10 @@ signed ones (the index page shows them); the next release is the first signed on
 from them beyond the `cainary.asc` they fetch. Before the subkey expires, or if the secret leaks:
 with the offline keyring, revoke the old subkey if it leaked (`gpg --edit-key "$FPR"`, `key N`,
 `revkey`, `save`), add a new one with `--quick-add-key`, export `repo.asc` again and set the
-secret from `ci-key` for the new one. Commit `repo.asc`: until then, `import` refuses a subkey the
-pin doesn't know, and once a revocation is committed it refuses the revoked one. Users then get
+secret from `ci-key` for the new one. Commit `repo.asc`: until then, the release refuses a subkey
+the pin doesn't know, and once a revocation is committed it refuses the revoked one. Users then get
 the revocation with the next `cainary.asc` they fetch; dnf refuses packages signed by the
-revoked subkey, and `repo` re-signs the earlier releases' with the new one. If the primary itself
+revoked subkey, and `packages` re-signs the earlier releases' with the new one. If the primary itself
 leaks, import the revocation certificate (remove the `:` before `-----BEGIN` first), commit the
 revoked `repo.asc` (every release fails from then on), and start over with a new key; users have
 to fetch it again.

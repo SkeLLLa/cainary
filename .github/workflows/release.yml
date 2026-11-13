@@ -611,9 +611,13 @@ jobs:
           - family: deb
             image: debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
             formats: tar,deb
+            artifact: release-linux-deb
+          # The .rpm files are attached only once signed: `packages` signs unsigned-linux-rpm-<arch>
+          # and passes the signed files on as an artifact of its own, so these never match release-*.
           - family: rpm
             image: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
             formats: rpm
+            artifact: unsigned-linux-rpm
     env:
       CARGO_HOME: /usr/local/cargo
       RUSTUP_HOME: /usr/local/rustup
@@ -682,7 +686,7 @@ jobs:
       - name: Keep the artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: release-linux-${{ matrix.family }}-${{ matrix.arch }}
+          name: ${{ matrix.artifact }}-${{ matrix.arch }}
           retention-days: 1
           if-no-files-found: error
           path: |
@@ -690,95 +694,80 @@ jobs:
             dist/*.deb
             dist/*.rpm
 
-  # Signs the .rpm files with the OpenPGP key pinned in packaging/signing/repo.asc, before they
-  # are verified, hashed or published, so the release page and the DNF repository serve the same
-  # signed files. Only committed scripts run here, never a build. Until the pin is committed the
-  # packages pass through unsigned. The .deb files carry no signature of their own: APT checks
-  # the repository's signed InRelease instead (the repo job).
-  sign-linux:
-    name: Sign Linux packages
+  # ziptie-soft/pkg-pages signs the .rpm files with the subkey of the linux-signing environment
+  # (checked against the pin packaging/signing/repo.asc, failing closed; without the pin and the
+  # secret they pass through unsigned), install-tests them on clean systems, and builds the APT and
+  # DNF repositories from them, the .deb files and the 9 releases before this one. The tarballs in
+  # release-linux-deb-* are skipped. The .deb files carry no signature of their own: APT checks the
+  # repositories' signed InRelease. No build runs in a job that holds the key. The site is only
+  # built here, before anything is published; `pages` deploys it after `publish`.
+  # See https://github.com/ziptie-soft/pkg-pages/blob/master/docs/actions.md#publish-reusable-workflow
+  packages:
+    name: Linux packages and repositories
+    needs: [prepare, build-linux]
+    if: ${{ needs.prepare.outputs.released == 'true' }}
+    permissions:
+      contents: read
+      pages: write # publish.yml's deploy job declares it; deploy is false here
+      id-token: write
+    uses: ziptie-soft/pkg-pages/.github/workflows/publish.yml@13ebc668a953ac090ded52ef7a63a14ecda051aa # v1.1.1
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+      tag: ${{ needs.prepare.outputs.tag_name }}
+      # The tag doesn't exist yet: the pin is read from the commit the builds used.
+      ref: ${{ needs.prepare.outputs.base_sha }}
+      deb-artifacts: release-linux-deb-*
+      rpm-artifacts: unsigned-linux-rpm-*
+      name: cainary
+      title: cAInary package repositories
+      description: The tray app and CLI that show what your AI tools and the device monitoring around them track and send
+      # The landing page's packslip and mise card; the bundle comes from the `packslip` jobs.
+      packslip: true
+      packslip-pin: ${{ vars.PACKSLIP_PIN }}
+      # Overrides the URL for a custom domain; empty: https://skellla.github.io/cainary
+      base-url: ${{ vars.PAGES_BASE_URL }}
+      deb-architectures: amd64 arm64
+      rpm-architectures: x86_64 aarch64
+      install-tests: >-
+        [{"distro":"debian","arch":"x86_64"},
+         {"distro":"ubuntu","arch":"x86_64"},
+         {"distro":"fedora","arch":"x86_64"},
+         {"distro":"debian","arch":"aarch64"},
+         {"distro":"fedora","arch":"aarch64"}]
+      # packaging/ci/linux-ci.sh smoke, inline: the test container has no checkout. The root
+      # helpers answer --version only to a caller that isn't root, so they run as nobody
+      # (setpriv is in util-linux, which the Fedora image lacks).
+      smoke: |
+        v='${{ needs.prepare.outputs.version }}'
+        if command -v apt-get > /dev/null; then
+          apt-get install -y -qq --no-install-recommends jq
+        else
+          dnf install -y -q --setopt=install_weak_deps=False jq util-linux
+        fi
+        nobody() { setpriv --reuid=65534 --regid=65534 --clear-groups -- "$@"; }
+        set -x
+        [ "$(cainary --version)" = "cainary $v" ]
+        cainary scan --json --env-kind launchd | jq -e .schema
+        [ "$(cainary-otel-debug --version)" = "cainary-otel-debug $v" ]
+        cainary-otel-debug --list-presets
+        [ "$(cainary-tray --version)" = "cainary-tray $v" ]
+        [ "$(nobody /usr/libexec/cainary/cainary-bind-helper --version)" = "cainary-bind-helper $v protocol 1" ]
+        [ "$(nobody /usr/libexec/cainary/cainary-hosts-helper --version)" = "cainary-hosts-helper $v protocol 1" ]
+        CAINARY_UI_SNAPSHOTS="$(mktemp -d)" QT_QPA_PLATFORM=offscreen cainary-tray --self-test
+      deploy: false
+    secrets:
+      signing-key: ${{ secrets.REPO_SIGNING_KEY }}
+
+  # The tarball, installed with install-user.sh on Arch (the AUR package's depends), as
+  # ci.yml's install smoke test does; pkg-pages tests only the .deb and .rpm files.
+  verify-linux-tar:
+    name: Verify Linux tar (archlinux)
     needs: [prepare, build-linux]
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    container: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
-    permissions:
-      contents: read
-    # The key lives only in this environment's secrets, limited to master like macos-signing;
-    # see docs/distribution.md#linux-signing.
-    environment: linux-signing
-    steps:
-      - name: Install git, rpm-sign and gnupg
-        run: dnf install -y -q git-core rpm-sign gnupg2
-
-      - name: Checkout the base commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.prepare.outputs.base_sha }}
-          persist-credentials: false
-
-      # One directory per artifact: dist/release-linux-rpm-<arch>/.
-      - name: Fetch the packages
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          pattern: release-linux-rpm-*
-          path: dist
-
-      # The key is imported, used and removed in this one step; import fails closed against
-      # the pin and sets LINUX_SIGNED.
-      - name: Sign the packages
-        env:
-          REPO_SIGNING_KEY: ${{ secrets.REPO_SIGNING_KEY }}
-        run: |
-          set -eu
-          export GNUPGHOME="${RUNNER_TEMP}/gnupg"
-          mkdir -m 700 "${GNUPGHOME}"
-          trap 'rm -rf "${GNUPGHOME}"' EXIT
-          packaging/ci/linux-signing.sh import
-          if [ -f packaging/signing/repo.asc ]; then
-            packaging/ci/linux-signing.sh sign-rpm dist/*/*.rpm
-          fi
-
-      - name: Replace the x86_64 packages with the signed ones
-        if: ${{ env.LINUX_SIGNED == 'true' }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: release-linux-rpm-x86_64
-          retention-days: 1
-          if-no-files-found: error
-          overwrite: true
-          path: dist/release-linux-rpm-x86_64/*.rpm
-
-      - name: Replace the aarch64 packages with the signed ones
-        if: ${{ env.LINUX_SIGNED == 'true' }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: release-linux-rpm-aarch64
-          retention-days: 1
-          if-no-files-found: error
-          overwrite: true
-          path: dist/release-linux-rpm-aarch64/*.rpm
-
-  # ci.yml's install smoke test, on the artifacts about to be published.
-  verify-linux:
-    name: Verify Linux ${{ matrix.kind }} (${{ matrix.name }})
-    needs: [prepare, sign-linux]
-    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 15
-    container: ${{ matrix.image }}
+    container: archlinux:latest@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { name: debian-trixie, image: "debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308", kind: deb, family: deb, arch: x86_64 }
-          - { name: ubuntu-26.04, image: "ubuntu:26.04@sha256:c098726dd9b9733f3e885f8de0ef375206a311b0a317eadc40d347b1115fb944", kind: deb, family: deb, arch: x86_64 }
-          - { name: fedora-44, image: "fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80", kind: rpm, family: rpm, arch: x86_64 }
-          - { name: archlinux, image: "archlinux:latest@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0", kind: tar, family: deb, arch: x86_64 }
-          - { name: debian-trixie-arm64, image: "debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308", kind: deb, family: deb, arch: aarch64 }
-          - { name: fedora-44-aarch64, image: "fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80", kind: rpm, family: rpm, arch: aarch64 }
-    env:
-      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Checkout the base commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -789,21 +778,11 @@ jobs:
       - name: Fetch the artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: release-linux-${{ matrix.family }}-${{ matrix.arch }}
+          name: release-linux-deb-x86_64
           path: dist
 
-      # As dnf checks it with gpgcheck=1, against the committed key rather than the one used.
-      - name: Check the package signature
-        if: ${{ matrix.kind == 'rpm' }}
-        run: |
-          if [ -f packaging/signing/repo.asc ]; then
-            packaging/ci/linux-signing.sh check-rpm dist/*.rpm
-          else
-            echo "packaging/signing/repo.asc is not committed: the packages are unsigned"
-          fi
-
       - name: Install and run
-        run: packaging/ci/linux-ci.sh smoke ${{ matrix.kind }} dist
+        run: packaging/ci/linux-ci.sh smoke tar dist
 
   # Every platform's assets are hashed and attested together, after they are all built and
   # the Linux ones verified, so SHA256SUMS has one writer and lists everything. It works only
@@ -811,7 +790,7 @@ jobs:
   # so this also waits for the quality gates.
   checksums:
     name: Checksums and provenance
-    needs: [quality, quality-rust-linux, quality-linux, quality-workflows, prepare, build, build-linux, sign-linux, verify-linux]
+    needs: [quality, quality-rust-linux, quality-linux, quality-workflows, prepare, build, build-linux, packages, verify-linux-tar]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -821,12 +800,20 @@ jobs:
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
     steps:
+      # The macOS archives, the Linux tarballs and the .deb files; the .rpm files are packages'
+      # signed ones.
       - name: Fetch the assets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: release-*
           path: release-assets
           merge-multiple: true
+
+      - name: Fetch the signed .rpm files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.packages.outputs.signed-rpm-artifact-id }}
+          path: release-assets
 
       - name: Write checksums
         run: |
@@ -882,7 +869,7 @@ jobs:
   # run) finds the tag prepare saw and only completes the release.
   publish:
     name: Publish release
-    needs: [quality, quality-rust-linux, quality-linux, quality-workflows, prepare, build, build-linux, sign-linux, verify-linux, checksums]
+    needs: [quality, quality-rust-linux, quality-linux, quality-workflows, prepare, build, build-linux, packages, verify-linux-tar, checksums]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
@@ -917,6 +904,12 @@ jobs:
           pattern: "{release-*,checksums}"
           path: release-assets
           merge-multiple: true
+
+      - name: Fetch the signed .rpm files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.packages.outputs.signed-rpm-artifact-id }}
+          path: release-assets
 
       - name: Check the assets
         run: |
@@ -1121,114 +1114,14 @@ jobs:
             git push origin HEAD:master
           fi
 
-  # APT and DNF repositories on GitHub Pages, deployed from this job (Pages source "GitHub
-  # Actions"), the same layout as SkeLLLa/plasma-drop's: packaging/ci/pages-repo.sh builds them
-  # from this run's verified .deb and .rpm files plus those of the 9 releases before it, since
-  # each deploy replaces the site. Unsigned like plasma-drop's until packaging/signing/repo.asc
-  # is committed; from then on the metadata and every .rpm are signed with that key, and the
-  # release fails without it (docs/distribution.md#linux-signing). On unless the repository
-  # variable PAGES_PUBLISH is "false". PAGES_BASE_URL overrides the URL for a custom domain.
-  # This job holds the signing key and builds the site; `pages` only deploys it.
-  repo:
-    name: Build APT and DNF repositories
-    needs: [prepare, publish]
-    if: ${{ needs.prepare.outputs.released == 'true' && vars.PAGES_PUBLISH != 'false' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    # Trixie's rpm (4.20, Sequoia) reads a pin with revoked subkeys; the runner's 4.18 can't.
-    container: debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
-    # In a container, run steps default to sh (dash); these use mapfile and ${var,,}.
-    defaults:
-      run:
-        shell: bash
-    environment: linux-signing
-    permissions:
-      contents: read
-    env:
-      VERSION: ${{ needs.prepare.outputs.version }}
-      TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
-    steps:
-      # rpm for rpmsign and rpmkeys, which also sign the earlier releases' .rpm files.
-      - name: Install git, gh, apt-ftparchive, createrepo_c and rpm
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq --no-install-recommends ca-certificates git gh gnupg apt-utils createrepo-c rpm
-
-      - name: Checkout release tag
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ env.TAG_NAME }}
-          persist-credentials: false
-
-      - name: Fetch this release's packages
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          pattern: release-linux-*
-          path: assets
-          merge-multiple: true
-
-      # The 9 releases before this one, as plasma-drop keeps them, so users can still pin or
-      # downgrade. A release without Linux packages contributes nothing.
-      - name: Fetch earlier releases' packages
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mapfile -t tags < <(
-            gh release list --repo "${GITHUB_REPOSITORY}" --limit 30 \
-              --json tagName,isDraft,isPrerelease \
-              --jq '.[] | select(.isDraft == false and .isPrerelease == false) | .tagName' |
-              grep -vxF "${TAG_NAME}" | head -n 9 || true
-          )
-          for tag in "${tags[@]}"; do
-            gh release download "${tag}" --repo "${GITHUB_REPOSITORY}" --dir assets --skip-existing \
-              --pattern 'cainary_*_amd64.deb' --pattern 'cainary_*_arm64.deb' \
-              --pattern 'cainary-*-1.x86_64.rpm' --pattern 'cainary-*-1.aarch64.rpm' ||
-              echo "${tag}: no Linux packages"
-          done
-          ls -l assets
-
-      # import fails closed against the pin, as in sign-linux, and sets LINUX_SIGNED.
-      - name: Build the repositories
-        env:
-          REPO_SIGNING_KEY: ${{ secrets.REPO_SIGNING_KEY }}
-          PAGES_BASE_URL: ${{ vars.PAGES_BASE_URL }}
-        run: |
-          set -euo pipefail
-          export GNUPGHOME="${RUNNER_TEMP}/gnupg"
-          mkdir -m 700 "${GNUPGHOME}"
-          trap 'rm -rf "${GNUPGHOME}"' EXIT
-          packaging/ci/linux-signing.sh import
-          owner="${GITHUB_REPOSITORY_OWNER,,}"
-          base="${PAGES_BASE_URL:-https://${owner}.github.io/${GITHUB_REPOSITORY#*/}}"
-          packaging/ci/pages-repo.sh assets site "${base}" "${VERSION}"
-
-      - name: Verify the repositories
-        run: |
-          set -euo pipefail
-          for f in deb/dists/stable/Release deb/cainary.list rpm/cainary.repo \
-            rpm/x86_64/repodata/repomd.xml rpm/aarch64/repodata/repomd.xml \
-            deb/dists/stable/main/binary-amd64/Packages.gz deb/dists/stable/main/binary-arm64/Packages.gz; do
-            test -s "site/${f}"
-          done
-          for arch in amd64 arm64; do
-            gzip -cd "site/deb/dists/stable/main/binary-${arch}/Packages.gz" |
-              grep -x "Version: ${VERSION}" > /dev/null
-          done
-          if [ "${LINUX_SIGNED}" = "true" ]; then
-            test -s site/deb/dists/stable/InRelease
-            grep -qx gpgcheck=1 site/rpm/cainary.repo
-            packaging/ci/linux-signing.sh check-rpm site/rpm/*/*.rpm
-          fi
-
-      - name: Upload the site
-        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
-        with:
-          path: site
-
+  # Deploys the APT and DNF repositories `packages` built (Pages source "GitHub Actions"), only
+  # once the release is public and its packslip bundle, which the landing page's card points at,
+  # is attached: release assets first, repositories second. On unless the repository variable
+  # PAGES_PUBLISH is "false". Nothing else deploys Pages.
   pages:
     name: Publish APT and DNF repositories (GitHub Pages)
-    needs: repo
+    needs: [prepare, packages, publish, publish-packslip]
+    if: ${{ needs.prepare.outputs.released == 'true' && vars.PAGES_PUBLISH != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     concurrency:
@@ -1247,6 +1140,8 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deploy
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+        with:
+          artifact_name: pkg-pages-site
 
   # crates.io Trusted Publishing: a short-lived token from GitHub OIDC, no stored secret. On
   # unless the repository variable CRATES_IO_PUBLISH is "false". A crate that isn't on crates.io

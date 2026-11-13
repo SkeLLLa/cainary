@@ -1170,8 +1170,8 @@ only; [linux.md](linux.md) §8). They need no network and no real machine state.
   builds apply it locally to the same commit for the universal macOS bundle and the Linux
   tarballs, .deb and .rpm, and one `checksums` job hashes and attests every asset. Only then does
   `publish` commit the bump and `CHANGELOG.md`, tag, and create the release with all assets.
-  `sign-linux` signs the .rpm files and `verify-linux` installs the packages before that; after
-  it, `repo` and `pages` publish the APT and DNF repositories, the packslip jobs sign and verify
+  `packages` (ziptie-soft/pkg-pages) signs the .rpm files, installs the packages and builds the
+  APT and DNF repositories before that; after it, `pages` deploys them, the packslip jobs sign and verify
   the manifest, `aur` updates the AUR package once its key is set up, and the crates
   `cainary-core` and `cainary` (the CLI package; its directory is `crates/cainary-cli`) are
   published to crates.io through Trusted Publishing. The macOS
