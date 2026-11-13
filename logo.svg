@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <title>cAInary</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2e3d45"/>
+      <stop offset="1" stop-color="#1b252a"/>
+    </linearGradient>
+    <linearGradient id="plate" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffd84d"/>
+      <stop offset="1" stop-color="#e8b100"/>
+    </linearGradient>
+    <linearGradient id="steel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#cfd8dc"/>
+      <stop offset="1" stop-color="#78909c"/>
+    </linearGradient>
+    <radialGradient id="glow" gradientUnits="userSpaceOnUse" cx="86" cy="38" r="14">
+      <stop offset="0" stop-color="#ff1744" stop-opacity="0.75"/>
+      <stop offset="0.45" stop-color="#ff1744" stop-opacity="0.3"/>
+      <stop offset="1" stop-color="#ff1744" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="eye" cx="0.4" cy="0.4">
+      <stop offset="0" stop-color="#ff8a80"/>
+      <stop offset="0.35" stop-color="#ff1744"/>
+      <stop offset="1" stop-color="#b0001e"/>
+    </radialGradient>
+  </defs>
+  <rect x="4" y="4" width="120" height="120" rx="26" fill="url(#bg)"/>
+  <!-- legs -->
+  <g stroke="#90a4ae" stroke-width="4" stroke-linecap="round">
+    <path d="M 56 94 L 54 104"/>
+    <path d="M 72 92 L 72 104"/>
+  </g>
+  <g stroke="#546e7a" stroke-width="2.2" stroke-linecap="round" fill="none">
+    <path d="M 54 104 L 48 108 M 54 104 L 54 110 M 54 104 L 60 108"/>
+    <path d="M 72 104 L 66 108 M 72 104 L 72 110 M 72 104 L 78 108"/>
+  </g>
+  <circle cx="54" cy="104" r="2.6" fill="#cfd8dc" stroke="#455a64" stroke-width="1"/>
+  <circle cx="72" cy="104" r="2.6" fill="#cfd8dc" stroke="#455a64" stroke-width="1"/>
+  <!-- tail -->
+  <path fill="#c99700" d="M 36 82 L 12 106 L 24 104 L 18 114 L 46 94 Z"/>
+  <!-- body -->
+  <path fill="url(#plate)" d="M 38 62 L 68 50 L 92 62 L 90 84 L 70 98 L 44 98 L 30 84 Z"/>
+  <g stroke="#b38600" stroke-width="1.6" fill="none">
+    <path d="M 68 50 L 66 70 L 90 84"/>
+    <path d="M 66 70 L 44 98"/>
+  </g>
+  <g fill="#9e7700">
+    <circle cx="86" cy="66" r="1.4"/>
+    <circle cx="85" cy="80" r="1.4"/>
+  </g>
+  <!-- wing -->
+  <path fill="#e0a800" stroke="#9e7700" stroke-width="1.6" stroke-linejoin="round"
+        d="M 40 72 L 70 66 L 80 76 L 58 90 L 38 86 Z"/>
+  <g stroke="#9e7700" stroke-width="1.4">
+    <path d="M 46 78 L 72 72"/>
+    <path d="M 46 84 L 66 80"/>
+  </g>
+  <!-- neck joint -->
+  <rect x="64" y="50" width="24" height="7" rx="2" fill="url(#steel)"/>
+  <!-- antenna -->
+  <path d="M 74 28 L 68 13" stroke="url(#steel)" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="67.5" cy="12" r="3.2" fill="#ff1744"/>
+  <!-- head -->
+  <rect x="60" y="24" width="38" height="30" rx="9" fill="url(#plate)"/>
+  <path d="M 60 40 L 72 40" stroke="#b38600" stroke-width="1.6"/>
+  <g fill="#9e7700">
+    <circle cx="65" cy="30" r="1.4"/>
+    <circle cx="65" cy="48" r="1.4"/>
+  </g>
+  <!-- beak -->
+  <path fill="url(#steel)" d="M 97 32 L 116 40 L 97 47 Z"/>
+  <path d="M 97 40 L 112 40" stroke="#455a64" stroke-width="1.4"/>
+  <!-- eye -->
+  <rect x="72" y="30" width="28" height="16" rx="5" fill="#11181c"/>
+  <rect x="72" y="30" width="28" height="16" rx="5" fill="url(#glow)"/>
+  <circle cx="86" cy="38" r="5" fill="url(#eye)"/>
+  <circle cx="84.4" cy="36.4" r="1.3" fill="#ffe0e0"/>
+</svg>
