@@ -154,11 +154,10 @@ This is the recommended method: `apt upgrade` then keeps cAInary up to date. APT
 or arm64 for you.
 
 ```sh
-sudo install -d -m 0755 /etc/apt/keyrings
-sudo curl -fsSLo /etc/apt/keyrings/cainary.asc https://skellla.github.io/cainary/cainary.asc
-echo 'deb [signed-by=/etc/apt/keyrings/cainary.asc] https://skellla.github.io/cainary/deb stable main' | sudo tee /etc/apt/sources.list.d/cainary.list
+sudo curl -fsSLo /usr/share/keyrings/cainary-keyring.asc https://skellla.github.io/cainary/cainary.asc
+sudo curl -fsSLo /etc/apt/sources.list.d/cainary.list https://skellla.github.io/cainary/deb/cainary.list
 sudo apt update
-sudo apt install cainary
+sudo apt install cainary-keyring cainary
 ```
 
 #### Fedora: DNF repository
@@ -174,14 +173,18 @@ sudo dnf install cainary
 The packages and the repository metadata are signed with the cAInary packages key,
 [cainary.asc](https://skellla.github.io/cainary/cainary.asc) (the same as
 [packaging/signing/repo.asc](packaging/signing/repo.asc)); APT and DNF refuse anything it didn't
-sign. DNF asks you to confirm the key's fingerprint on the first install. The repositories keep
-the 10 most recent releases, so you can also pin or downgrade a version. To check the files
-against the release checksums and attestations as well, see
+sign. DNF asks you to confirm the key's fingerprint on the first install. The `cainary-keyring`
+package keeps APT's copy of the key current, so key rotations and revocations arrive with
+`apt upgrade`. If you set up the repository before it existed (with the key in
+`/etc/apt/keyrings/`), that setup keeps working; run the commands above once to switch over, then
+delete `/etc/apt/keyrings/cainary.asc`. The repositories keep the 10 most recent releases, so
+you can also pin or downgrade a version. To check the files against the release checksums and
+attestations as well, see
 [Verifying a download](docs/distribution.md#verifying-a-download).
 
-The signing key changed after v0.4.1. If you added the APT repository earlier, download
-`cainary.asc` again (the `curl` line above); `apt update` fails until you do. DNF asks you to
-accept the new key on your next upgrade.
+The signing key changed after v0.4.1. If you added the APT repository earlier, run the APT
+commands above again; `apt update` fails until you do. DNF asks you to accept the new key on
+your next upgrade.
 
 #### A single .deb or .rpm file
 
@@ -236,7 +239,7 @@ For popup placement, building from source and troubleshooting, see [docs/linux.m
 | Installed with | Remove with |
 | --- | --- |
 | macOS app | Quit cAInary, delete `/Applications/cAInary.app`, then optionally run `defaults delete ua.SkeLLLa.cAInary` |
-| APT | `sudo apt remove cainary`, then `sudo rm /etc/apt/sources.list.d/cainary.list /etc/apt/keyrings/cainary.asc` |
+| APT | `sudo apt purge cainary cainary-keyring`, then `sudo rm /etc/apt/sources.list.d/cainary.list` |
 | DNF | `sudo dnf remove cainary`, then `sudo rm /etc/yum.repos.d/cainary.repo` |
 | Tarball | `./install-user.sh --uninstall` from the unpacked directory |
 | mise | `mise unuse -g packslip:github.com/SkeLLLa/cainary` |
