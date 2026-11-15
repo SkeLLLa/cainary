@@ -155,10 +155,12 @@ GitHub Pages (`https://skellla.github.io/cainary/`), in the same layout as
 [plasma-drop](https://skellla.github.io/plasma-drop/)'s and
 [star-forge](https://skellla.github.io/star-forge/)'s: an APT repository under `deb/` (suite
 `stable`, component `main`, amd64 and arm64), a DNF repository per architecture under
-`rpm/x86_64/` and `rpm/aarch64/`, and a landing page with these commands and a packslip and mise
-card. Each deploy replaces the site, so it is rebuilt from this release's packages, which
-`packages` installed, plus those of the 9 releases before it, downloaded from the release page.
-Users can still pin or downgrade within those 10 versions.
+`rpm/x86_64/` and `rpm/aarch64/`, a `cainary-keyring` .deb that installs the pin as APT's key for
+the repository (so `apt upgrade` delivers key rotations and revocations), a signed manifest of its
+packages (`pkg-pages.tsv`), and a landing page with these commands and a packslip and mise card.
+Each deploy replaces the site, so it is rebuilt from this release's packages, which `packages`
+installed, plus those of the 9 releases before it, taken from the live site and checked against
+that manifest. Users can still pin or downgrade within those 10 versions.
 
 ```sh
 # Fedora 44+
@@ -166,17 +168,16 @@ sudo curl -fsSLo /etc/yum.repos.d/cainary.repo https://skellla.github.io/cainary
 sudo dnf install cainary
 
 # Debian 13+, Ubuntu 25.04+
-sudo install -d -m 0755 /etc/apt/keyrings
-sudo curl -fsSLo /etc/apt/keyrings/cainary.asc https://skellla.github.io/cainary/cainary.asc
-echo 'deb [signed-by=/etc/apt/keyrings/cainary.asc] https://skellla.github.io/cainary/deb stable main' | sudo tee /etc/apt/sources.list.d/cainary.list
+sudo curl -fsSLo /usr/share/keyrings/cainary-keyring.asc https://skellla.github.io/cainary/cainary.asc
+sudo curl -fsSLo /etc/apt/sources.list.d/cainary.list https://skellla.github.io/cainary/deb/cainary.list
 sudo apt update
-sudo apt install cainary
+sudo apt install cainary-keyring cainary
 ```
 
 `packages` signs the APT `InRelease`, every .rpm and each `repomd.xml` with the key pinned in
 `packaging/signing/repo.asc` ([Linux signing](#linux-signing)), and publishes the public key as
 `cainary.asc`; the index page, `cainary.list` and `cainary.repo` check it
-(`signed-by=/etc/apt/keyrings/cainary.asc`, `gpgcheck=1`, `repo_gpgcheck=1`). Without a pin,
+(`signed-by=/usr/share/keyrings/cainary-keyring.asc`, `gpgcheck=1`, `repo_gpgcheck=1`). Without a pin,
 pkg-pages builds unsigned repositories (`[trusted=yes]`, `gpgcheck=0`).
 
 The site is built before anything is published; `pages` deploys it only after `publish` and
@@ -336,29 +337,32 @@ revocations), armored, and only it. While it is absent, `packages` passes the pa
 unsigned and builds unsigned repositories, with a notice. Once it is committed (read at the
 built commit), pkg-pages fails the release when the `REPO_SIGNING_KEY` secret is missing,
 belongs to another primary key, or can't sign (passphrase, expiry, or a subkey the pin revokes);
-setting the secret without committing the pin fails too. The published `cainary.asc` is the
-committed certificate. The install tests check each .rpm against the pin before installing it,
-and the repository build checks every .rpm it publishes.
+setting the secret without committing the pin fails too. The published `cainary.asc` and the
+keyring package carry the committed certificate. The install tests check each .rpm against the
+pin before installing it, and the site check verifies every signature on the site against the
+pin.
 
-**Where it signs.** `packages` signs the build's `unsigned-linux-rpm-*` artifacts and passes the
-signed files on as an artifact of its own; `checksums` and `publish` fetch that one by ID, so the
-release page and the DNF repository serve the same signed files and the unsigned ones never
-match `release-*`. No build runs in a job that holds the key. pkg-pages also signs the .rpm
-files of the earlier releases it republishes; the release's own stay byte-identical, while those
-from before the key, or signed by a since-revoked subkey, differ from their release page copies
-(and checksums) by the signature. `pages` only deploys the site, so the key and the Pages deploy
-token never share a job.
+**Where it signs.** The key exists in two of `packages`' jobs only. Its sign job signs the
+build's `unsigned-linux-rpm-*` artifacts and passes the signed files on as an artifact of its own;
+`checksums` and `publish` fetch that one by ID, so the release page and the DNF repository serve
+the same signed files and the unsigned ones never match `release-*`. Its seal job signs the
+repository metadata (`InRelease`, `repomd.xml`) and `pkg-pages.tsv`, after a build job without
+the key has parsed the packages and built the site. No build runs in a job that holds the key.
+Earlier releases' .rpm files stay as the site's manifest proves them; one the current subkey
+didn't sign (from before the key, or after a rotation) is signed again with it, so it differs
+from its release page copy (and checksums) by the signature. `pages` only deploys the site, so
+the key and the Pages deploy token never share a job.
 
 **Secret.** The subkey lives only in the `linux-signing` GitHub environment, used by pkg-pages'
-sign and repository jobs:
+sign and seal jobs:
 
 | Secret             | Value                                                  |
 | ------------------ | ------------------------------------------------------ |
 | `REPO_SIGNING_KEY` | one signing subkey, armored, without a passphrase (pkg-pages' `tools/ci-key`) |
 
 Set it up like `macos-signing` (Settings → Environments → New environment `linux-signing`,
-deployment branches: only `master`, optional required reviewers). Don't keep it as a repository
-secret.
+deployment branches: only `master`, optional required reviewers, who are then asked twice per
+release, for sign and seal). Don't keep it as a repository secret.
 
 **Making the key.** On the maintainer's machine, not in CI, in a keyring kept for it (`gpg`
 asks for the passphrase). RSA 4096 is what every supported rpm, dnf and apt (sqv) accepts. The
@@ -383,14 +387,21 @@ back up the whole `GNUPGHOME`) and the revocation certificate gpg wrote to
 is lost. Commit `repo.asc` in the same change that updates the README's install commands to the
 signed ones (the index page shows them); the next release is the first signed one.
 
-**Rotating or revoking the subkey.** Users trust the primary, so a subkey change needs no action
-from them beyond the `cainary.asc` they fetch. Before the subkey expires, or if the secret leaks:
-with the offline keyring, revoke the old subkey if it leaked (`gpg --edit-key "$FPR"`, `key N`,
-`revkey`, `save`), add a new one with `--quick-add-key`, export `repo.asc` again and set the
-secret from `ci-key` for the new one. Commit `repo.asc`: until then, the release refuses a subkey
-the pin doesn't know, and once a revocation is committed it refuses the revoked one. Users then get
-the revocation with the next `cainary.asc` they fetch; dnf refuses packages signed by the
-revoked subkey, and `packages` re-signs the earlier releases' with the new one. If the primary itself
+**Rotating or revoking the subkey.** Users trust the primary, so a subkey change asks no new
+trust of them. Keep a standby signing subkey in the pin (`gpg --quick-add-key "$FPR" rsa4096
+sign never`, then export and commit `repo.asc`, and release), so every client's copy of the key
+already lists it. To rotate, before the subkey expires: first switch CI to the standby
+(`tools/ci-key <STANDBY> | gh secret set REPO_SIGNING_KEY --env linux-signing`) and release,
+which re-signs the earlier releases' .rpm files with it; only then revoke the old subkey
+(`gpg --edit-key "$FPR"`, `key N`, `revkey`, reason "superseded", `save`), add the next standby,
+commit `repo.asc` and release. Never switch CI to a subkey published only in the same release:
+dnf5 caches the repository key at first use, and pkg-pages refuses a subkey the committed pin
+doesn't list. If the secret leaks, don't wait: revoke the subkey, add a new one, commit
+`repo.asc`, then set the secret (releases fail in between, which is intended). APT users get new
+subkeys and revocations through `cainary-keyring` with `apt upgrade`; DNF never fetches a key
+again on its own, so DNF users apply a revocation by hand
+([pkg-pages' signing guide](https://github.com/ziptie-soft/pkg-pages/blob/v2.0.0/docs/signing.md#rotating-or-revoking-the-subkey)).
+If the primary itself
 leaks, import the revocation certificate (remove the `:` before `-----BEGIN` first), commit the
 revoked `repo.asc` (every release fails from then on), and start over with a new key; users have
 to fetch it again.
