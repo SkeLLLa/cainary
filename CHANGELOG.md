@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.2](https://github.com/SkeLLLa/cainary/compare/v1.2.1...v1.2.2) - 2026-11-15
+
+### Other
+
+- *(release)* upgrade ziptie-soft/pkg-pages to v2.0.0
+- *(signing)* add a standby signing subkey to the pin
+
 ## [1.2.1](https://github.com/SkeLLLa/cainary/compare/v1.2.0...v1.2.1) - 2026-11-13
 
 ### Other
